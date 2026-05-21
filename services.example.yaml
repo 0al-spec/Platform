@@ -1,0 +1,38 @@
+# Copy to services.local.yaml and adjust refs/paths/ports for your machine.
+schema_version: 1
+artifact_kind: platform_service_topology
+
+services:
+  specgraph:
+    repo: git@github.com:0al-spec/SpecGraph.git
+    checkout_path: "${ORG_ROOT}/SpecGraph"
+    role: graph_engine
+    default_branch: main
+    health:
+      kind: command
+      command: "make next-move"
+
+  specspace:
+    repo: git@github.com:0al-spec/ContextBuilder.git
+    checkout_path: "${ORG_ROOT}/ContextBuilder"
+    role: visual_operator_ui
+    default_branch: main
+    dev_server:
+      ui_url: "http://127.0.0.1:5173"
+      api_url: "http://127.0.0.1:8001"
+
+  specpm:
+    repo: git@github.com:0al-spec/SpecPM.git
+    checkout_path: "${ORG_ROOT}/SpecPM"
+    role: spec_package_manager
+    default_branch: main
+    registry:
+      profile: public_static_index
+      local_dev_url: "http://127.0.0.1:8081"
+      api_version: v0
+
+  metrics:
+    repo: git@github.com:0al-spec/Metrics.git
+    checkout_path: "${ORG_ROOT}/Metrics"
+    role: metric_pack_source
+    default_branch: main

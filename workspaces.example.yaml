@@ -1,0 +1,38 @@
+# Copy to workspaces.local.yaml and replace placeholders with local paths.
+schema_version: 1
+artifact_kind: platform_workspace_catalog
+
+organization_root: "${ORG_ROOT}"
+
+workspaces:
+  - project_id: specgraph-core
+    display_name: SpecGraph Core
+    kind: core_repository
+    path: "${ORG_ROOT}/SpecGraph"
+    governance_profile: self_hosted_bootstrap
+    specgraph_config: specgraph.project.yaml
+    provider:
+      type: local_filesystem
+      specs_root: specs
+      runs_root: runs
+
+  - project_id: swiftui-calculator
+    display_name: SwiftUI Calculator
+    kind: product_workspace
+    path: "${ORG_ROOT}/SwiftUICalculator"
+    governance_profile: product_workspace
+    specgraph_config: specgraph.project.yaml
+    provider:
+      type: local_filesystem
+      specs_root: specs
+      runs_root: runs
+    registry:
+      specpm_registry_id: local-private
+      import_policy: review_first
+
+registries:
+  - registry_id: local-private
+    kind: specpm_private_registry
+    base_url: "http://localhost:8081"
+    authority: dev_observation_only
+    import_policy: review_first
