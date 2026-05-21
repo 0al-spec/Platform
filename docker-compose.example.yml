@@ -12,7 +12,7 @@ services:
 
   specspace-api:
     image: python:3.12-slim
-    working_dir: /workspace/ContextBuilder
+    working_dir: /workspace/SpecSpace
     command:
       - "python3"
       - "viewer/server.py"
@@ -25,16 +25,22 @@ services:
     ports:
       - "8001:8001"
     volumes:
-      - "${ORG_ROOT:?set ORG_ROOT}/ContextBuilder:/workspace/ContextBuilder:ro"
+      - "${ORG_ROOT:?set ORG_ROOT}/SpecSpace:/workspace/SpecSpace:ro"
       - "${ORG_ROOT:?set ORG_ROOT}/SpecGraph:/workspace/SpecGraph:ro"
 
   specspace-web:
     image: node:24-slim
-    working_dir: /workspace/ContextBuilder/viewer/app
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    working_dir: /workspace/SpecSpace/viewer/app
+    command: ["sh", "-lc", "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"]
     environment:
       VITE_API_BASE_URL: "http://127.0.0.1:8001"
     ports:
       - "5173:5173"
     volumes:
-      - "${ORG_ROOT:?set ORG_ROOT}/ContextBuilder:/workspace/ContextBuilder:ro"
+      - "${ORG_ROOT:?set ORG_ROOT}/SpecSpace:/workspace/SpecSpace:ro"
+      - specspace-node-modules:/workspace/SpecSpace/viewer/app/node_modules
+      - specspace-npm-cache:/root/.npm
+
+volumes:
+  specspace-node-modules:
+  specspace-npm-cache:

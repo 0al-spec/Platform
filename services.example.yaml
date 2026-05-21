@@ -13,8 +13,8 @@ services:
       command: "make next-move"
 
   specspace:
-    repo: git@github.com:0al-spec/ContextBuilder.git
-    checkout_path: "${ORG_ROOT}/ContextBuilder"
+    repo: git@github.com:0al-spec/SpecSpace.git
+    checkout_path: "${ORG_ROOT}/SpecSpace"
     role: visual_operator_ui
     default_branch: main
     dev_server:

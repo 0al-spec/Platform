@@ -9,7 +9,7 @@ orchestration.
 replace the product repositories:
 
 - `SpecGraph` remains the specification graph engine and supervisor runtime.
-- `ContextBuilder` / `SpecSpace` remains the visual operator interface.
+- `SpecSpace` remains the visual operator interface.
 - `SpecPM` remains the specification package manager and private registry lane.
 - `Metrics` remains the metric-pack and research/reference source.
 
@@ -25,7 +25,7 @@ The intended local layout is:
 0AL/
   Platform/
   SpecGraph/
-  ContextBuilder/
+  SpecSpace/
   SpecPM/
   Metrics/
   <product-workspaces>/

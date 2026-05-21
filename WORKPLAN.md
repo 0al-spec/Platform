@@ -7,7 +7,7 @@
 - Establish local-file naming and `.gitignore` policy.
 - Document service ownership:
   - `SpecGraph`: engine/supervisor/spec runtime;
-  - `ContextBuilder` / `SpecSpace`: visual operator UI;
+  - `SpecSpace`: visual operator UI;
   - `SpecPM`: package manager and private registry;
   - `Metrics`: metric-pack source.
 
