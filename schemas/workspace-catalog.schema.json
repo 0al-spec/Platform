@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:0al:platform:schemas:workspace-catalog:1",
+  "title": "0AL Platform Workspace Catalog",
+  "description": "Portable catalog of local 0AL core repositories and product workspaces known to Platform.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "organization_root",
+    "workspaces"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "artifact_kind": {
+      "type": "string",
+      "const": "platform_workspace_catalog"
+    },
+    "organization_root": {
+      "$ref": "#/$defs/organizationRootPath",
+      "description": "Absolute local 0AL checkout root, or an environment placeholder such as ${ORG_ROOT} in example files."
+    },
+    "workspaces": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/workspace"
+      }
+    },
+    "registries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/registry"
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^/(?!.*(^|/)\\.\\.(/|$)).+",
+      "description": "Absolute POSIX path without parent-directory traversal."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "organizationRootPath": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/absolutePath"
+        },
+        {
+          "type": "string",
+          "const": "${ORG_ROOT}"
+        }
+      ]
+    },
+    "relativePath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+      "minLength": 1
+    },
+    "workspacePath": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/absolutePath"
+        },
+        {
+          "type": "string",
+          "pattern": "^\\$\\{ORG_ROOT\\}/(?!.*(^|/)\\.\\.(/|$)).+"
+        }
+      ]
+    },
+    "workspace": {
+      "type": "object",
+      "required": [
+        "project_id",
+        "display_name",
+        "kind",
+        "status",
+        "path",
+        "governance_profile",
+        "specgraph_config",
+        "provider"
+      ],
+      "properties": {
+        "project_id": {
+          "$ref": "#/$defs/id",
+          "description": "Stable Platform-local workspace identifier."
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "core_repository",
+            "product_workspace"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "inactive",
+            "archived"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/workspacePath",
+          "description": "Absolute local path, or a path rooted at organization_root via ${ORG_ROOT} in example files."
+        },
+        "governance_profile": {
+          "type": "string",
+          "enum": [
+            "self_hosted_bootstrap",
+            "product_workspace"
+          ]
+        },
+        "specgraph_config": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "provider": {
+          "$ref": "#/$defs/localFilesystemProvider"
+        },
+        "registry": {
+          "$ref": "#/$defs/workspaceRegistryReference"
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "core_repository"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "governance_profile": {
+                "const": "self_hosted_bootstrap"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "product_workspace"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "governance_profile": {
+                "const": "product_workspace"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "localFilesystemProvider": {
+      "type": "object",
+      "required": [
+        "type",
+        "specs_root",
+        "runs_root"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "local_filesystem"
+        },
+        "specs_root": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "runs_root": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "proposals_root": {
+          "$ref": "#/$defs/relativePath"
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "workspaceRegistryReference": {
+      "type": "object",
+      "required": [
+        "registry_id",
+        "import_policy"
+      ],
+      "properties": {
+        "registry_id": {
+          "$ref": "#/$defs/id"
+        },
+        "import_policy": {
+          "type": "string",
+          "const": "review_first"
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "registry": {
+      "type": "object",
+      "required": [
+        "registry_id",
+        "kind",
+        "base_url",
+        "authority",
+        "import_policy"
+      ],
+      "properties": {
+        "registry_id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "type": "string",
+          "const": "specpm_private_registry"
+        },
+        "base_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "dev_observation_only"
+          ]
+        },
+        "import_policy": {
+          "type": "string",
+          "const": "review_first"
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    }
+  }
+}

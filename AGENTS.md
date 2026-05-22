@@ -1,5 +1,13 @@
 # Platform Agent Instructions
 
+## Task Pull Requests
+
+For every task that changes tracked repository files, finish by creating or
+updating a focused GitHub pull request for that task unless the user explicitly
+asks not to. Keep the PR scoped to the task, push the branch, include the
+validation performed, and use the repository pull request template when one
+exists.
+
 ## 0AL Local Ops Logging
 
 For cross-repo observations, coordination tasks, blockers, or handoffs, write a
