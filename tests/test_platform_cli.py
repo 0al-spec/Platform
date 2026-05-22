@@ -92,6 +92,22 @@ class PlatformCliTests(unittest.TestCase):
         self.assertIn("product-a", result.stdout)
         self.assertNotIn("specgraph-core", result.stdout)
 
+    def test_workspace_list_reports_malformed_yaml(self) -> None:
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
+            catalog.write("workspaces: [\n")
+            catalog.flush()
+
+            result = self.run_cli(
+                "workspace",
+                "list",
+                "--catalog",
+                catalog.name,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("platform: error: cannot parse catalog", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

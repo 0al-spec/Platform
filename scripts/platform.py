@@ -34,6 +34,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
             data = yaml.safe_load(handle)
     except OSError as exc:
         raise PlatformError(f"cannot read catalog {path}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise PlatformError(f"cannot parse catalog {path}: {exc}") from exc
 
     if not isinstance(data, dict):
         raise PlatformError(f"catalog {path} must contain a YAML mapping")
