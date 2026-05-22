@@ -21,6 +21,7 @@ Exit criteria:
   - `schemas/workspace-catalog.schema.json`
   - `docs/workspace-catalog.md`
 - Add `platform workspace list` or equivalent script.
+  - `scripts/platform.py workspace list`
 - Add `platform workspace doctor` for path/profile validation.
 - Define how SpecSpace consumes the catalog.
 
