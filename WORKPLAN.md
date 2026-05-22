@@ -28,14 +28,19 @@ Exit criteria:
 
 ## Phase 3: Product Workspace Initialization
 
-- Add `init-workspace` command or script.
-- Generate `specgraph.project.yaml`.
-- Create `specs/`, `docs/proposals/`, `runs/`, and `.specgraph/`.
-- Optionally seed a root intent/proposal.
+- Add a Platform `init-workspace` command or script as an orchestration wrapper.
+- Delegate canonical workspace creation to a SpecGraph-owned initializer.
+- Pass project identity, workspace root, and optional root intent to SpecGraph.
+- Record the workspace in the Platform catalog only after SpecGraph returns a
+  successful initialization report.
+- Surface SpecGraph initialization diagnostics without rewriting or
+  second-guessing them.
 
 Exit criteria:
 - A new product workspace can be initialized without hand-writing boilerplate.
 - The generated workspace uses `product_workspace` by default.
+- Platform does not independently generate `specgraph.project.yaml` or duplicate
+  SpecGraph initialization safety rules.
 
 ## Phase 4: Local Service Launch
 

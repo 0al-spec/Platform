@@ -17,6 +17,27 @@ replace the product repositories:
 workspaces are discovered, and how reusable spec packages move through a
 review-first import flow.
 
+## Ownership Boundary
+
+`Platform` may orchestrate product workspace creation, track workspace catalog
+entries, and pass operator intent to SpecGraph. It must not independently define
+or generate the canonical SpecGraph project contract.
+
+SpecGraph owns:
+
+- `specgraph.project.yaml` schema and validation semantics;
+- product workspace initialization safety rules;
+- initialization reports such as `runs/product_workspace_initialization.json`;
+- root-intent capture boundaries and no-core-mutation guarantees.
+
+Platform owns:
+
+- workspace catalog records;
+- service topology and launch profiles;
+- local paths and provider wiring;
+- calling a SpecGraph-owned initializer when workspace creation needs canonical
+  SpecGraph semantics.
+
 ## Local Workspace Shape
 
 The intended local layout is:

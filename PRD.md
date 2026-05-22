@@ -36,6 +36,8 @@ Without a control plane, every project becomes ad hoc local scripting.
 ## Non-Goals
 
 - Do not turn SpecGraph into the platform orchestrator.
+- Do not let Platform independently define or generate canonical SpecGraph
+  project contracts; delegate those semantics to SpecGraph.
 - Do not make the entire `0AL/` superdirectory a git repository.
 - Do not auto-import SpecPM packages into canonical product specs.
 - Do not store secrets or machine-specific absolute paths in tracked files.
@@ -74,6 +76,8 @@ Without a control plane, every project becomes ad hoc local scripting.
    - default external workspaces to `product_workspace`;
    - block ordinary SpecGraph core mutation;
    - route self-evolution concerns upstream by explicit operator decision.
+   - treat SpecGraph as the owner of workspace initialization validation,
+     `specgraph.project.yaml`, and initialization reports.
 
 ## Success Criteria
 
@@ -82,7 +86,8 @@ Without a control plane, every project becomes ad hoc local scripting.
 - Example configs can be copied and adapted without editing tracked files.
 - SpecSpace can eventually read a workspace catalog without hardcoding local
   project paths.
-- SpecGraph can eventually initialize a product workspace from Platform metadata.
+- Platform can eventually request SpecGraph to initialize a product workspace
+  from Platform metadata without duplicating SpecGraph initialization semantics.
 - SpecPM private registry usage remains review-first.
 
 ## Risks
