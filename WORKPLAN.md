@@ -18,6 +18,8 @@ Exit criteria:
 ## Phase 2: Workspace Catalog
 
 - Define stable catalog schema for product workspaces.
+  - `schemas/workspace-catalog.schema.json`
+  - `docs/workspace-catalog.md`
 - Add `platform workspace list` or equivalent script.
 - Add `platform workspace doctor` for path/profile validation.
 - Define how SpecSpace consumes the catalog.

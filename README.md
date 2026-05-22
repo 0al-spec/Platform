@@ -85,6 +85,10 @@ concern upstream.
 - [PRD.md](PRD.md) defines the MVP product boundary.
 - [WORKPLAN.md](WORKPLAN.md) breaks the first implementation into phases.
 - [workspaces.example.yaml](workspaces.example.yaml) shows the workspace catalog.
+- [schemas/workspace-catalog.schema.json](schemas/workspace-catalog.schema.json)
+  defines the workspace catalog validation contract.
+- [docs/workspace-catalog.md](docs/workspace-catalog.md) documents workspace
+  catalog fields, versioning, and guardrails.
 - [services.example.yaml](services.example.yaml) shows managed service metadata.
 - [docker-compose.example.yml](docker-compose.example.yml) sketches the local dev
   service topology.
