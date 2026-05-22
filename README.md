@@ -87,11 +87,17 @@ List known workspaces from the Platform catalog:
 ```bash
 scripts/platform.py workspace list
 scripts/platform.py workspace list --format json --kind product_workspace
+scripts/platform.py workspace doctor
+scripts/platform.py workspace doctor --format json
 ```
 
 The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
 `workspaces.local.yaml` when present, and otherwise falls back to
 `workspaces.example.yaml`.
+
+`workspace doctor` reports warnings and errors for catalog shape, duplicate IDs,
+governance profile mismatches, registry references, and local path availability.
+Warnings exit with status `0`; errors exit with status `1`.
 
 Install local Python tooling with:
 
