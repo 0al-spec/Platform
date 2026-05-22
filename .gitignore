@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+
+workspaces.local.yaml
+services.local.yaml
+docker-compose.local.yml
+
+.platform/
+.DS_Store
