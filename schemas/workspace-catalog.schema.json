@@ -20,8 +20,7 @@
       "const": "platform_workspace_catalog"
     },
     "organization_root": {
-      "type": "string",
-      "minLength": 1,
+      "$ref": "#/$defs/organizationRootPath",
       "description": "Absolute local 0AL checkout root, or an environment placeholder such as ${ORG_ROOT} in example files."
     },
     "workspaces": {
@@ -41,16 +40,43 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^/(?!.*(^|/)\\.\\.(/|$)).+",
+      "description": "Absolute POSIX path without parent-directory traversal."
+    },
     "id": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9._-]*$",
       "minLength": 1,
       "maxLength": 128
     },
+    "organizationRootPath": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/absolutePath"
+        },
+        {
+          "type": "string",
+          "const": "${ORG_ROOT}"
+        }
+      ]
+    },
     "relativePath": {
       "type": "string",
       "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
       "minLength": 1
+    },
+    "workspacePath": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/absolutePath"
+        },
+        {
+          "type": "string",
+          "pattern": "^\\$\\{ORG_ROOT\\}/(?!.*(^|/)\\.\\.(/|$)).+"
+        }
+      ]
     },
     "workspace": {
       "type": "object",
@@ -89,8 +115,7 @@
           ]
         },
         "path": {
-          "type": "string",
-          "minLength": 1,
+          "$ref": "#/$defs/workspacePath",
           "description": "Absolute local path, or a path rooted at organization_root via ${ORG_ROOT} in example files."
         },
         "governance_profile": {

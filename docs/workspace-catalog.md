@@ -29,7 +29,8 @@ a migration note.
 
 Consumers should also verify semantic constraints that JSON Schema cannot fully
 express, such as unique `project_id` values, unique `registry_id` values, and
-whether a workspace path exists on the local machine.
+whether a workspace path exists on the local machine. Schema version 1 treats
+absolute paths as POSIX-style paths.
 
 ## Top-Level Fields
 
