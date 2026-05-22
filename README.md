@@ -111,6 +111,8 @@ python3 -m pip install -r requirements-dev.txt
 - [requirements-dev.txt](requirements-dev.txt) lists local validation and CLI
   Python dependencies.
 - [scripts/platform.py](scripts/platform.py) provides the initial operator CLI.
+- [docs/deployment.md](docs/deployment.md) records the single-node deployment
+  and cost-control plan.
 - [services.example.yaml](services.example.yaml) shows managed service metadata.
 - [docker-compose.example.yml](docker-compose.example.yml) sketches the local dev
   service topology.

@@ -51,10 +51,15 @@ Exit criteria:
 - Add `.env.example`.
 - Add health checks for SpecGraph, SpecSpace, and SpecPM.
 - Add launch/stop/status shortcuts.
+- Add a single-node deployment profile so multiple services can run on one
+  small VPS instead of requiring one host per service.
+- Serve production SpecSpace web as static assets, not through a Vite
+  development server.
 
 Exit criteria:
 - A local operator can start the factory surface with one command.
 - Service status is visible without reading raw logs.
+- A solo operator can run the public 0AL surface on one low-cost VPS.
 
 ## Phase 5: Private SpecPM Imports
 
