@@ -34,6 +34,13 @@ The intended local layout is:
 `0AL/` is an organization checkout root. It does not need to be a git repository.
 `Platform/` is the versioned control plane inside that root.
 
+Set `ORG_ROOT` to the absolute path of that organization checkout root before
+using the example configs. For example:
+
+```bash
+export ORG_ROOT="$HOME/Development/GitHub/0AL"
+```
+
 ## Product Workspaces
 
 A product workspace is a folder-document managed by SpecGraph:

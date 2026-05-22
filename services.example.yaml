@@ -4,7 +4,7 @@ artifact_kind: platform_service_topology
 
 services:
   specgraph:
-    repo: git@github.com:0al-spec/SpecGraph.git
+    repo: https://github.com/0al-spec/SpecGraph.git
     checkout_path: "${ORG_ROOT}/SpecGraph"
     role: graph_engine
     default_branch: main
@@ -13,7 +13,7 @@ services:
       command: "make next-move"
 
   specspace:
-    repo: git@github.com:0al-spec/SpecSpace.git
+    repo: https://github.com/0al-spec/SpecSpace.git
     checkout_path: "${ORG_ROOT}/SpecSpace"
     role: visual_operator_ui
     default_branch: main
@@ -22,7 +22,7 @@ services:
       api_url: "http://127.0.0.1:8001"
 
   specpm:
-    repo: git@github.com:0al-spec/SpecPM.git
+    repo: https://github.com/0al-spec/SpecPM.git
     checkout_path: "${ORG_ROOT}/SpecPM"
     role: spec_package_manager
     default_branch: main
@@ -32,7 +32,7 @@ services:
       api_version: v0
 
   metrics:
-    repo: git@github.com:0al-spec/Metrics.git
+    repo: https://github.com/0al-spec/Metrics.git
     checkout_path: "${ORG_ROOT}/Metrics"
     role: metric_pack_source
     default_branch: main
