@@ -103,3 +103,17 @@ implemented by `platform workspace doctor`, should check local realities:
 - product workspaces use `governance_profile: product_workspace`;
 - registry references point to known `registries` entries;
 - missing paths are reported as diagnostics rather than crashes.
+
+## Listing
+
+Use the Platform CLI to inspect catalog entries:
+
+```bash
+scripts/platform.py workspace list
+scripts/platform.py workspace list --format json
+scripts/platform.py workspace list --kind product_workspace --status active
+```
+
+The command reads `PLATFORM_WORKSPACES_CATALOG` when set, then
+`workspaces.local.yaml` when present, and otherwise falls back to the tracked
+example catalog.

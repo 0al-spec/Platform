@@ -80,6 +80,25 @@ should refine the product graph, but it must not mutate SpecGraph core specs,
 core tools, or self-evolution surfaces unless an operator explicitly routes the
 concern upstream.
 
+## Operator CLI
+
+List known workspaces from the Platform catalog:
+
+```bash
+scripts/platform.py workspace list
+scripts/platform.py workspace list --format json --kind product_workspace
+```
+
+The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
+`workspaces.local.yaml` when present, and otherwise falls back to
+`workspaces.example.yaml`.
+
+Install local Python tooling with:
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+```
+
 ## Starter Files
 
 - [PRD.md](PRD.md) defines the MVP product boundary.
@@ -89,6 +108,9 @@ concern upstream.
   defines the workspace catalog validation contract.
 - [docs/workspace-catalog.md](docs/workspace-catalog.md) documents workspace
   catalog fields, versioning, and guardrails.
+- [requirements-dev.txt](requirements-dev.txt) lists local validation and CLI
+  Python dependencies.
+- [scripts/platform.py](scripts/platform.py) provides the initial operator CLI.
 - [services.example.yaml](services.example.yaml) shows managed service metadata.
 - [docker-compose.example.yml](docker-compose.example.yml) sketches the local dev
   service topology.
