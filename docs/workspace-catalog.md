@@ -112,8 +112,34 @@ Use the Platform CLI to inspect catalog entries:
 scripts/platform.py workspace list
 scripts/platform.py workspace list --format json
 scripts/platform.py workspace list --kind product_workspace --status active
+scripts/platform.py workspace doctor
+scripts/platform.py workspace doctor --format json
 ```
 
 The command reads `PLATFORM_WORKSPACES_CATALOG` when set, then
 `workspaces.local.yaml` when present, and otherwise falls back to the tracked
 example catalog.
+
+## Doctor
+
+`scripts/platform.py workspace doctor` checks the catalog structure and local
+workspace realities without crashing on missing or unresolved paths.
+
+It reports:
+
+- JSON Schema validation failures;
+- duplicate `project_id` and `registry_id` values;
+- mismatched `kind` and `governance_profile` values;
+- registry references that do not point to top-level `registries` entries;
+- missing active workspace roots;
+- missing `specgraph_config` files and provider roots when a workspace root can
+  be resolved.
+
+Exit codes:
+
+- `0`: no `ERROR` diagnostics were found;
+- `1`: at least one `ERROR` diagnostic was found;
+- `2`: the catalog could not be read or parsed.
+
+When a catalog uses `${ORG_ROOT}` but `ORG_ROOT` is not set, doctor emits `WARN`
+diagnostics and skips existence checks for placeholder paths.

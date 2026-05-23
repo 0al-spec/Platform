@@ -23,6 +23,7 @@ Exit criteria:
 - Add `platform workspace list` or equivalent script.
   - `scripts/platform.py workspace list`
 - Add `platform workspace doctor` for path/profile validation.
+  - `scripts/platform.py workspace doctor`
 - Define how SpecSpace consumes the catalog.
 
 Exit criteria:
