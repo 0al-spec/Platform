@@ -17,6 +17,9 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOCAL_CATALOG = REPO_ROOT / "workspaces.local.yaml"
 DEFAULT_EXAMPLE_CATALOG = REPO_ROOT / "workspaces.example.yaml"
+DEFAULT_LOCAL_COMPOSE = REPO_ROOT / "docker-compose.local.yml"
+DEFAULT_EXAMPLE_COMPOSE = REPO_ROOT / "docker-compose.example.yml"
+DEFAULT_LOCAL_ENV = REPO_ROOT / ".env"
 SPECGRAPH_SUPERVISOR_REL = Path("tools") / "supervisor.py"
 PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 INIT_TIMEOUT_SECONDS = 120
@@ -32,6 +35,15 @@ class Diagnostic:
     code: str
     subject: str
     message: str
+
+
+@dataclass(frozen=True)
+class ComposeInvocation:
+    action: str
+    compose_file: Path
+    env_file: Path | None
+    project_name: str
+    command: list[str]
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -941,6 +953,118 @@ def workspace_init(args: argparse.Namespace) -> int:
     return emit_output(catalog_written=True, exit_code=0)
 
 
+def default_compose_path() -> Path:
+    env_path = os.environ.get("PLATFORM_COMPOSE_FILE")
+    if env_path:
+        return Path(env_path)
+    if DEFAULT_LOCAL_COMPOSE.exists():
+        return DEFAULT_LOCAL_COMPOSE
+    return DEFAULT_EXAMPLE_COMPOSE
+
+
+def default_env_path() -> Path | None:
+    env_path = os.environ.get("PLATFORM_ENV_FILE")
+    if env_path:
+        return Path(env_path)
+    if DEFAULT_LOCAL_ENV.exists():
+        return DEFAULT_LOCAL_ENV
+    return None
+
+
+def existing_file(path: Path, *, label: str) -> Path:
+    if not path.is_file():
+        raise PlatformError(f"{label} does not exist: {path}")
+    return path
+
+
+def resolve_deploy_paths(args: argparse.Namespace) -> tuple[Path, Path | None]:
+    compose_path = Path(args.compose_file) if args.compose_file else default_compose_path()
+    compose_path = existing_file(compose_path, label="compose file")
+
+    if args.env_file:
+        env_path: Path | None = existing_file(Path(args.env_file), label="env file")
+    else:
+        env_path = default_env_path()
+        if env_path is not None:
+            env_path = existing_file(env_path, label="env file")
+
+    return compose_path, env_path
+
+
+def deploy_compose_args(args: argparse.Namespace) -> list[str]:
+    if args.deploy_command == "render":
+        return ["config"]
+    if args.deploy_command == "status":
+        return ["ps"]
+    if args.deploy_command == "up":
+        compose_args = ["up", "-d"]
+        if args.build:
+            compose_args.append("--build")
+        return compose_args
+    if args.deploy_command == "down":
+        compose_args = ["down"]
+        if args.volumes:
+            compose_args.append("--volumes")
+        return compose_args
+    raise PlatformError(f"unsupported deploy command: {args.deploy_command}")
+
+
+def build_compose_invocation(args: argparse.Namespace) -> ComposeInvocation:
+    compose_path, env_path = resolve_deploy_paths(args)
+    project_name = args.project_name or os.environ.get("COMPOSE_PROJECT_NAME") or "0al-platform"
+    command = [
+        args.docker,
+        "compose",
+        "--project-name",
+        project_name,
+        "--file",
+        str(compose_path),
+    ]
+    if env_path is not None:
+        command += ["--env-file", str(env_path)]
+    command += deploy_compose_args(args)
+    return ComposeInvocation(
+        action=args.deploy_command,
+        compose_file=compose_path,
+        env_file=env_path,
+        project_name=project_name,
+        command=command,
+    )
+
+
+def emit_deploy_plan(invocation: ComposeInvocation, *, output_format: str) -> int:
+    payload = {
+        "action": invocation.action,
+        "compose_file": str(invocation.compose_file),
+        "env_file": str(invocation.env_file) if invocation.env_file else None,
+        "project_name": invocation.project_name,
+        "command": invocation.command,
+    }
+    if output_format == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"action: {payload['action']}")
+        print(f"compose: {payload['compose_file']}")
+        print(f"env: {payload['env_file'] or '(none)'}")
+        print(f"project: {payload['project_name']}")
+        print("command: " + " ".join(invocation.command))
+    return 0
+
+
+def deploy(args: argparse.Namespace) -> int:
+    invocation = build_compose_invocation(args)
+    if args.dry_run:
+        return emit_deploy_plan(invocation, output_format=args.format)
+
+    try:
+        completed = subprocess.run(invocation.command, check=False)
+    except FileNotFoundError as exc:
+        raise PlatformError(
+            f"docker executable not found: {args.docker}"
+        ) from exc
+    return completed.returncode
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="platform",
@@ -1049,6 +1173,89 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     init_parser.set_defaults(func=workspace_init)
+
+    deploy_parser = subcommands.add_parser(
+        "deploy",
+        help="Operate the local Docker Compose deployment profile.",
+    )
+    deploy_subcommands = deploy_parser.add_subparsers(
+        dest="deploy_command",
+        required=True,
+    )
+
+    def add_deploy_common(command_parser: argparse.ArgumentParser) -> None:
+        command_parser.add_argument(
+            "--compose-file",
+            help=(
+                "Compose file to use. Defaults to PLATFORM_COMPOSE_FILE, "
+                "docker-compose.local.yml, then docker-compose.example.yml."
+            ),
+        )
+        command_parser.add_argument(
+            "--env-file",
+            help=(
+                "Env file to pass to docker compose. Defaults to "
+                "PLATFORM_ENV_FILE, then .env when present."
+            ),
+        )
+        command_parser.add_argument(
+            "--project-name",
+            help="Compose project name. Defaults to COMPOSE_PROJECT_NAME or 0al-platform.",
+        )
+        command_parser.add_argument(
+            "--docker",
+            default=os.environ.get("PLATFORM_DOCKER", "docker"),
+            help="Docker executable to invoke.",
+        )
+        command_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Print the docker compose command without executing it.",
+        )
+        command_parser.add_argument(
+            "--format",
+            choices=["table", "json"],
+            default="table",
+            help="Dry-run output format.",
+        )
+
+    render_parser = deploy_subcommands.add_parser(
+        "render",
+        help="Render the effective Docker Compose configuration.",
+    )
+    add_deploy_common(render_parser)
+    render_parser.set_defaults(func=deploy)
+
+    up_parser = deploy_subcommands.add_parser(
+        "up",
+        help="Start the local deployment profile with docker compose up -d.",
+    )
+    add_deploy_common(up_parser)
+    up_parser.add_argument(
+        "--build",
+        action="store_true",
+        help="Pass --build to docker compose up.",
+    )
+    up_parser.set_defaults(func=deploy)
+
+    down_parser = deploy_subcommands.add_parser(
+        "down",
+        help="Stop the local deployment profile with docker compose down.",
+    )
+    add_deploy_common(down_parser)
+    down_parser.add_argument(
+        "--volumes",
+        action="store_true",
+        help="Pass --volumes to docker compose down.",
+    )
+    down_parser.set_defaults(func=deploy)
+
+    status_parser = deploy_subcommands.add_parser(
+        "status",
+        help="Show docker compose service status.",
+    )
+    add_deploy_common(status_parser)
+    status_parser.set_defaults(func=deploy)
     return parser
 
 

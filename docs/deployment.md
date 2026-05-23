@@ -24,14 +24,35 @@ one VPS
 Platform should expose this as one deployment surface:
 
 ```bash
-platform deploy up --profile single-node
-platform deploy status
-platform deploy down
+scripts/platform.py deploy render
+scripts/platform.py deploy up
+scripts/platform.py deploy status
+scripts/platform.py deploy down
 ```
 
 Docker Compose is the first implementation target for this profile. The
 operator should not manually assemble service ports, routes, image tags, and
 volumes from memory.
+
+## Local Compose Entry Point
+
+The initial implementation wraps Docker Compose directly:
+
+- `deploy render` runs `docker compose config`;
+- `deploy up` runs `docker compose up -d`;
+- `deploy status` runs `docker compose ps`;
+- `deploy down` runs `docker compose down`.
+
+The command resolves Compose inputs in this order:
+
+- compose file: `PLATFORM_COMPOSE_FILE`, then `docker-compose.local.yml`, then
+  `docker-compose.example.yml`;
+- env file: `PLATFORM_ENV_FILE`, then `.env` when present;
+- project name: `--project-name`, then `COMPOSE_PROJECT_NAME`, then
+  `0al-platform`.
+
+Copy `.env.example` to `.env` and set `ORG_ROOT` to the local `0AL/` checkout
+root before running the profile.
 
 ## Service Boundaries
 
