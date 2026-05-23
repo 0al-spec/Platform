@@ -371,6 +371,78 @@ class PlatformInitTests(unittest.TestCase):
             self.assertIn("refusing to write tracked example catalog", result.stderr)
             self.assertEqual(self._read_argv_log(argv_log), [])
 
+    def test_init_json_output_stays_clean_when_supervisor_is_chatty(self) -> None:
+        with specgraph_home("chatty") as (env, argv_log), tempfile.TemporaryDirectory() as org:
+            catalog = Path(org) / "workspaces.yaml"
+            result = self.run_cli(
+                "workspace",
+                "init",
+                "--project-id",
+                "chatty-product",
+                "--path",
+                "${ORG_ROOT}/ChattyProduct",
+                "--catalog",
+                str(catalog),
+                "--format",
+                "json",
+                env_overrides={**env, "ORG_ROOT": org},
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["catalog_written"])
+            self.assertIn("starting initialization", result.stderr)
+            self.assertNotIn("starting initialization", result.stdout)
+
+    def test_init_supervisor_timeout_exits_with_runtime_failure(self) -> None:
+        with specgraph_home("hang") as (env, argv_log), tempfile.TemporaryDirectory() as org:
+            catalog = Path(org) / "workspaces.yaml"
+            result = self.run_cli(
+                "workspace",
+                "init",
+                "--project-id",
+                "hang-product",
+                "--path",
+                "${ORG_ROOT}/HangProduct",
+                "--catalog",
+                str(catalog),
+                env_overrides={
+                    **env,
+                    "ORG_ROOT": org,
+                    "PLATFORM_INIT_TIMEOUT_SECONDS": "0.5",
+                    "FAKE_SUPERVISOR_HANG_SECONDS": "5",
+                },
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("timed out", result.stderr)
+            self.assertFalse(catalog.exists())
+
+    def test_init_recovery_snippet_uses_correct_yaml_key(self) -> None:
+        with specgraph_home("ready") as (env, argv_log), tempfile.TemporaryDirectory() as org:
+            readonly_dir = Path(org) / "ro"
+            readonly_dir.mkdir()
+            catalog = readonly_dir / "workspaces.yaml"
+            readonly_dir.chmod(0o500)
+            try:
+                result = self.run_cli(
+                    "workspace",
+                    "init",
+                    "--project-id",
+                    "snippet-check",
+                    "--path",
+                    "${ORG_ROOT}/SnippetCheck",
+                    "--catalog",
+                    str(catalog),
+                    env_overrides={**env, "ORG_ROOT": org},
+                )
+            finally:
+                readonly_dir.chmod(0o700)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("under workspaces:\n", result.stderr)
+            self.assertNotIn("under workspaces::", result.stderr)
+
     def test_init_recovery_snippet_on_catalog_write_failure(self) -> None:
         # Trigger an OSError during catalog write by pointing --catalog at a
         # path whose parent directory is read-only.

@@ -2,9 +2,12 @@
 """Test double for SpecGraph tools/supervisor.py.
 
 Controlled via env vars:
-- FAKE_SUPERVISOR_OUTCOME: "ready" (default) | "blocked" | "crash" | "no_report"
+- FAKE_SUPERVISOR_OUTCOME: "ready" (default) | "blocked" | "crash" |
+  "no_report" | "chatty" | "hang"
 - FAKE_SUPERVISOR_ARGV_LOG: optional path; if set, each invocation appends
   its argv as a JSON line for the calling test to inspect.
+- FAKE_SUPERVISOR_HANG_SECONDS: seconds to sleep before producing output
+  when outcome is "hang"; defaults to 5.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 
@@ -35,6 +39,17 @@ def main(argv: list[str]) -> int:
     if outcome == "crash":
         sys.stderr.write("fake supervisor: simulated crash\n")
         return 2
+
+    if outcome == "hang":
+        hang_for = float(os.environ.get("FAKE_SUPERVISOR_HANG_SECONDS", "5"))
+        time.sleep(hang_for)
+        # Should be killed by the parent timeout before reaching this line in tests.
+        return 0
+
+    if outcome == "chatty":
+        sys.stdout.write("supervisor: starting initialization\n")
+        sys.stdout.write("supervisor: writing artifacts\n")
+        sys.stdout.flush()
 
     workspace_root = Path(args.workspace_root)
     workspace_root.mkdir(parents=True, exist_ok=True)

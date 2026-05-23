@@ -648,6 +648,16 @@ def validate_init_inputs(
             )
 
 
+def init_timeout_seconds() -> float:
+    raw = os.environ.get("PLATFORM_INIT_TIMEOUT_SECONDS")
+    if not raw:
+        return float(INIT_TIMEOUT_SECONDS)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(INIT_TIMEOUT_SECONDS)
+
+
 def run_specgraph_init(
     supervisor: Path,
     *,
@@ -678,7 +688,7 @@ def run_specgraph_init(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=INIT_TIMEOUT_SECONDS,
+        timeout=init_timeout_seconds(),
         env=env,
     )
 
@@ -851,13 +861,17 @@ def workspace_init(args: argparse.Namespace) -> int:
             workspace_root=workspace_root,
             root_intent=args.root_intent,
         )
-    except subprocess.TimeoutExpired as exc:
-        raise PlatformError(
-            f"SpecGraph supervisor timed out after {INIT_TIMEOUT_SECONDS}s"
-        ) from exc
+    except subprocess.TimeoutExpired:
+        print(
+            f"platform: SpecGraph supervisor timed out after "
+            f"{init_timeout_seconds()}s",
+            file=sys.stderr,
+        )
+        return 1
 
+    supervisor_stdout_target = sys.stderr if args.format == "json" else sys.stdout
     if result.stdout:
-        sys.stdout.write(result.stdout)
+        supervisor_stdout_target.write(result.stdout)
     if result.stderr:
         sys.stderr.write(result.stderr)
 
@@ -910,7 +924,7 @@ def workspace_init(args: argparse.Namespace) -> int:
         print(
             f"platform: SpecGraph initialized workspace at {workspace_root}, "
             f"but writing catalog {catalog_path} failed: {exc}\n"
-            f"Add this entry manually under workspaces::\n{snippet}",
+            f"Add this entry manually under workspaces:\n{snippet}",
             file=sys.stderr,
         )
         return 1
