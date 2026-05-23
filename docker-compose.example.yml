@@ -7,12 +7,32 @@ services:
     command:
       - "sh"
       - "-lc"
-      - >-
+      - |
         apt-get update &&
         apt-get install -y --no-install-recommends ca-certificates git &&
         rm -rf /var/lib/apt/lists/* &&
         python3 -m pip install --quiet PyYAML==6.0.3 &&
-        python3 scripts/serve_public_index.py
+        python3 -m specpm.cli public-index generate \
+          --manifest public-index/accepted-packages.yml \
+          --output /tmp/specpm-public-index \
+          --registry http://127.0.0.1:${SPECPM_INDEX_PORT:-8081} \
+          --json &&
+        cat > /tmp/specpm-public-index/index.html <<'HTML'
+        <!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta http-equiv="refresh" content="0; url=/v0/">
+            <title>SpecPM Public Index</title>
+          </head>
+          <body>
+            <h1>SpecPM Public Index</h1>
+            <p><a href="/v0/">Open registry index</a></p>
+            <p><a href="/v0/status/index.json">Open registry status JSON</a></p>
+          </body>
+        </html>
+        HTML
+        python3 -m http.server 8081 --bind 0.0.0.0 --directory /tmp/specpm-public-index
     environment:
       PYTHONPATH: "/workspace/SpecPM/src"
       SPECPM_PUBLIC_INDEX_PORT: "${SPECPM_INDEX_PORT:-8081}"

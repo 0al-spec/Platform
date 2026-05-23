@@ -66,6 +66,10 @@ the first Compose profile runnable without introducing owned Platform images
 yet; a later production profile should move dependency installation into built
 images.
 
+The SpecPM service publishes registry metadata under `/v0/`. Its root `/`
+serves a small browser-friendly index that links to `/v0/` and
+`/v0/status/index.json`.
+
 SpecSpace API also receives a writable `specspace-dialogs` volume mounted at
 `SPECSPACE_DIALOG_DIR` because `viewer/server.py` still requires a dialog store.
 That dialog store is runtime state, not a Platform catalog or SpecGraph project
