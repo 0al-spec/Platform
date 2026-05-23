@@ -97,7 +97,8 @@ The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
 
 `workspace doctor` reports warnings and errors for catalog shape, duplicate IDs,
 governance profile mismatches, registry references, and local path availability.
-Warnings exit with status `0`; errors exit with status `1`.
+Warnings exit with status `0`; errors exit with status `1`; catalog read/parse
+failures exit with status `2`.
 
 Install local Python tooling with:
 
