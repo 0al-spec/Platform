@@ -36,6 +36,9 @@ volumes from memory.
 
 ## Local Compose Entry Point
 
+The working plan for this phase is maintained in
+[`local-service-launch-plan.md`](local-service-launch-plan.md).
+
 The initial implementation wraps Docker Compose directly:
 
 - `deploy render` runs `docker compose config`;
