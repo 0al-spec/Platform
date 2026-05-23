@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import sys
 from typing import Any
 
@@ -15,6 +17,9 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOCAL_CATALOG = REPO_ROOT / "workspaces.local.yaml"
 DEFAULT_EXAMPLE_CATALOG = REPO_ROOT / "workspaces.example.yaml"
+SPECGRAPH_SUPERVISOR_REL = Path("tools") / "supervisor.py"
+PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+INIT_TIMEOUT_SECONDS = 120
 
 
 class PlatformError(Exception):
@@ -525,6 +530,417 @@ def workspace_doctor(args: argparse.Namespace) -> int:
     return 1 if has_errors else 0
 
 
+def dump_yaml(data: dict[str, Any], path: Path) -> None:
+    try:
+        import yaml
+    except ImportError as exc:
+        raise PlatformError(
+            "PyYAML is required to write workspace catalogs. "
+            "Install it with `python3 -m pip install PyYAML`."
+        ) from exc
+
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(
+                data,
+                handle,
+                sort_keys=False,
+                default_flow_style=False,
+                allow_unicode=True,
+            )
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+
+
+def resolve_specgraph_supervisor() -> Path:
+    env_home = os.environ.get("SPECGRAPH_HOME")
+    if env_home:
+        candidate = Path(env_home) / SPECGRAPH_SUPERVISOR_REL
+        if candidate.is_file():
+            return candidate
+        raise PlatformError(
+            f"SPECGRAPH_HOME is set but no supervisor at {candidate}"
+        )
+
+    tried: list[Path] = []
+
+    org_root = os.environ.get("ORG_ROOT")
+    if org_root:
+        candidate = Path(org_root) / "SpecGraph" / SPECGRAPH_SUPERVISOR_REL
+        if candidate.is_file():
+            return candidate
+        tried.append(candidate)
+
+    sibling = REPO_ROOT.parent / "SpecGraph" / SPECGRAPH_SUPERVISOR_REL
+    if sibling.is_file():
+        return sibling
+    tried.append(sibling)
+
+    tried_lines = "\n  ".join(str(path) for path in tried)
+    raise PlatformError(
+        "cannot find SpecGraph supervisor. Set SPECGRAPH_HOME or place "
+        "SpecGraph next to Platform. Tried:\n  " + tried_lines
+    )
+
+
+def expand_workspace_path(raw: str, org_root: Path | None) -> Path:
+    if not isinstance(raw, str) or not raw:
+        raise PlatformError("--path must be a non-empty string")
+
+    org_root_prefix = "${ORG_ROOT}/"
+    if raw.startswith(org_root_prefix):
+        if org_root is None:
+            raise PlatformError(
+                "path uses ${ORG_ROOT}/ but ORG_ROOT is not set"
+            )
+        return (org_root / raw.removeprefix(org_root_prefix)).resolve()
+
+    if not raw.startswith("/"):
+        raise PlatformError(
+            f"--path must be absolute or start with ${{ORG_ROOT}}/: {raw}"
+        )
+    return Path(raw).resolve()
+
+
+def relativize_to_org_root(abs_path: Path, org_root: Path | None) -> str:
+    if org_root is None:
+        return str(abs_path)
+    try:
+        rel = abs_path.relative_to(org_root.resolve())
+    except ValueError:
+        return str(abs_path)
+    return f"${{ORG_ROOT}}/{rel.as_posix()}"
+
+
+def load_init_catalog(catalog_path: Path) -> dict[str, Any]:
+    if catalog_path.exists():
+        return load_yaml(catalog_path)
+
+    example = load_yaml(DEFAULT_EXAMPLE_CATALOG)
+    example["workspaces"] = []
+    return example
+
+
+def validate_init_inputs(
+    args: argparse.Namespace,
+    catalog: dict[str, Any],
+    workspace_root: Path,
+) -> None:
+    if not PROJECT_ID_RE.match(args.project_id):
+        raise PlatformError(
+            f"invalid project_id `{args.project_id}`: must match "
+            f"{PROJECT_ID_RE.pattern}"
+        )
+    if len(args.project_id) > 128:
+        raise PlatformError("project_id must be at most 128 characters")
+
+    for existing in catalog_workspaces(catalog):
+        if existing.get("project_id") == args.project_id:
+            raise PlatformError(
+                f"project_id `{args.project_id}` already in catalog"
+            )
+
+    if workspace_root.exists():
+        if not workspace_root.is_dir():
+            raise PlatformError(
+                f"workspace path exists and is not a directory: {workspace_root}"
+            )
+        if any(workspace_root.iterdir()):
+            raise PlatformError(
+                f"workspace path is not empty: {workspace_root}"
+            )
+
+
+def init_timeout_seconds() -> float:
+    raw = os.environ.get("PLATFORM_INIT_TIMEOUT_SECONDS")
+    if not raw:
+        return float(INIT_TIMEOUT_SECONDS)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(INIT_TIMEOUT_SECONDS)
+
+
+def run_specgraph_init(
+    supervisor: Path,
+    *,
+    project_id: str,
+    display_name: str,
+    workspace_root: Path,
+    root_intent: str | None,
+) -> subprocess.CompletedProcess[str]:
+    cmd: list[str] = [
+        sys.executable,
+        str(supervisor),
+        "--init-product-workspace",
+        "--project-id",
+        project_id,
+        "--display-name",
+        display_name,
+        "--workspace-root",
+        str(workspace_root),
+    ]
+    if root_intent:
+        cmd += ["--root-intent", root_intent]
+
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    return subprocess.run(
+        cmd,
+        cwd=str(supervisor.parent.parent),
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=init_timeout_seconds(),
+        env=env,
+    )
+
+
+def load_initialization_report(workspace_root: Path) -> dict[str, Any]:
+    report_path = workspace_root / "runs" / "product_workspace_initialization.json"
+    if not report_path.is_file():
+        raise PlatformError(
+            f"SpecGraph did not produce initialization report at {report_path}"
+        )
+    try:
+        with report_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except OSError as exc:
+        raise PlatformError(f"cannot read report {report_path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise PlatformError(f"cannot parse report {report_path}: {exc}") from exc
+
+
+def report_findings_to_diagnostics(report: dict[str, Any]) -> list[Diagnostic]:
+    findings = report.get("validation_findings") or []
+    diagnostics: list[Diagnostic] = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        diagnostics.append(
+            Diagnostic(
+                level=str(finding.get("level", "INFO")).upper(),
+                code=str(finding.get("code", "specgraph_finding")),
+                subject=str(finding.get("subject", "workspace")),
+                message=str(finding.get("message", "")),
+            )
+        )
+    return diagnostics
+
+
+def build_catalog_entry(
+    *,
+    project_id: str,
+    display_name: str,
+    workspace_root: Path,
+    org_root: Path | None,
+    governance_profile: str,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "project_id": project_id,
+        "display_name": display_name,
+        "kind": "product_workspace",
+        "status": "active",
+        "path": relativize_to_org_root(workspace_root, org_root),
+        "governance_profile": governance_profile,
+        "specgraph_config": "specgraph.project.yaml",
+        "provider": {
+            "type": "local_filesystem",
+            "specs_root": "specs",
+            "runs_root": "runs",
+            "proposals_root": "docs/proposals",
+        },
+    }
+    return entry
+
+
+def format_manual_yaml_entry(entry: dict[str, Any]) -> str:
+    try:
+        import yaml
+    except ImportError:
+        return json.dumps(entry, indent=2)
+    return yaml.safe_dump(
+        [entry],
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
+    )
+
+
+def append_workspace_to_catalog(
+    catalog_path: Path,
+    catalog: dict[str, Any],
+    entry: dict[str, Any],
+) -> None:
+    workspaces = catalog.get("workspaces")
+    if not isinstance(workspaces, list):
+        workspaces = []
+        catalog["workspaces"] = workspaces
+    workspaces.append(entry)
+    dump_yaml(catalog, catalog_path)
+
+
+def workspace_init(args: argparse.Namespace) -> int:
+    if args.catalog:
+        catalog_path = Path(args.catalog)
+    else:
+        catalog_path = DEFAULT_LOCAL_CATALOG
+
+    if catalog_path.resolve() == DEFAULT_EXAMPLE_CATALOG.resolve():
+        raise PlatformError(
+            f"refusing to write tracked example catalog: {catalog_path}"
+        )
+
+    catalog = load_init_catalog(catalog_path)
+    schema_version = catalog.get("schema_version")
+    if schema_version not in (None, 1):
+        raise PlatformError(
+            f"unsupported catalog schema_version {schema_version!r}; "
+            "migrate the catalog before running workspace init"
+        )
+
+    org_root, _ = resolve_org_root(catalog)
+    workspace_root = expand_workspace_path(args.path, org_root)
+    validate_init_inputs(args, catalog, workspace_root)
+
+    governance_profile = args.governance_profile
+    if governance_profile != "product_workspace":
+        raise PlatformError(
+            "workspace init only supports governance_profile=product_workspace; "
+            f"got {governance_profile}"
+        )
+
+    supervisor = resolve_specgraph_supervisor()
+    display_name = args.display_name or args.project_id
+
+    if args.dry_run:
+        cmd_preview = [
+            sys.executable,
+            str(supervisor),
+            "--init-product-workspace",
+            "--project-id",
+            args.project_id,
+            "--display-name",
+            display_name,
+            "--workspace-root",
+            str(workspace_root),
+        ]
+        if args.root_intent:
+            cmd_preview += ["--root-intent", args.root_intent]
+        pending_entry = build_catalog_entry(
+            project_id=args.project_id,
+            display_name=display_name,
+            workspace_root=workspace_root,
+            org_root=org_root,
+            governance_profile=governance_profile,
+        )
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "dry_run": True,
+                        "catalog": str(catalog_path),
+                        "supervisor": str(supervisor),
+                        "command": cmd_preview,
+                        "pending_entry": pending_entry,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(f"DRY RUN — would invoke supervisor at {supervisor}")
+            print("  command: " + " ".join(cmd_preview))
+            print(f"  catalog: {catalog_path}")
+            print("  pending entry:")
+            print(format_manual_yaml_entry(pending_entry))
+        return 0
+
+    try:
+        result = run_specgraph_init(
+            supervisor,
+            project_id=args.project_id,
+            display_name=display_name,
+            workspace_root=workspace_root,
+            root_intent=args.root_intent,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"platform: SpecGraph supervisor timed out after "
+            f"{init_timeout_seconds()}s",
+            file=sys.stderr,
+        )
+        return 1
+
+    supervisor_stdout_target = sys.stderr if args.format == "json" else sys.stdout
+    if result.stdout:
+        supervisor_stdout_target.write(result.stdout)
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+
+    if result.returncode != 0:
+        print(
+            f"platform: SpecGraph supervisor exited with code {result.returncode}",
+            file=sys.stderr,
+        )
+        return 1
+
+    report = load_initialization_report(workspace_root)
+    summary = report.get("summary") or {}
+    status = summary.get("status")
+    diagnostics = report_findings_to_diagnostics(report)
+
+    def emit_output(catalog_written: bool, exit_code: int) -> int:
+        if args.format == "json":
+            payload = {
+                "catalog": str(catalog_path),
+                "catalog_written": catalog_written,
+                "workspace": str(workspace_root),
+                "report_status": status,
+                "review_state": report.get("review_state"),
+                "diagnostics": [asdict(d) for d in diagnostics],
+            }
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            if diagnostics:
+                print(render_diagnostic_table(diagnostics))
+            print(f"workspace: {workspace_root}")
+            print(f"report status: {status}")
+            print(f"catalog: {catalog_path} ({'written' if catalog_written else 'not modified'})")
+        return exit_code
+
+    if status not in ("initialized", "ready"):
+        return emit_output(catalog_written=False, exit_code=1)
+
+    entry = build_catalog_entry(
+        project_id=args.project_id,
+        display_name=display_name,
+        workspace_root=workspace_root,
+        org_root=org_root,
+        governance_profile=governance_profile,
+    )
+
+    try:
+        append_workspace_to_catalog(catalog_path, catalog, entry)
+    except OSError as exc:
+        snippet = format_manual_yaml_entry(entry)
+        print(
+            f"platform: SpecGraph initialized workspace at {workspace_root}, "
+            f"but writing catalog {catalog_path} failed: {exc}\n"
+            f"Add this entry manually under workspaces:\n{snippet}",
+            file=sys.stderr,
+        )
+        return 1
+
+    return emit_output(catalog_written=True, exit_code=0)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="platform",
@@ -590,6 +1006,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     doctor_parser.set_defaults(func=workspace_doctor)
+
+    init_parser = workspace_subcommands.add_parser(
+        "init",
+        help="Initialize a new product workspace via SpecGraph.",
+    )
+    init_parser.add_argument("--project-id", required=True)
+    init_parser.add_argument(
+        "--path",
+        required=True,
+        help=(
+            "Absolute workspace root, or ${ORG_ROOT}/<rel>. "
+            "Must not exist or must be an empty directory."
+        ),
+    )
+    init_parser.add_argument(
+        "--display-name",
+        help="Operator-facing name. Defaults to --project-id when omitted.",
+    )
+    init_parser.add_argument("--root-intent")
+    init_parser.add_argument(
+        "--governance-profile",
+        choices=["product_workspace"],
+        default="product_workspace",
+    )
+    init_parser.add_argument(
+        "--catalog",
+        help=(
+            "Catalog to update. Defaults to workspaces.local.yaml. "
+            "Refuses to write the tracked example."
+        ),
+    )
+    init_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve inputs and print the planned command without invoking SpecGraph.",
+    )
+    init_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    init_parser.set_defaults(func=workspace_init)
     return parser
 
 

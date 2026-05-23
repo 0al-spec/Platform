@@ -33,6 +33,7 @@ Exit criteria:
 ## Phase 3: Product Workspace Initialization
 
 - Add a Platform `init-workspace` command or script as an orchestration wrapper.
+  - `scripts/platform.py workspace init`
 - Delegate canonical workspace creation to a SpecGraph-owned initializer.
 - Pass project identity, workspace root, and optional root intent to SpecGraph.
 - Record the workspace in the Platform catalog only after SpecGraph returns a

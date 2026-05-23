@@ -143,3 +143,48 @@ Exit codes:
 
 When a catalog uses `${ORG_ROOT}` but `ORG_ROOT` is not set, doctor emits `WARN`
 diagnostics and skips existence checks for placeholder paths.
+
+## Initialization
+
+`scripts/platform.py workspace init` creates a new `product_workspace` entry by
+delegating to a SpecGraph-owned initializer and recording the result in
+`workspaces.local.yaml`. Platform does not write `specgraph.project.yaml` or
+make its own initialization safety decisions.
+
+Supervisor discovery, in order:
+
+1. `SPECGRAPH_HOME` environment variable points at the SpecGraph checkout. If
+   set, `tools/supervisor.py` must exist underneath; init does not fall back.
+2. `${ORG_ROOT}/SpecGraph/tools/supervisor.py` when `ORG_ROOT` is set.
+3. `<Platform>/../SpecGraph/tools/supervisor.py` as a sibling checkout.
+
+Init refuses to proceed when:
+
+- `--project-id` does not match the schema regex `^[a-z0-9][a-z0-9._-]*$`;
+- the same `project_id` already exists in the catalog;
+- the target `--path` is neither absent nor an empty directory;
+- `--catalog` resolves to the tracked `workspaces.example.yaml`.
+
+Catalog write semantics:
+
+- init always writes to `workspaces.local.yaml` (or `--catalog`); never to the
+  example. If the target file is absent, init seeds it from
+  `workspaces.example.yaml` with an empty `workspaces` list and preserves
+  `schema_version`, `artifact_kind`, `organization_root`, and `registries`.
+- Writes are atomic (write to `*.yaml.tmp` then rename) but `yaml.safe_dump`
+  does not preserve comments — operator-authored comments in
+  `workspaces.local.yaml` will not survive an `init` call.
+- If SpecGraph succeeds but the catalog write fails, init prints a YAML snippet
+  the operator can paste in manually. The workspace on disk stays intact.
+
+Exit codes:
+
+- `0`: SpecGraph returned `summary.status: initialized` or `ready` and the
+  catalog was updated (or `--dry-run` succeeded);
+- `1`: SpecGraph supervisor exited non-zero, the report status is `blocked`,
+  or the catalog write failed after a successful SpecGraph run;
+- `2`: configuration error (missing supervisor, invalid arguments, catalog
+  read/parse failure, refusing to write the example catalog).
+
+After a successful init, run `workspace doctor` to confirm the new entry
+validates against the catalog schema.
