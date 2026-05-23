@@ -126,6 +126,8 @@ For local service launch, copy `.env.example` to `.env`, set `ORG_ROOT`, and use
 `scripts/platform.py deploy ...` as the Docker Compose entry point. The command
 defaults to `docker-compose.local.yml` when present, otherwise
 `docker-compose.example.yml`; it passes `.env` when present.
+The example profile uses overrideable image variables so operators can pin
+known-good local images without editing tracked Compose files.
 
 ## Starter Files
 

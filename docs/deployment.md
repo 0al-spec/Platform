@@ -54,6 +54,23 @@ The command resolves Compose inputs in this order:
 Copy `.env.example` to `.env` and set `ORG_ROOT` to the local `0AL/` checkout
 root before running the profile.
 
+The example profile keeps images overrideable through `.env`:
+
+- `SPECPM_IMAGE`;
+- `SPECSPACE_API_IMAGE`;
+- `SPECSPACE_WEB_IMAGE`.
+
+The default SpecPM public index container installs `git` at startup because the
+reviewed public-index manifest can include remote package sources. This keeps
+the first Compose profile runnable without introducing owned Platform images
+yet; a later production profile should move dependency installation into built
+images.
+
+SpecSpace API also receives a writable `specspace-dialogs` volume mounted at
+`SPECSPACE_DIALOG_DIR` because `viewer/server.py` still requires a dialog store.
+That dialog store is runtime state, not a Platform catalog or SpecGraph project
+contract.
+
 ## Service Boundaries
 
 The single-node profile keeps separate service processes and containers even
