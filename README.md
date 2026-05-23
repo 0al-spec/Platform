@@ -89,6 +89,11 @@ scripts/platform.py workspace list
 scripts/platform.py workspace list --format json --kind product_workspace
 scripts/platform.py workspace doctor
 scripts/platform.py workspace doctor --format json
+scripts/platform.py workspace init \
+  --project-id my-product \
+  --path "${ORG_ROOT}/MyProduct" \
+  --display-name "My Product" \
+  --root-intent "describe the product goal"
 ```
 
 The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
@@ -98,6 +103,13 @@ The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
 `workspace doctor` reports warnings and errors for catalog shape, duplicate IDs,
 governance profile mismatches, registry references, and local path availability.
 Warnings exit with status `0`; errors exit with status `1`.
+
+`workspace init` delegates workspace creation to a SpecGraph-owned initializer
+(`tools/supervisor.py --init-product-workspace`) and adds the new entry to
+`workspaces.local.yaml` only after SpecGraph returns a successful initialization
+report. Set `SPECGRAPH_HOME` to point at the SpecGraph checkout, or place
+SpecGraph as a sibling of Platform under `ORG_ROOT`. Pass `--dry-run` to preview
+the command and the catalog entry without invoking SpecGraph.
 
 Install local Python tooling with:
 
