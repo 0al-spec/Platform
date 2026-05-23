@@ -42,7 +42,7 @@ class ComposeInvocation:
     action: str
     compose_file: Path
     env_file: Path | None
-    project_name: str
+    project_name: str | None
     command: list[str]
 
 
@@ -973,7 +973,7 @@ def default_env_path() -> Path | None:
 
 def existing_file(path: Path, *, label: str) -> Path:
     if not path.is_file():
-        raise PlatformError(f"{label} does not exist: {path}")
+        raise PlatformError(f"{label} does not exist or is not a file: {path}")
     return path
 
 
@@ -1011,15 +1011,15 @@ def deploy_compose_args(args: argparse.Namespace) -> list[str]:
 
 def build_compose_invocation(args: argparse.Namespace) -> ComposeInvocation:
     compose_path, env_path = resolve_deploy_paths(args)
-    project_name = args.project_name or os.environ.get("COMPOSE_PROJECT_NAME") or "0al-platform"
+    project_name = args.project_name or os.environ.get("COMPOSE_PROJECT_NAME")
     command = [
         args.docker,
         "compose",
-        "--project-name",
-        project_name,
         "--file",
         str(compose_path),
     ]
+    if project_name:
+        command[2:2] = ["--project-name", project_name]
     if env_path is not None:
         command += ["--env-file", str(env_path)]
     command += deploy_compose_args(args)
@@ -1046,7 +1046,7 @@ def emit_deploy_plan(invocation: ComposeInvocation, *, output_format: str) -> in
         print(f"action: {payload['action']}")
         print(f"compose: {payload['compose_file']}")
         print(f"env: {payload['env_file'] or '(none)'}")
-        print(f"project: {payload['project_name']}")
+        print(f"project: {payload['project_name'] or '(compose default)'}")
         print("command: " + " ".join(invocation.command))
     return 0
 
@@ -1200,7 +1200,11 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command_parser.add_argument(
             "--project-name",
-            help="Compose project name. Defaults to COMPOSE_PROJECT_NAME or 0al-platform.",
+            help=(
+                "Compose project name. When omitted, Docker Compose uses its "
+                "normal project-name resolution, including COMPOSE_PROJECT_NAME "
+                "from the environment/.env and the compose file name."
+            ),
         )
         command_parser.add_argument(
             "--docker",

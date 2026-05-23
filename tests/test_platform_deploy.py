@@ -103,6 +103,27 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertIn("--project-name", argv)
         self.assertEqual(argv[-1], "ps")
 
+    def test_deploy_dry_run_uses_compose_project_default_when_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            compose = Path(root) / "compose.yml"
+            compose.write_text("name: test-platform\nservices: {}\n", encoding="utf-8")
+
+            result = self.run_cli(
+                "deploy",
+                "status",
+                "--compose-file",
+                str(compose),
+                "--dry-run",
+                "--format",
+                "json",
+                env_overrides={"COMPOSE_PROJECT_NAME": None},
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertIsNone(payload["project_name"])
+        self.assertNotIn("--project-name", payload["command"])
+
     def test_deploy_missing_compose_file_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             result = self.run_cli(

@@ -127,7 +127,8 @@ For local service launch, copy `.env.example` to `.env`, set `ORG_ROOT`, and use
 defaults to `docker-compose.local.yml` when present, otherwise
 `docker-compose.example.yml`; it passes `.env` when present.
 The example profile uses overrideable image variables so operators can pin
-known-good local images without editing tracked Compose files.
+known-good local images without editing tracked Compose files. The web API URL
+is derived from `SPECSPACE_API_HOST` and `SPECSPACE_API_PORT`.
 
 ## Starter Files
 
