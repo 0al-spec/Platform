@@ -254,6 +254,85 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("catalog_schema_invalid", codes)
 
+    def test_workspace_doctor_sorts_multiple_schema_errors(self) -> None:
+        catalog_text = """\
+schema_version: 1
+artifact_kind: platform_workspace_catalog
+organization_root: "${ORG_ROOT}"
+workspaces:
+  - project_id: "Has Space"
+    display_name: ""
+    kind: not_a_real_kind
+    status: pending
+    path: "relative/not/absolute"
+    governance_profile: product_workspace
+    specgraph_config: specgraph.project.yaml
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
+            catalog.write(catalog_text)
+            catalog.flush()
+
+            result = self.run_cli(
+                "workspace",
+                "doctor",
+                "--catalog",
+                catalog.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("Traceback", result.stderr)
+        payload = json.loads(result.stdout)
+        schema_diagnostics = [
+            d for d in payload["diagnostics"] if d["code"] == "catalog_schema_invalid"
+        ]
+        self.assertGreater(len(schema_diagnostics), 1)
+
+    def test_workspace_doctor_reports_specgraph_config_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            workspace = Path(root) / "ProductA"
+            (workspace / "specs").mkdir(parents=True)
+            (workspace / "runs").mkdir()
+            (workspace / "docs" / "proposals").mkdir(parents=True)
+            (workspace / "specgraph.project.yaml").mkdir()
+            catalog_text = f"""\
+schema_version: 1
+artifact_kind: platform_workspace_catalog
+organization_root: "{root}"
+workspaces:
+  - project_id: product-a
+    display_name: Product A
+    kind: product_workspace
+    status: active
+    path: "{workspace}"
+    governance_profile: product_workspace
+    specgraph_config: specgraph.project.yaml
+    provider:
+      type: local_filesystem
+      specs_root: specs
+      runs_root: runs
+      proposals_root: docs/proposals
+"""
+
+            with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
+                catalog.write(catalog_text)
+                catalog.flush()
+
+                result = self.run_cli(
+                    "workspace",
+                    "doctor",
+                    "--catalog",
+                    catalog.name,
+                    "--format",
+                    "json",
+                )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("path_wrong_type", codes)
+
     def test_workspace_doctor_warns_when_org_root_is_unresolved(self) -> None:
         result = self.run_cli(
             "workspace",

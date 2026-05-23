@@ -208,7 +208,7 @@ def validate_catalog_schema(catalog: dict[str, Any]) -> list[Diagnostic]:
         format_checker=jsonschema.FormatChecker(),
     )
     diagnostics: list[Diagnostic] = []
-    for error in sorted(validator.iter_errors(catalog), key=lambda item: item.path):
+    for error in sorted(validator.iter_errors(catalog), key=lambda item: tuple(item.path)):
         diagnostics.append(
             Diagnostic(
                 level="ERROR",
@@ -338,6 +338,15 @@ def check_existing_path(
         ]
 
     if not expect_dir and not path.is_file():
+        if path.is_dir():
+            return [
+                Diagnostic(
+                    level="ERROR",
+                    code="path_wrong_type",
+                    subject=subject,
+                    message=f"expected file but found directory: {path}",
+                )
+            ]
         return [
             Diagnostic(
                 level=missing_level,
