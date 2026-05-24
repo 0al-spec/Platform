@@ -68,6 +68,9 @@ Exit criteria:
   claiming ownership of the Timeweb Cloud Apps manifest-only path.
   - `.github/workflows/deploy-bundle.yml`
   - `scripts/platform.py deploy bundle --output-dir <dir>`
+- Add a Platform-owned Timeweb Cloud Apps manifest-only profile.
+  - `scripts/platform.py deploy timeweb-render`
+  - `scripts/platform.py deploy timeweb-validate`
 - Track the implementation slices in `docs/local-service-launch-plan.md`.
 
 Exit criteria:

@@ -9,6 +9,14 @@ import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLI = REPO_ROOT / "scripts" / "platform.py"
+API_IMAGE = (
+    "ghcr.io/0al-spec/specspace-api@sha256:"
+    "1111111111111111111111111111111111111111111111111111111111111111"
+)
+UI_IMAGE = (
+    "ghcr.io/0al-spec/specspace-ui@sha256:"
+    "2222222222222222222222222222222222222222222222222222222222222222"
+)
 
 
 class PlatformDeployTests(unittest.TestCase):
@@ -242,3 +250,116 @@ class PlatformDeployTests(unittest.TestCase):
             self.assertEqual(manifest["env_example"], ".env.example")
             self.assertEqual(manifest["env_file"], ".env")
             self.assertNotIn("SECRET_TOKEN", (output_dir / ".env.example").read_text())
+
+    def test_timeweb_render_writes_manifest_only_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--release-commit",
+                "abc123",
+                "--release-created-at",
+                "1970-01-01T00:00:00Z",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            compose = (output_dir / "docker-compose.yml").read_text(encoding="utf-8")
+            manifest = json.loads(
+                (output_dir / "platform-timeweb-deploy.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(payload["output_dir"], str(output_dir))
+            self.assertEqual(
+                sorted(path.name for path in output_dir.iterdir()),
+                ["README.md", "docker-compose.yml", "platform-timeweb-deploy.json"],
+            )
+            self.assertIn("services:\n  app:", compose)
+            self.assertIn(f'image: "{UI_IMAGE}"', compose)
+            self.assertIn(f'image: "{API_IMAGE}"', compose)
+            self.assertNotIn("volumes:", compose)
+            self.assertNotIn("build:", compose)
+            self.assertNotIn("${ORG_ROOT", compose)
+            self.assertEqual(manifest["artifact_kind"], "platform_timeweb_deploy_manifest")
+            self.assertEqual(manifest["release_commit"], "abc123")
+
+    def test_timeweb_render_rejects_mutable_image_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(Path(root) / "timeweb"),
+                "--specspace-api-image-ref",
+                "ghcr.io/0al-spec/specspace-api:latest",
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must not use the mutable latest tag", result.stderr)
+
+    def test_timeweb_validate_accepts_generated_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+            )
+            result = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["valid"])
+
+    def test_timeweb_validate_rejects_non_manifest_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            (root_path / "docker-compose.yml").write_text(
+                "services:\n"
+                "  specspace-api:\n"
+                f"    image: \"{API_IMAGE}\"\n"
+                "    volumes:\n"
+                "      - ./data:/data\n",
+                encoding="utf-8",
+            )
+            (root_path / "source.py").write_text("print('no')\n", encoding="utf-8")
+            result = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(root_path),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["valid"])
+        self.assertTrue(
+            any("unexpected top-level entries" in error for error in payload["errors"])
+        )
+        self.assertTrue(any("must not declare volumes" in error for error in payload["errors"]))
