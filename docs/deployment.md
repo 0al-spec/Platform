@@ -93,6 +93,23 @@ SpecSpace CI remains the owner of the existing SpecSpace web upload path. Move
 Timeweb secrets to Platform only when Platform CI becomes the explicit deployment
 uploader in a later migration.
 
+Platform CI publishes a `platform-deploy-bundle` artifact for the
+`production-web` profile. The bundle contains:
+
+- `docker-compose.example.yml`;
+- `docker-compose.production-web.example.yml`;
+- `.env.example`;
+- `platform-deploy-bundle.json`;
+- bundle-local operator notes.
+
+The bundle deliberately ships `.env.example`, not `.env`. Machine-local values
+such as `ORG_ROOT`, public ports, image pins, and Timeweb credentials remain
+outside git and outside the Platform artifact. The current uploader can fetch
+or copy this bundle, provide its own `.env`, and run the manifest command. A
+future migration can move upload ownership into Platform CI, but that should be
+an explicit secret-migration step rather than a side effect of publishing the
+Compose artifact.
+
 ## Service Boundaries
 
 The single-node profile keeps separate service processes and containers even

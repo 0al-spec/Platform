@@ -53,7 +53,7 @@ Status: implemented in PR #10.
 
 ### Slice 3: Production Static Web Profile
 
-Status: in progress.
+Status: implemented in PR #11.
 
 - Stop treating the Vite development server as the production shape.
 - Add a production web service that builds SpecSpace static assets and serves
@@ -67,9 +67,13 @@ Status: in progress.
 
 ### Slice 4: CI-Produced Compose Artifact
 
-Status: planned.
+Status: implemented in PR #12.
 
-- Make CI render or publish the deployment Compose file that Timeweb can consume.
+- Make CI publish a portable deployment bundle that Timeweb or the current
+  uploader repository can consume.
+- Include the base Compose file, the production-web overlay, `.env.example`,
+  a manifest, and operator instructions.
+- Validate the bundled Compose config in CI before uploading the artifact.
 - Keep machine-local `.env` values outside git.
 - Prefer image tags and immutable inputs over rebuilding from live checkouts on
   the VPS.
