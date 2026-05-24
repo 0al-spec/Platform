@@ -64,6 +64,10 @@ Exit criteria:
   development server.
   - `docker-compose.production-web.example.yml`
   - `scripts/platform.py deploy ... --profile production-web`
+- Publish a CI-produced deploy bundle for the `production-web` profile without
+  moving Timeweb secrets into Platform.
+  - `.github/workflows/deploy-bundle.yml`
+  - `scripts/platform.py deploy bundle --output-dir <dir>`
 - Track the implementation slices in `docs/local-service-launch-plan.md`.
 
 Exit criteria:

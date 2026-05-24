@@ -99,6 +99,7 @@ scripts/platform.py deploy up
 scripts/platform.py deploy status
 scripts/platform.py deploy down
 scripts/platform.py deploy render --profile production-web
+scripts/platform.py deploy bundle --output-dir dist/platform-deploy-bundle
 ```
 
 The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
@@ -133,6 +134,9 @@ is derived from `SPECSPACE_API_HOST` and `SPECSPACE_API_PORT`.
 Use `--profile production-web` to overlay a static SpecSpace web profile that
 builds `viewer/app/dist` and serves the production assets instead of running the
 Vite development server.
+Use `deploy bundle` to create the portable Compose artifact that CI uploads for
+the current Timeweb uploader path. The bundle includes `.env.example`, not a
+machine-local `.env`.
 
 ## Starter Files
 
@@ -154,6 +158,8 @@ Vite development server.
   service topology.
 - [docker-compose.production-web.example.yml](docker-compose.production-web.example.yml)
   overlays the dev topology with a production static SpecSpace web service.
+- [.github/workflows/deploy-bundle.yml](.github/workflows/deploy-bundle.yml)
+  validates and uploads the portable deployment bundle.
 
 Copy example files to local, untracked variants before putting machine-specific
 paths or credentials in them.

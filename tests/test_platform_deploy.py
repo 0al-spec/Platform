@@ -177,3 +177,68 @@ class PlatformDeployTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2)
         self.assertIn("compose file does not exist", result.stderr)
+
+    def test_deploy_bundle_writes_production_web_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "bundle"
+            result = self.run_cli(
+                "deploy",
+                "bundle",
+                "--output-dir",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            manifest = json.loads(
+                (output_dir / "platform-deploy-bundle.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(payload["output_dir"], str(output_dir))
+            self.assertTrue((output_dir / "docker-compose.example.yml").is_file())
+            self.assertTrue(
+                (output_dir / "docker-compose.production-web.example.yml").is_file()
+            )
+            self.assertTrue((output_dir / ".env.example").is_file())
+            self.assertTrue((output_dir / "README.md").is_file())
+            self.assertEqual(manifest["profile"], "production-web")
+            self.assertEqual(
+                manifest["compose_files"],
+                [
+                    "docker-compose.example.yml",
+                    "docker-compose.production-web.example.yml",
+                ],
+            )
+            self.assertEqual(manifest["env_example"], ".env.example")
+            self.assertEqual(manifest["env_file"], ".env")
+            self.assertEqual(manifest["command"].count("--file"), 2)
+            self.assertIn(".env", manifest["command"])
+
+    def test_deploy_bundle_ignores_local_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            output_dir = root_path / "bundle"
+            local_env = root_path / ".env"
+            local_env.write_text("SECRET_TOKEN=do-not-copy\n", encoding="utf-8")
+            result = self.run_cli(
+                "deploy",
+                "bundle",
+                "--output-dir",
+                str(output_dir),
+                "--format",
+                "json",
+                env_overrides={"PLATFORM_ENV_FILE": str(local_env)},
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads(
+                (output_dir / "platform-deploy-bundle.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(manifest["env_example"], ".env.example")
+            self.assertEqual(manifest["env_file"], ".env")
+            self.assertNotIn("SECRET_TOKEN", (output_dir / ".env.example").read_text())

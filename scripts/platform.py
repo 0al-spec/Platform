@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 from typing import Any
@@ -44,6 +45,15 @@ class ComposeInvocation:
     compose_files: list[Path]
     env_file: Path | None
     project_name: str | None
+    command: list[str]
+
+
+@dataclass(frozen=True)
+class DeployBundle:
+    output_dir: Path
+    compose_files: list[Path]
+    env_example: Path | None
+    manifest: Path
     command: list[str]
 
 
@@ -978,7 +988,11 @@ def existing_file(path: Path, *, label: str) -> Path:
     return path
 
 
-def resolve_deploy_paths(args: argparse.Namespace) -> tuple[list[Path], Path | None]:
+def resolve_deploy_paths(
+    args: argparse.Namespace,
+    *,
+    include_env: bool = True,
+) -> tuple[list[Path], Path | None]:
     compose_paths = [Path(args.compose_file) if args.compose_file else default_compose_path()]
     if args.profile == "production-web":
         compose_paths.append(DEFAULT_PRODUCTION_WEB_COMPOSE)
@@ -991,7 +1005,9 @@ def resolve_deploy_paths(args: argparse.Namespace) -> tuple[list[Path], Path | N
         seen_compose_paths.add(resolved_compose_path)
         deduped_compose_paths.append(compose_path)
 
-    if args.env_file:
+    if not include_env:
+        env_path = None
+    elif args.env_file:
         env_path: Path | None = existing_file(Path(args.env_file), label="env file")
     else:
         env_path = default_env_path()
@@ -1017,6 +1033,77 @@ def deploy_compose_args(args: argparse.Namespace) -> list[str]:
             compose_args.append("--volumes")
         return compose_args
     raise PlatformError(f"unsupported deploy command: {args.deploy_command}")
+
+
+def bundle_compose_args(compose_files: list[Path], *, env_file: Path | None) -> list[str]:
+    command = ["docker", "compose"]
+    for compose_file in compose_files:
+        command += ["--file", compose_file.name]
+    if env_file is not None:
+        command += ["--env-file", env_file.name]
+    command += ["up", "-d"]
+    return command
+
+
+def write_deploy_bundle(args: argparse.Namespace) -> DeployBundle:
+    compose_paths, _env_path = resolve_deploy_paths(args, include_env=False)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    bundled_compose_files: list[Path] = []
+    for compose_path in compose_paths:
+        destination = output_dir / compose_path.name
+        shutil.copyfile(compose_path, destination)
+        bundled_compose_files.append(destination)
+
+    env_example = REPO_ROOT / ".env.example"
+    bundled_env: Path | None = None
+    if env_example.is_file():
+        bundled_env = output_dir / ".env.example"
+        shutil.copyfile(env_example, bundled_env)
+
+    command = bundle_compose_args(
+        bundled_compose_files,
+        env_file=Path(".env") if bundled_env is not None else None,
+    )
+    manifest = output_dir / "platform-deploy-bundle.json"
+    payload = {
+        "artifact_kind": "platform_deploy_bundle",
+        "schema_version": 1,
+        "profile": args.profile,
+        "compose_files": [path.name for path in bundled_compose_files],
+        "env_example": bundled_env.name if bundled_env else None,
+        "env_file": ".env" if bundled_env else None,
+        "command": command,
+        "notes": [
+            "Copy .env.example to .env on the target host and set ORG_ROOT.",
+            "Timeweb upload secrets stay with the uploader repository until Platform CI owns uploads.",
+        ],
+    }
+    manifest.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    readme = output_dir / "README.md"
+    readme.write_text(
+        "# Platform Deploy Bundle\n\n"
+        "This bundle contains the Compose files needed for the Platform "
+        f"`{args.profile}` deployment profile.\n\n"
+        "Before running it on the target host, copy `.env.example` to `.env` "
+        "and set machine-local values such as `ORG_ROOT` and public ports.\n\n"
+        "Start command:\n\n"
+        "```bash\n"
+        + " ".join(command)
+        + "\n```\n",
+        encoding="utf-8",
+    )
+    return DeployBundle(
+        output_dir=output_dir,
+        compose_files=bundled_compose_files,
+        env_example=bundled_env,
+        manifest=manifest,
+        command=command,
+    )
 
 
 def build_compose_invocation(args: argparse.Namespace) -> ComposeInvocation:
@@ -1075,6 +1162,28 @@ def deploy(args: argparse.Namespace) -> int:
             f"docker executable not found: {args.docker}"
         ) from exc
     return completed.returncode
+
+
+def deploy_bundle(args: argparse.Namespace) -> int:
+    bundle = write_deploy_bundle(args)
+    payload = {
+        "action": "bundle",
+        "output_dir": str(bundle.output_dir),
+        "compose_files": [str(path) for path in bundle.compose_files],
+        "env_example": str(bundle.env_example) if bundle.env_example else None,
+        "manifest": str(bundle.manifest),
+        "command": bundle.command,
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"bundle: {bundle.output_dir}")
+        print("compose:")
+        for compose_file in bundle.compose_files:
+            print(f"  - {compose_file}")
+        print(f"env example: {bundle.env_example or '(none)'}")
+        print(f"manifest: {bundle.manifest}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1281,6 +1390,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_deploy_common(status_parser)
     status_parser.set_defaults(func=deploy)
+
+    bundle_parser = deploy_subcommands.add_parser(
+        "bundle",
+        help="Write a portable Compose deploy bundle for CI artifacts.",
+    )
+    bundle_parser.add_argument(
+        "--compose-file",
+        help=(
+            "Compose file to include. Defaults to PLATFORM_COMPOSE_FILE, "
+            "docker-compose.local.yml, then docker-compose.example.yml."
+        ),
+    )
+    bundle_parser.add_argument(
+        "--profile",
+        choices=["dev", "production-web"],
+        default="production-web",
+        help="Deployment profile to package. Defaults to production-web.",
+    )
+    bundle_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory to create or update with the deploy bundle.",
+    )
+    bundle_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    bundle_parser.set_defaults(func=deploy_bundle, env_file=None)
     return parser
 
 
