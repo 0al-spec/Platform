@@ -50,6 +50,11 @@ Exit criteria:
 ## Phase 4: Local Service Launch
 
 - Turn `docker-compose.example.yml` into a runnable local profile.
+- Add Platform deploy shortcuts around Docker Compose.
+  - `scripts/platform.py deploy render`
+  - `scripts/platform.py deploy up`
+  - `scripts/platform.py deploy status`
+  - `scripts/platform.py deploy down`
 - Add `.env.example`.
 - Add health checks for SpecGraph, SpecSpace, and SpecPM.
 - Add launch/stop/status shortcuts.
@@ -57,6 +62,7 @@ Exit criteria:
   small VPS instead of requiring one host per service.
 - Serve production SpecSpace web as static assets, not through a Vite
   development server.
+- Track the implementation slices in `docs/local-service-launch-plan.md`.
 
 Exit criteria:
 - A local operator can start the factory surface with one command.

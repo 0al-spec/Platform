@@ -24,14 +24,59 @@ one VPS
 Platform should expose this as one deployment surface:
 
 ```bash
-platform deploy up --profile single-node
-platform deploy status
-platform deploy down
+scripts/platform.py deploy render
+scripts/platform.py deploy up
+scripts/platform.py deploy status
+scripts/platform.py deploy down
 ```
 
 Docker Compose is the first implementation target for this profile. The
 operator should not manually assemble service ports, routes, image tags, and
 volumes from memory.
+
+## Local Compose Entry Point
+
+The working plan for this phase is maintained in
+[`local-service-launch-plan.md`](local-service-launch-plan.md).
+
+The initial implementation wraps Docker Compose directly:
+
+- `deploy render` runs `docker compose config`;
+- `deploy up` runs `docker compose up -d`;
+- `deploy status` runs `docker compose ps`;
+- `deploy down` runs `docker compose down`.
+
+The command resolves Compose inputs in this order:
+
+- compose file: `PLATFORM_COMPOSE_FILE`, then `docker-compose.local.yml`, then
+  `docker-compose.example.yml`;
+- env file: `PLATFORM_ENV_FILE`, then `.env` when present;
+- project name: `--project-name`, then `COMPOSE_PROJECT_NAME`, then
+  `0al-platform`.
+
+Copy `.env.example` to `.env` and set `ORG_ROOT` to the local `0AL/` checkout
+root before running the profile.
+
+The example profile keeps images overrideable through `.env`:
+
+- `SPECPM_IMAGE`;
+- `SPECSPACE_API_IMAGE`;
+- `SPECSPACE_WEB_IMAGE`.
+
+The default SpecPM public index container installs `git` at startup because the
+reviewed public-index manifest can include remote package sources. This keeps
+the first Compose profile runnable without introducing owned Platform images
+yet; a later production profile should move dependency installation into built
+images.
+
+The SpecPM service publishes registry metadata under `/v0/`. Its root `/`
+serves a small browser-friendly index that links to `/v0/` and
+`/v0/status/index.json`.
+
+SpecSpace API also receives a writable `specspace-dialogs` volume mounted at
+`SPECSPACE_DIALOG_DIR` because `viewer/server.py` still requires a dialog store.
+That dialog store is runtime state, not a Platform catalog or SpecGraph project
+contract.
 
 ## Service Boundaries
 

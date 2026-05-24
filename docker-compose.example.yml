@@ -2,45 +2,113 @@ name: 0al-platform
 
 services:
   specpm-public-index:
-    image: python:3.12-slim
+    image: "${SPECPM_IMAGE:-python:3.12-slim}"
     working_dir: /workspace/SpecPM
-    command: ["python3", "scripts/serve_public_index.py", "--host", "0.0.0.0", "--port", "8081"]
+    command:
+      - "sh"
+      - "-lc"
+      - |
+        apt-get update &&
+        apt-get install -y --no-install-recommends ca-certificates git &&
+        rm -rf /var/lib/apt/lists/* &&
+        python3 -m pip install --quiet PyYAML==6.0.3 &&
+        python3 -m specpm.cli public-index generate \
+          --manifest public-index/accepted-packages.yml \
+          --output /tmp/specpm-public-index \
+          --registry http://127.0.0.1:${SPECPM_INDEX_PORT:-8081} \
+          --json &&
+        cat > /tmp/specpm-public-index/index.html <<'HTML'
+        <!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta http-equiv="refresh" content="0; url=/v0/">
+            <title>SpecPM Public Index</title>
+          </head>
+          <body>
+            <h1>SpecPM Public Index</h1>
+            <p><a href="/v0/">Open registry index</a></p>
+            <p><a href="/v0/status/index.json">Open registry status JSON</a></p>
+          </body>
+        </html>
+        HTML
+        python3 -m http.server 8081 --bind 0.0.0.0 --directory /tmp/specpm-public-index
+    environment:
+      PYTHONPATH: "/workspace/SpecPM/src"
+      SPECPM_PUBLIC_INDEX_PORT: "${SPECPM_INDEX_PORT:-8081}"
+      SPECPM_PUBLIC_INDEX_REGISTRY_URL: "http://127.0.0.1:${SPECPM_INDEX_PORT:-8081}"
+      SPECPM_PUBLIC_INDEX_OUTPUT: "/tmp/specpm-public-index"
     ports:
-      - "8081:8081"
+      - "${SPECPM_INDEX_PORT:-8081}:8081"
     volumes:
       - "${ORG_ROOT:?set ORG_ROOT}/SpecPM:/workspace/SpecPM:ro"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          python3 -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8081/v0/status/index.json', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
   specspace-api:
-    image: python:3.12-slim
+    image: "${SPECSPACE_API_IMAGE:-python:3.12-slim}"
     working_dir: /workspace/SpecSpace
     command:
-      - "python3"
-      - "viewer/server.py"
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "8001"
-      - "--specgraph-dir"
-      - "/workspace/SpecGraph"
+      - "sh"
+      - "-lc"
+      - >-
+        python3 -m pip install --quiet -r requirements.txt &&
+        python3 viewer/server.py
+        --host 0.0.0.0
+        --port ${SPECSPACE_API_PORT:-8001}
+        --dialog-dir ${SPECSPACE_DIALOG_DIR:-/data/dialogs}
+        --specgraph-dir /workspace/SpecGraph
+        --specpm-registry-url http://specpm-public-index:8081
     ports:
-      - "8001:8001"
+      - "${SPECSPACE_API_PORT:-8001}:${SPECSPACE_API_PORT:-8001}"
     volumes:
       - "${ORG_ROOT:?set ORG_ROOT}/SpecSpace:/workspace/SpecSpace:ro"
       - "${ORG_ROOT:?set ORG_ROOT}/SpecGraph:/workspace/SpecGraph:ro"
+      - specspace-dialogs:${SPECSPACE_DIALOG_DIR:-/data/dialogs}
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          python3 -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:${SPECSPACE_API_PORT:-8001}/api/v1/health', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   specspace-web:
-    image: node:24-slim
+    image: "${SPECSPACE_WEB_IMAGE:-node:18-bookworm-slim}"
     working_dir: /workspace/SpecSpace/viewer/app
-    command: ["sh", "-lc", "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"]
+    command: ["sh", "-lc", "npm ci && npm run dev -- --host 0.0.0.0 --port ${SPECSPACE_WEB_PORT:-5173}"]
     environment:
-      VITE_API_BASE_URL: "http://127.0.0.1:8001"
+      VITE_API_BASE_URL: "http://${SPECSPACE_API_HOST:-127.0.0.1}:${SPECSPACE_API_PORT:-8001}"
     ports:
-      - "5173:5173"
+      - "${SPECSPACE_WEB_PORT:-5173}:${SPECSPACE_WEB_PORT:-5173}"
     volumes:
       - "${ORG_ROOT:?set ORG_ROOT}/SpecSpace:/workspace/SpecSpace:ro"
       - specspace-node-modules:/workspace/SpecSpace/viewer/app/node_modules
       - specspace-npm-cache:/root/.npm
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          node -e "fetch('http://127.0.0.1:${SPECSPACE_WEB_PORT:-5173}/')
+          .then((response) => process.exit(response.ok ? 0 : 1))
+          .catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
 volumes:
+  specspace-dialogs:
   specspace-node-modules:
   specspace-npm-cache:

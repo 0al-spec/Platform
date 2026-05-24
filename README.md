@@ -94,6 +94,10 @@ scripts/platform.py workspace init \
   --path "${ORG_ROOT}/MyProduct" \
   --display-name "My Product" \
   --root-intent "describe the product goal"
+scripts/platform.py deploy render --dry-run
+scripts/platform.py deploy up
+scripts/platform.py deploy status
+scripts/platform.py deploy down
 ```
 
 The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
@@ -118,6 +122,14 @@ Install local Python tooling with:
 python3 -m pip install -r requirements-dev.txt
 ```
 
+For local service launch, copy `.env.example` to `.env`, set `ORG_ROOT`, and use
+`scripts/platform.py deploy ...` as the Docker Compose entry point. The command
+defaults to `docker-compose.local.yml` when present, otherwise
+`docker-compose.example.yml`; it passes `.env` when present.
+The example profile uses overrideable image variables so operators can pin
+known-good local images without editing tracked Compose files. The web API URL
+is derived from `SPECSPACE_API_HOST` and `SPECSPACE_API_PORT`.
+
 ## Starter Files
 
 - [PRD.md](PRD.md) defines the MVP product boundary.
@@ -133,6 +145,7 @@ python3 -m pip install -r requirements-dev.txt
 - [docs/deployment.md](docs/deployment.md) records the single-node deployment
   and cost-control plan.
 - [services.example.yaml](services.example.yaml) shows managed service metadata.
+- [.env.example](.env.example) defines local Compose environment knobs.
 - [docker-compose.example.yml](docker-compose.example.yml) sketches the local dev
   service topology.
 
