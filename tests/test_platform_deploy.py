@@ -145,6 +145,26 @@ class PlatformDeployTests(unittest.TestCase):
         )
         self.assertEqual(payload["command"].count("--file"), 2)
 
+    def test_deploy_production_web_profile_dedupes_explicit_override(self) -> None:
+        production_compose = REPO_ROOT / "docker-compose.production-web.example.yml"
+        result = self.run_cli(
+            "deploy",
+            "render",
+            "--profile",
+            "production-web",
+            "--compose-file",
+            str(production_compose),
+            "--dry-run",
+            "--format",
+            "json",
+            env_overrides={"COMPOSE_PROJECT_NAME": None},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["compose_files"], [str(production_compose)])
+        self.assertEqual(payload["command"].count("--file"), 1)
+
     def test_deploy_missing_compose_file_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             result = self.run_cli(

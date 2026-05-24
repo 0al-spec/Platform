@@ -982,10 +982,14 @@ def resolve_deploy_paths(args: argparse.Namespace) -> tuple[list[Path], Path | N
     compose_paths = [Path(args.compose_file) if args.compose_file else default_compose_path()]
     if args.profile == "production-web":
         compose_paths.append(DEFAULT_PRODUCTION_WEB_COMPOSE)
-    compose_paths = [
-        existing_file(compose_path, label="compose file")
-        for compose_path in compose_paths
-    ]
+    deduped_compose_paths: list[Path] = []
+    seen_compose_paths: set[Path] = set()
+    for compose_path in compose_paths:
+        resolved_compose_path = existing_file(compose_path, label="compose file").resolve()
+        if resolved_compose_path in seen_compose_paths:
+            continue
+        seen_compose_paths.add(resolved_compose_path)
+        deduped_compose_paths.append(compose_path)
 
     if args.env_file:
         env_path: Path | None = existing_file(Path(args.env_file), label="env file")
@@ -994,7 +998,7 @@ def resolve_deploy_paths(args: argparse.Namespace) -> tuple[list[Path], Path | N
         if env_path is not None:
             env_path = existing_file(env_path, label="env file")
 
-    return compose_paths, env_path
+    return deduped_compose_paths, env_path
 
 
 def deploy_compose_args(args: argparse.Namespace) -> list[str]:
