@@ -135,8 +135,9 @@ Use `--profile production-web` to overlay a static SpecSpace web profile that
 builds `viewer/app/dist` and serves the production assets instead of running the
 Vite development server.
 Use `deploy bundle` to create the portable Compose artifact that CI uploads for
-the current Timeweb uploader path. The bundle includes `.env.example`, not a
-machine-local `.env`.
+Compose-capable single-node hosts. The bundle includes `.env.example`, not a
+machine-local `.env`. It is not the current Timeweb Cloud Apps manifest-only
+deploy path.
 
 ## Starter Files
 
