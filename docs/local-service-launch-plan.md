@@ -43,7 +43,7 @@ Status: implemented in PR #10.
 
 ### Slice 2: Health And Readiness
 
-Status: next.
+Status: implemented in PR #10.
 
 - Add Compose health checks for SpecPM public index, SpecSpace API, and
   SpecSpace web.
@@ -53,12 +53,17 @@ Status: next.
 
 ### Slice 3: Production Static Web Profile
 
-Status: planned.
+Status: in progress.
 
 - Stop treating the Vite development server as the production shape.
 - Add a production web service that builds SpecSpace static assets and serves
   them through a small static server or reverse proxy.
 - Keep the development profile available for local iteration.
+- Keep Timeweb upload secrets in the repository that performs the upload until
+  Platform CI explicitly takes over deployment ownership.
+- Support local port override through `SPECSPACE_WEB_PORT` so this profile can
+  be verified even when a developer already has a Vite server on the default
+  port.
 
 ### Slice 4: CI-Produced Compose Artifact
 

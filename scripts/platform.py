@@ -19,6 +19,7 @@ DEFAULT_LOCAL_CATALOG = REPO_ROOT / "workspaces.local.yaml"
 DEFAULT_EXAMPLE_CATALOG = REPO_ROOT / "workspaces.example.yaml"
 DEFAULT_LOCAL_COMPOSE = REPO_ROOT / "docker-compose.local.yml"
 DEFAULT_EXAMPLE_COMPOSE = REPO_ROOT / "docker-compose.example.yml"
+DEFAULT_PRODUCTION_WEB_COMPOSE = REPO_ROOT / "docker-compose.production-web.example.yml"
 DEFAULT_LOCAL_ENV = REPO_ROOT / ".env"
 SPECGRAPH_SUPERVISOR_REL = Path("tools") / "supervisor.py"
 PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -40,7 +41,7 @@ class Diagnostic:
 @dataclass(frozen=True)
 class ComposeInvocation:
     action: str
-    compose_file: Path
+    compose_files: list[Path]
     env_file: Path | None
     project_name: str | None
     command: list[str]
@@ -977,9 +978,18 @@ def existing_file(path: Path, *, label: str) -> Path:
     return path
 
 
-def resolve_deploy_paths(args: argparse.Namespace) -> tuple[Path, Path | None]:
-    compose_path = Path(args.compose_file) if args.compose_file else default_compose_path()
-    compose_path = existing_file(compose_path, label="compose file")
+def resolve_deploy_paths(args: argparse.Namespace) -> tuple[list[Path], Path | None]:
+    compose_paths = [Path(args.compose_file) if args.compose_file else default_compose_path()]
+    if args.profile == "production-web":
+        compose_paths.append(DEFAULT_PRODUCTION_WEB_COMPOSE)
+    deduped_compose_paths: list[Path] = []
+    seen_compose_paths: set[Path] = set()
+    for compose_path in compose_paths:
+        resolved_compose_path = existing_file(compose_path, label="compose file").resolve()
+        if resolved_compose_path in seen_compose_paths:
+            continue
+        seen_compose_paths.add(resolved_compose_path)
+        deduped_compose_paths.append(compose_path)
 
     if args.env_file:
         env_path: Path | None = existing_file(Path(args.env_file), label="env file")
@@ -988,7 +998,7 @@ def resolve_deploy_paths(args: argparse.Namespace) -> tuple[Path, Path | None]:
         if env_path is not None:
             env_path = existing_file(env_path, label="env file")
 
-    return compose_path, env_path
+    return deduped_compose_paths, env_path
 
 
 def deploy_compose_args(args: argparse.Namespace) -> list[str]:
@@ -1010,22 +1020,22 @@ def deploy_compose_args(args: argparse.Namespace) -> list[str]:
 
 
 def build_compose_invocation(args: argparse.Namespace) -> ComposeInvocation:
-    compose_path, env_path = resolve_deploy_paths(args)
+    compose_paths, env_path = resolve_deploy_paths(args)
     project_name = args.project_name or os.environ.get("COMPOSE_PROJECT_NAME")
     command = [
         args.docker,
         "compose",
-        "--file",
-        str(compose_path),
     ]
     if project_name:
         command[2:2] = ["--project-name", project_name]
+    for compose_path in compose_paths:
+        command += ["--file", str(compose_path)]
     if env_path is not None:
         command += ["--env-file", str(env_path)]
     command += deploy_compose_args(args)
     return ComposeInvocation(
         action=args.deploy_command,
-        compose_file=compose_path,
+        compose_files=compose_paths,
         env_file=env_path,
         project_name=project_name,
         command=command,
@@ -1035,7 +1045,7 @@ def build_compose_invocation(args: argparse.Namespace) -> ComposeInvocation:
 def emit_deploy_plan(invocation: ComposeInvocation, *, output_format: str) -> int:
     payload = {
         "action": invocation.action,
-        "compose_file": str(invocation.compose_file),
+        "compose_files": [str(compose_file) for compose_file in invocation.compose_files],
         "env_file": str(invocation.env_file) if invocation.env_file else None,
         "project_name": invocation.project_name,
         "command": invocation.command,
@@ -1044,7 +1054,9 @@ def emit_deploy_plan(invocation: ComposeInvocation, *, output_format: str) -> in
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(f"action: {payload['action']}")
-        print(f"compose: {payload['compose_file']}")
+        print("compose:")
+        for compose_file in payload["compose_files"]:
+            print(f"  - {compose_file}")
         print(f"env: {payload['env_file'] or '(none)'}")
         print(f"project: {payload['project_name'] or '(compose default)'}")
         print("command: " + " ".join(invocation.command))
@@ -1189,6 +1201,15 @@ def build_parser() -> argparse.ArgumentParser:
             help=(
                 "Compose file to use. Defaults to PLATFORM_COMPOSE_FILE, "
                 "docker-compose.local.yml, then docker-compose.example.yml."
+            ),
+        )
+        command_parser.add_argument(
+            "--profile",
+            choices=["dev", "production-web"],
+            default="dev",
+            help=(
+                "Deployment profile. production-web overlays the default compose "
+                "file with a static SpecSpace web service."
             ),
         )
         command_parser.add_argument(

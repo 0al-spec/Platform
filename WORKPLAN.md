@@ -62,6 +62,8 @@ Exit criteria:
   small VPS instead of requiring one host per service.
 - Serve production SpecSpace web as static assets, not through a Vite
   development server.
+  - `docker-compose.production-web.example.yml`
+  - `scripts/platform.py deploy ... --profile production-web`
 - Track the implementation slices in `docs/local-service-launch-plan.md`.
 
 Exit criteria:

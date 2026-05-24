@@ -46,6 +46,13 @@ The initial implementation wraps Docker Compose directly:
 - `deploy status` runs `docker compose ps`;
 - `deploy down` runs `docker compose down`.
 
+Use `--profile production-web` to add
+`docker-compose.production-web.example.yml` on top of the default Compose file.
+That profile builds SpecSpace static assets and serves `viewer/app/dist` through
+a Node static file server instead of running the Vite development server.
+If another local process already owns the default web port, set
+`SPECSPACE_WEB_PORT` in `.env` or the shell and rerun `deploy up`.
+
 The command resolves Compose inputs in this order:
 
 - compose file: `PLATFORM_COMPOSE_FILE`, then `docker-compose.local.yml`, then
@@ -77,6 +84,14 @@ SpecSpace API also receives a writable `specspace-dialogs` volume mounted at
 `SPECSPACE_DIALOG_DIR` because `viewer/server.py` still requires a dialog store.
 That dialog store is runtime state, not a Platform catalog or SpecGraph project
 contract.
+
+## CI Ownership
+
+Timeweb upload secrets should stay in the repository that currently performs
+the upload. At this stage, Platform defines the Compose/runtime contract while
+SpecSpace CI remains the owner of the existing SpecSpace web upload path. Move
+Timeweb secrets to Platform only when Platform CI becomes the explicit deployment
+uploader in a later migration.
 
 ## Service Boundaries
 

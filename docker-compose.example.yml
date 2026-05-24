@@ -89,6 +89,7 @@ services:
     working_dir: /workspace/SpecSpace/viewer/app
     command: ["sh", "-lc", "npm ci && npm run dev -- --host 0.0.0.0 --port ${SPECSPACE_WEB_PORT:-5173}"]
     environment:
+      SPECSPACE_WEB_PORT: "${SPECSPACE_WEB_PORT:-5173}"
       VITE_API_BASE_URL: "http://${SPECSPACE_API_HOST:-127.0.0.1}:${SPECSPACE_API_PORT:-8001}"
     ports:
       - "${SPECSPACE_WEB_PORT:-5173}:${SPECSPACE_WEB_PORT:-5173}"
