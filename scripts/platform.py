@@ -1077,7 +1077,8 @@ def write_deploy_bundle(args: argparse.Namespace) -> DeployBundle:
         "command": command,
         "notes": [
             "Copy .env.example to .env on the target host and set ORG_ROOT.",
-            "Timeweb upload secrets stay with the uploader repository until Platform CI owns uploads.",
+            "This bundle targets Compose-capable single-node hosts with an ORG_ROOT checkout.",
+            "Timeweb Cloud Apps remains SpecSpace-owned until Platform has a manifest-only profile.",
         ],
     }
     manifest.write_text(

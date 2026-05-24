@@ -87,14 +87,16 @@ contract.
 
 ## CI Ownership
 
-Timeweb upload secrets should stay in the repository that currently performs
-the upload. At this stage, Platform defines the Compose/runtime contract while
-SpecSpace CI remains the owner of the existing SpecSpace web upload path. Move
-Timeweb secrets to Platform only when Platform CI becomes the explicit deployment
-uploader in a later migration.
+Timeweb Cloud Apps deployment should stay in the repository that currently
+performs it. At this stage, Platform defines the local/single-node
+Compose/runtime contract while SpecSpace CI remains the owner of the existing
+Timeweb manifest-only deploy path. Move Timeweb secrets or deploy ownership to
+Platform only when Platform CI grows a Timeweb-compatible manifest-only profile
+in a later migration.
 
 Platform CI publishes a `platform-deploy-bundle` artifact for the
-`production-web` profile. The bundle contains:
+`production-web` profile. The bundle targets Compose-capable single-node hosts
+that can mount an `ORG_ROOT` checkout. It contains:
 
 - `docker-compose.example.yml`;
 - `docker-compose.production-web.example.yml`;
@@ -103,12 +105,15 @@ Platform CI publishes a `platform-deploy-bundle` artifact for the
 - bundle-local operator notes.
 
 The bundle deliberately ships `.env.example`, not `.env`. Machine-local values
-such as `ORG_ROOT`, public ports, image pins, and Timeweb credentials remain
-outside git and outside the Platform artifact. The current uploader can fetch
-or copy this bundle, provide its own `.env`, and run the manifest command. A
-future migration can move upload ownership into Platform CI, but that should be
-an explicit secret-migration step rather than a side effect of publishing the
-Compose artifact.
+such as `ORG_ROOT`, public ports, and image pins remain outside git and outside
+the Platform artifact.
+
+The current SpecSpace Timeweb Cloud Apps path is different: it is manifest-only,
+uses digest-pinned images, and avoids bind mounts and required environment
+interpolation. Do not switch that path to this Platform bundle directly. A
+future migration should first add a Platform-owned Timeweb-compatible profile
+that preserves those constraints, then move deploy ownership and any required
+secrets explicitly.
 
 ## Service Boundaries
 

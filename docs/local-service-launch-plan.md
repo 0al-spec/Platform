@@ -69,14 +69,17 @@ Status: implemented in PR #11.
 
 Status: implemented in PR #12.
 
-- Make CI publish a portable deployment bundle that Timeweb or the current
-  uploader repository can consume.
+- Make CI publish a portable deployment bundle that Compose-capable single-node
+  hosts can consume.
 - Include the base Compose file, the production-web overlay, `.env.example`,
   a manifest, and operator instructions.
 - Validate the bundled Compose config in CI before uploading the artifact.
 - Keep machine-local `.env` values outside git.
 - Prefer image tags and immutable inputs over rebuilding from live checkouts on
   the VPS.
+- Do not treat this bundle as the current Timeweb Cloud Apps manifest. SpecSpace
+  currently owns that manifest-only path because it avoids bind mounts and
+  required environment interpolation.
 
 ### Slice 5: Image Hardening
 
