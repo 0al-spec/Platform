@@ -61,6 +61,7 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(payload["project_name"], "test-platform")
         self.assertEqual(payload["command"][-1], "config")
         self.assertIn("--env-file", payload["command"])
+        self.assertEqual(payload["compose_files"], [str(compose)])
 
     def test_deploy_status_invokes_docker_compose(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -123,6 +124,26 @@ class PlatformDeployTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertIsNone(payload["project_name"])
         self.assertNotIn("--project-name", payload["command"])
+
+    def test_deploy_production_web_profile_adds_override_compose(self) -> None:
+        result = self.run_cli(
+            "deploy",
+            "render",
+            "--profile",
+            "production-web",
+            "--dry-run",
+            "--format",
+            "json",
+            env_overrides={"COMPOSE_PROJECT_NAME": None},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(
+            payload["compose_files"][-1],
+            str(REPO_ROOT / "docker-compose.production-web.example.yml"),
+        )
+        self.assertEqual(payload["command"].count("--file"), 2)
 
     def test_deploy_missing_compose_file_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as root:

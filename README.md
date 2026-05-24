@@ -98,6 +98,7 @@ scripts/platform.py deploy render --dry-run
 scripts/platform.py deploy up
 scripts/platform.py deploy status
 scripts/platform.py deploy down
+scripts/platform.py deploy render --profile production-web
 ```
 
 The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
@@ -129,6 +130,9 @@ defaults to `docker-compose.local.yml` when present, otherwise
 The example profile uses overrideable image variables so operators can pin
 known-good local images without editing tracked Compose files. The web API URL
 is derived from `SPECSPACE_API_HOST` and `SPECSPACE_API_PORT`.
+Use `--profile production-web` to overlay a static SpecSpace web profile that
+builds `viewer/app/dist` and serves the production assets instead of running the
+Vite development server.
 
 ## Starter Files
 
@@ -148,6 +152,8 @@ is derived from `SPECSPACE_API_HOST` and `SPECSPACE_API_PORT`.
 - [.env.example](.env.example) defines local Compose environment knobs.
 - [docker-compose.example.yml](docker-compose.example.yml) sketches the local dev
   service topology.
+- [docker-compose.production-web.example.yml](docker-compose.production-web.example.yml)
+  overlays the dev topology with a production static SpecSpace web service.
 
 Copy example files to local, untracked variants before putting machine-specific
 paths or credentials in them.

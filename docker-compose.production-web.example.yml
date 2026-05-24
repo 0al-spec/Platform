@@ -1,0 +1,36 @@
+services:
+  specspace-web:
+    image: "${SPECSPACE_WEB_IMAGE:-node:18-bookworm-slim}"
+    working_dir: /workspace/SpecSpace/viewer/app
+    command:
+      - "sh"
+      - "-lc"
+      - >-
+        rm -rf /tmp/specspace-web &&
+        cp -R /workspace/SpecSpace/viewer/app /tmp/specspace-web &&
+        cd /tmp/specspace-web &&
+        rm -rf node_modules dist &&
+        VITE_API_BASE_URL=http://${SPECSPACE_API_HOST:-127.0.0.1}:${SPECSPACE_API_PORT:-8001}
+        npm ci &&
+        npm run build &&
+        node -e "const http=require('http'),fs=require('fs'),path=require('path');const root=path.resolve('dist');const port=Number(process.env.SPECSPACE_WEB_PORT||'5173');const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml'};http.createServer((req,res)=>{const url=new URL(req.url,'http://127.0.0.1');let file=path.join(root,decodeURIComponent(url.pathname));if(!file.startsWith(root)){res.writeHead(403);res.end('forbidden');return;}if(url.pathname==='/'||!fs.existsSync(file)||fs.statSync(file).isDirectory())file=path.join(root,'index.html');fs.readFile(file,(err,data)=>{if(err){res.writeHead(404);res.end('not found');return;}res.writeHead(200,{'content-type':types[path.extname(file)]||'application/octet-stream'});res.end(data);});}).listen(port,'0.0.0.0',()=>console.log('serving SpecSpace static web on '+port));"
+    environment:
+      SPECSPACE_WEB_PORT: "${SPECSPACE_WEB_PORT:-5173}"
+      VITE_API_BASE_URL: "http://${SPECSPACE_API_HOST:-127.0.0.1}:${SPECSPACE_API_PORT:-8001}"
+    ports:
+      - "${SPECSPACE_WEB_PORT:-5173}:${SPECSPACE_WEB_PORT:-5173}"
+    volumes:
+      - "${ORG_ROOT:?set ORG_ROOT}/SpecSpace:/workspace/SpecSpace:ro"
+      - specspace-node-modules:/workspace/SpecSpace/viewer/app/node_modules
+      - specspace-npm-cache:/root/.npm
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          node -e "fetch('http://127.0.0.1:${SPECSPACE_WEB_PORT:-5173}/')
+          .then((response) => process.exit(response.ok ? 0 : 1))
+          .catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
