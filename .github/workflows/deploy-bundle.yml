@@ -47,9 +47,35 @@ jobs:
           --file docker-compose.production-web.example.yml
           config
 
+      - name: Build Timeweb manifest-only deploy tree
+        run: >-
+          python3 scripts/platform.py deploy timeweb-render
+          --output-dir dist/platform-timeweb-deploy
+          --specspace-api-image-ref ghcr.io/0al-spec/specspace-api@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          --specspace-ui-image-ref ghcr.io/0al-spec/specspace-ui@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          --release-commit "${GITHUB_SHA}"
+          --release-created-at "1970-01-01T00:00:00Z"
+          --format json
+
+      - name: Validate Timeweb manifest-only deploy tree
+        run: >-
+          python3 scripts/platform.py deploy timeweb-validate
+          --path dist/platform-timeweb-deploy
+
+      - name: Validate Timeweb Compose config
+        working-directory: dist/platform-timeweb-deploy
+        run: docker compose --file docker-compose.yml config
+
       - name: Upload deploy bundle
         uses: actions/upload-artifact@v4
         with:
           name: platform-deploy-bundle
           path: dist/platform-deploy-bundle
+          if-no-files-found: error
+
+      - name: Upload Timeweb deploy manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-timeweb-deploy
+          path: dist/platform-timeweb-deploy
           if-no-files-found: error

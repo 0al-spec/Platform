@@ -87,12 +87,9 @@ contract.
 
 ## CI Ownership
 
-Timeweb Cloud Apps deployment should stay in the repository that currently
-performs it. At this stage, Platform defines the local/single-node
-Compose/runtime contract while SpecSpace CI remains the owner of the existing
-Timeweb manifest-only deploy path. Move Timeweb secrets or deploy ownership to
-Platform only when Platform CI grows a Timeweb-compatible manifest-only profile
-in a later migration.
+Timeweb Cloud Apps deployment is moving toward Platform ownership. Platform now
+defines a Timeweb-compatible manifest-only deploy tree, while SpecSpace remains
+the producer of the API/UI images and deployment health signal.
 
 Platform CI publishes a `platform-deploy-bundle` artifact for the
 `production-web` profile. The bundle targets Compose-capable single-node hosts
@@ -108,12 +105,45 @@ The bundle deliberately ships `.env.example`, not `.env`. Machine-local values
 such as `ORG_ROOT`, public ports, and image pins remain outside git and outside
 the Platform artifact.
 
-The current SpecSpace Timeweb Cloud Apps path is different: it is manifest-only,
-uses digest-pinned images, and avoids bind mounts and required environment
-interpolation. Do not switch that path to this Platform bundle directly. A
-future migration should first add a Platform-owned Timeweb-compatible profile
-that preserves those constraints, then move deploy ownership and any required
-secrets explicitly.
+The current SpecSpace Timeweb Cloud Apps path is also manifest-only, uses
+digest-pinned images, and avoids bind mounts and required environment
+interpolation. Do not switch that path to the single-node Platform bundle
+directly. Use the Platform Timeweb manifest profile instead.
+
+## Timeweb Manifest Profile
+
+Platform can render and validate the Timeweb Cloud Apps deploy tree:
+
+```bash
+scripts/platform.py deploy timeweb-render \
+  --output-dir dist/platform-timeweb-deploy \
+  --specspace-api-image-ref ghcr.io/0al-spec/specspace-api@sha256:<digest> \
+  --specspace-ui-image-ref ghcr.io/0al-spec/specspace-ui@sha256:<digest>
+
+scripts/platform.py deploy timeweb-validate \
+  --path dist/platform-timeweb-deploy
+```
+
+The rendered tree contains only:
+
+- `docker-compose.yml`;
+- `README.md`;
+- `platform-timeweb-deploy.json`.
+
+Guardrails:
+
+- the first service is `app`, because Timeweb proxies the public domain to the
+  first service;
+- API/UI image refs must be digest-pinned and must not use `latest`;
+- no source `build` sections;
+- no bind mounts or named volumes;
+- no required `${VAR:?message}` interpolation;
+- SpecSpace API must read SpecGraph artifacts through `--artifact-base-url`;
+- SpecSpace API must read SpecPM metadata through `--specpm-registry-url`.
+
+SpecSpace CI can switch its publish step to invoke this Platform renderer once
+it provides the digest-pinned image refs as inputs. Timeweb secrets or deploy
+variables should move only in that explicit cutover step.
 
 ## Service Boundaries
 

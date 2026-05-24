@@ -100,6 +100,10 @@ scripts/platform.py deploy status
 scripts/platform.py deploy down
 scripts/platform.py deploy render --profile production-web
 scripts/platform.py deploy bundle --output-dir dist/platform-deploy-bundle
+scripts/platform.py deploy timeweb-render \
+  --output-dir dist/platform-timeweb-deploy \
+  --specspace-api-image-ref ghcr.io/0al-spec/specspace-api@sha256:<digest> \
+  --specspace-ui-image-ref ghcr.io/0al-spec/specspace-ui@sha256:<digest>
 ```
 
 The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
@@ -138,6 +142,10 @@ Use `deploy bundle` to create the portable Compose artifact that CI uploads for
 Compose-capable single-node hosts. The bundle includes `.env.example`, not a
 machine-local `.env`. It is not the current Timeweb Cloud Apps manifest-only
 deploy path.
+Use `deploy timeweb-render` to create a Timeweb Cloud Apps manifest-only deploy
+tree. That profile requires digest-pinned SpecSpace API/UI image refs and
+contains no source files, bind mounts, build sections, or required environment
+interpolation.
 
 ## Starter Files
 
@@ -160,7 +168,8 @@ deploy path.
 - [docker-compose.production-web.example.yml](docker-compose.production-web.example.yml)
   overlays the dev topology with a production static SpecSpace web service.
 - [.github/workflows/deploy-bundle.yml](.github/workflows/deploy-bundle.yml)
-  validates and uploads the portable deployment bundle.
+  validates and uploads the portable deployment bundle and the Timeweb
+  manifest-only deploy tree.
 
 Copy example files to local, untracked variants before putting machine-specific
 paths or credentials in them.

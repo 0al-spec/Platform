@@ -89,6 +89,21 @@ Status: planned.
 - Pin image tags and make runtime containers start quickly.
 - Preserve separate logs and health checks per service.
 
+### Slice 6: Timeweb Manifest Ownership
+
+Status: in progress.
+
+- Add a Platform-owned Timeweb Cloud Apps manifest renderer.
+- Preserve the existing Timeweb constraints from SpecSpace:
+  - manifest-only tree;
+  - digest-pinned API/UI images;
+  - no source builds;
+  - no volumes;
+  - no required environment interpolation.
+- Keep SpecSpace responsible for producing API/UI images and health endpoints.
+- Switch SpecSpace CI to call the Platform renderer only after the Platform
+  manifest contract is validated in CI.
+
 ## Guardrails
 
 - Do not require one VPS per service.
