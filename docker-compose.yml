@@ -1,0 +1,31 @@
+name: specspace
+
+services:
+  app:
+    image: "ghcr.io/0al-spec/specspace-ui@sha256:92584c4dce8d5f4f7c59cd46cdb16c3e46a879432148ed8898ebf929a8b49ac5"
+    ports:
+      - "${SPECSPACE_UI_PORT:-5173}:80"
+    depends_on:
+      - specspace-api
+
+  specspace-api:
+    image: "ghcr.io/0al-spec/specspace-api@sha256:9db3ab2d3741026c8ba604cfab60df5e585d86fb039c9f455334ff0afd40a543"
+    environment:
+      SPECSPACE_API_IMAGE_REF: "ghcr.io/0al-spec/specspace-api@sha256:9db3ab2d3741026c8ba604cfab60df5e585d86fb039c9f455334ff0afd40a543"
+      SPECSPACE_UI_IMAGE_REF: "ghcr.io/0al-spec/specspace-ui@sha256:92584c4dce8d5f4f7c59cd46cdb16c3e46a879432148ed8898ebf929a8b49ac5"
+      SPECSPACE_RELEASE_COMMIT: "a97c6ca27cb09815baef69bdefc86b9f425c1d0c"
+    command:
+      - python
+      - viewer/server.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --dialog-dir
+      - /data/dialogs
+      - --artifact-base-url
+      - "https://specgraph.tech"
+      - --specpm-registry-url
+      - "https://specpm.dev"
+    ports:
+      - "${SPECSPACE_API_PORT:-8001}:8001"
