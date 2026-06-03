@@ -91,7 +91,8 @@ Status: planned.
 
 ### Slice 6: Timeweb Manifest Ownership
 
-Status: in progress.
+Status: renderer implemented; SpecSpace CI handoff implemented; Platform-owned
+uploader cutover planned.
 
 - Add a Platform-owned Timeweb Cloud Apps manifest renderer.
 - Preserve the existing Timeweb constraints from SpecSpace:
@@ -104,8 +105,11 @@ Status: in progress.
   hand digest-pinned image refs to the Platform renderer without moving deploy
   secrets or rebuilding services in Platform.
 - Keep SpecSpace responsible for producing API/UI images and health endpoints.
-- Switch SpecSpace CI to call the Platform renderer only after the Platform
-  manifest contract is validated in CI.
+- SpecSpace CI calls the Platform renderer through the image-lock handoff while
+  it remains the Timeweb deploy-branch uploader.
+- Move the Timeweb-watched repository/branch and deploy credentials to Platform
+  only through the explicit cutover checklist in
+  [`deployment.md`](deployment.md).
 
 ## Guardrails
 

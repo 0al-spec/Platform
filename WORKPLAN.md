@@ -71,6 +71,8 @@ Exit criteria:
 - Add a Platform-owned Timeweb Cloud Apps manifest-only profile.
   - `scripts/platform.py deploy timeweb-render`
   - `scripts/platform.py deploy timeweb-validate`
+- Define the explicit cutover from SpecSpace-owned Timeweb upload to
+  Platform-owned Timeweb upload after the image-lock handoff is proven.
 - Track the implementation slices in `docs/local-service-launch-plan.md`.
 
 Exit criteria:
