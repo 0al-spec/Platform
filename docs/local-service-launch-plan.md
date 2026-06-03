@@ -100,6 +100,9 @@ Status: in progress.
   - no source builds;
   - no volumes;
   - no required environment interpolation.
+- Accept a `platform_service_image_lock` artifact so service-producing CI can
+  hand digest-pinned image refs to the Platform renderer without moving deploy
+  secrets or rebuilding services in Platform.
 - Keep SpecSpace responsible for producing API/UI images and health endpoints.
 - Switch SpecSpace CI to call the Platform renderer only after the Platform
   manifest contract is validated in CI.

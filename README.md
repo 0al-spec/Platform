@@ -104,6 +104,9 @@ scripts/platform.py deploy timeweb-render \
   --output-dir dist/platform-timeweb-deploy \
   --specspace-api-image-ref ghcr.io/0al-spec/specspace-api@sha256:<digest> \
   --specspace-ui-image-ref ghcr.io/0al-spec/specspace-ui@sha256:<digest>
+scripts/platform.py deploy timeweb-render \
+  --output-dir dist/platform-timeweb-deploy \
+  --image-lock dist/platform-service-images.json
 ```
 
 The CLI reads `PLATFORM_WORKSPACES_CATALOG` when set, then
@@ -146,6 +149,10 @@ Use `deploy timeweb-render` to create a Timeweb Cloud Apps manifest-only deploy
 tree. That profile requires digest-pinned SpecSpace API/UI image refs and
 contains no source files, bind mounts, build sections, or required environment
 interpolation.
+`--image-lock` accepts a JSON `platform_service_image_lock` artifact from a
+service-producing CI job. The lock carries digest-pinned image refs for
+`specspace_api` and `specspace_ui`, letting Platform render one composite deploy
+manifest without storing Timeweb secrets or rebuilding service images.
 
 ## Starter Files
 

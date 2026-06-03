@@ -47,12 +47,28 @@ jobs:
           --file docker-compose.production-web.example.yml
           config
 
+      - name: Write Timeweb image lock fixture
+        run: |
+          cat > dist/platform-service-images.json <<'JSON'
+          {
+            "artifact_kind": "platform_service_image_lock",
+            "schema_version": 1,
+            "services": {
+              "specspace_api": {
+                "image_ref": "ghcr.io/0al-spec/specspace-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "specspace_ui": {
+                "image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+              }
+            }
+          }
+          JSON
+
       - name: Build Timeweb manifest-only deploy tree
         run: >-
           python3 scripts/platform.py deploy timeweb-render
           --output-dir dist/platform-timeweb-deploy
-          --specspace-api-image-ref ghcr.io/0al-spec/specspace-api@sha256:1111111111111111111111111111111111111111111111111111111111111111
-          --specspace-ui-image-ref ghcr.io/0al-spec/specspace-ui@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          --image-lock dist/platform-service-images.json
           --release-commit "${GITHUB_SHA}"
           --release-created-at "1970-01-01T00:00:00Z"
           --format json

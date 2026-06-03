@@ -120,9 +120,37 @@ scripts/platform.py deploy timeweb-render \
   --specspace-api-image-ref ghcr.io/0al-spec/specspace-api@sha256:<digest> \
   --specspace-ui-image-ref ghcr.io/0al-spec/specspace-ui@sha256:<digest>
 
+scripts/platform.py deploy timeweb-render \
+  --output-dir dist/platform-timeweb-deploy \
+  --image-lock dist/platform-service-images.json
+
 scripts/platform.py deploy timeweb-validate \
   --path dist/platform-timeweb-deploy
 ```
+
+`--image-lock` is the preferred handoff from service-producing CI to Platform.
+It keeps the composite deploy renderer independent from how service images are
+built:
+
+```json
+{
+  "artifact_kind": "platform_service_image_lock",
+  "schema_version": 1,
+  "services": {
+    "specspace_api": {
+      "image_ref": "ghcr.io/0al-spec/specspace-api@sha256:<digest>"
+    },
+    "specspace_ui": {
+      "image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:<digest>"
+    }
+  }
+}
+```
+
+Explicit `--specspace-api-image-ref` and `--specspace-ui-image-ref` values, or
+their environment variables, override image lock values. This supports gradual
+CI migration while preserving one Platform-owned renderer for the final
+Timeweb tree.
 
 The rendered tree contains only:
 
@@ -142,8 +170,9 @@ Guardrails:
 - SpecSpace API must read SpecPM metadata through `--specpm-registry-url`.
 
 SpecSpace CI can switch its publish step to invoke this Platform renderer once
-it provides the digest-pinned image refs as inputs. Timeweb secrets or deploy
-variables should move only in that explicit cutover step.
+it provides either the digest-pinned image refs or a `platform_service_image_lock`
+artifact as input. Timeweb secrets or deploy variables should move only in that
+explicit cutover step.
 
 ## Service Boundaries
 
