@@ -1250,6 +1250,11 @@ def load_timeweb_image_lock(path: Path) -> TimewebImageRefs:
         raise PlatformError(
             f"image lock artifact_kind must be platform_service_image_lock: {path}"
         )
+    schema_version = payload.get("schema_version")
+    if schema_version != 1:
+        raise PlatformError(
+            f"image lock schema_version must be 1: {path}"
+        )
     services = payload.get("services")
     if not isinstance(services, dict):
         raise PlatformError(f"image lock {path} must contain a services object")

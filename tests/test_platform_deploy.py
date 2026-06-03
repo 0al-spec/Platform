@@ -385,6 +385,36 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("must not use the mutable latest tag", result.stderr)
 
+    def test_timeweb_render_rejects_unsupported_image_lock_schema_version(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            image_lock = root_path / "platform-service-images.json"
+            image_lock.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "platform_service_image_lock",
+                        "schema_version": 2,
+                        "services": {
+                            "specspace_api": {"image_ref": API_IMAGE},
+                            "specspace_ui": {"image_ref": UI_IMAGE},
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(root_path / "timeweb"),
+                "--image-lock",
+                str(image_lock),
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("schema_version must be 1", result.stderr)
+
     def test_timeweb_validate_accepts_generated_tree(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"
