@@ -1,0 +1,114 @@
+name: Timeweb Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_image_lock_json:
+        description: JSON platform_service_image_lock with digest-pinned service image refs.
+        required: true
+        type: string
+      deploy_branch:
+        description: Platform branch to publish when publish_deploy_branch is true.
+        required: true
+        default: timeweb-deploy
+        type: string
+      publish_deploy_branch:
+        description: Publish the rendered manifest tree to deploy_branch.
+        required: true
+        default: false
+        type: boolean
+      release_commit:
+        description: Release commit to embed in deployment metadata. Defaults to this workflow SHA.
+        required: false
+        type: string
+      release_created_at:
+        description: UTC release timestamp. Defaults to render time when empty.
+        required: false
+        type: string
+      artifact_base_url:
+        description: Static SpecGraph artifact base URL.
+        required: true
+        default: https://specgraph.tech
+        type: string
+      specpm_registry_url:
+        description: Readonly SpecPM registry URL.
+        required: true
+        default: https://specpm.dev
+        type: string
+
+jobs:
+  render-validate-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out Platform
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Write service image lock
+        env:
+          SERVICE_IMAGE_LOCK_JSON: ${{ inputs.service_image_lock_json }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(os.environ["SERVICE_IMAGE_LOCK_JSON"])
+          Path("dist").mkdir(exist_ok=True)
+          Path("dist/platform-service-images.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Render Timeweb deploy tree
+        env:
+          RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
+          RELEASE_CREATED_AT: ${{ inputs.release_created_at }}
+        run: >-
+          python3 scripts/platform.py deploy timeweb-render
+          --output-dir dist/platform-timeweb-deploy
+          --image-lock dist/platform-service-images.json
+          --artifact-base-url "${{ inputs.artifact_base_url }}"
+          --specpm-registry-url "${{ inputs.specpm_registry_url }}"
+          --release-commit "${RELEASE_COMMIT}"
+          --release-created-at "${RELEASE_CREATED_AT}"
+          --format json
+
+      - name: Validate Timeweb deploy tree
+        run: >-
+          python3 scripts/platform.py deploy timeweb-validate
+          --path dist/platform-timeweb-deploy
+          --artifact-base-url "${{ inputs.artifact_base_url }}"
+          --specpm-registry-url "${{ inputs.specpm_registry_url }}"
+
+      - name: Validate Timeweb Compose config
+        working-directory: dist/platform-timeweb-deploy
+        run: docker compose --file docker-compose.yml config
+
+      - name: Upload rendered Timeweb deploy tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-timeweb-deploy
+          path: dist/platform-timeweb-deploy
+
+      - name: Configure git identity
+        if: inputs.publish_deploy_branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Publish Platform Timeweb deploy branch
+        if: inputs.publish_deploy_branch
+        env:
+          PLATFORM_TIMEWEB_DEPLOY_BRANCH: ${{ inputs.deploy_branch }}
+          PLATFORM_RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
+        run: scripts/publish-timeweb-deploy-branch.sh dist/platform-timeweb-deploy
