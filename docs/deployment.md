@@ -174,6 +174,57 @@ it provides either the digest-pinned image refs or a `platform_service_image_loc
 artifact as input. Timeweb secrets or deploy variables should move only in that
 explicit cutover step.
 
+## Timeweb Ownership Cutover
+
+The cutover from SpecSpace-owned upload to Platform-owned upload should be an
+explicit release operation, not an incidental renderer change.
+
+Current state:
+
+- SpecSpace CI builds and publishes the API/UI images.
+- SpecSpace CI writes `platform_service_image_lock`.
+- SpecSpace CI invokes the Platform renderer.
+- SpecSpace CI still publishes the rendered manifest tree to the Timeweb-watched
+  branch.
+- Timeweb Cloud Apps is still configured to read the SpecSpace repository and
+  branch.
+
+Platform ownership is ready only when all of these are true:
+
+- Platform CI can consume a real `platform_service_image_lock` from the
+  service-producing pipeline or from a trusted artifact source.
+- Platform CI can render and validate the manifest-only deploy tree with the
+  same guardrails used by `deploy timeweb-validate`.
+- The generated tree is byte-for-byte compatible in shape with the current
+  Timeweb branch contract: root `docker-compose.yml`, `README.md`, and
+  `platform-timeweb-deploy.json` only.
+- Timeweb deploy credentials or repository-write permissions have been moved to
+  Platform CI without copying secrets into git or logs.
+- A rollback branch/ref is identified before changing Timeweb application
+  settings.
+
+Cutover sequence:
+
+1. Keep SpecSpace as the image producer.
+2. Add a Platform CI job that fetches or receives `platform_service_image_lock`.
+3. Render and validate `dist/platform-timeweb-deploy` in Platform CI.
+4. Publish that generated tree to a Platform-owned deploy branch.
+5. Validate the branch with `scripts/platform.py deploy timeweb-validate` and
+   `docker compose --file docker-compose.yml config`.
+6. Change the Timeweb Cloud Apps repository/branch setting from SpecSpace to the
+   Platform deploy branch.
+7. Trigger one deploy and verify `/api/v1/health` reports the expected release
+   commit.
+8. Disable the old SpecSpace deploy-branch publisher only after the Platform
+   deploy has been observed healthy.
+
+Rollback:
+
+- Repoint Timeweb Cloud Apps back to the previous SpecSpace repository/branch.
+- Re-enable the SpecSpace publisher if it was disabled.
+- Keep the same image digests in the rollback deploy unless the image itself is
+  the failure source.
+
 ## Service Boundaries
 
 The single-node profile keeps separate service processes and containers even
