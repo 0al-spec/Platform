@@ -203,12 +203,26 @@ Platform ownership is ready only when all of these are true:
 - A rollback branch/ref is identified before changing Timeweb application
   settings.
 
+Platform exposes the cutover publisher as a manual GitHub Actions workflow:
+
+- workflow: `Timeweb Publish`;
+- input: `service_image_lock_json`, containing a
+  `platform_service_image_lock` JSON object;
+- input: `publish_deploy_branch`, default `false`;
+- output artifact: `platform-timeweb-deploy`;
+- optional branch publish: enabled only when `publish_deploy_branch=true`.
+
+Run it first with `publish_deploy_branch=false` to verify rendering, validation,
+and the uploaded deploy artifact without changing any branch watched by Timeweb.
+
 Cutover sequence:
 
 1. Keep SpecSpace as the image producer.
-2. Add a Platform CI job that fetches or receives `platform_service_image_lock`.
-3. Render and validate `dist/platform-timeweb-deploy` in Platform CI.
-4. Publish that generated tree to a Platform-owned deploy branch.
+2. Run the Platform `Timeweb Publish` workflow with `publish_deploy_branch=false`
+   and a real `platform_service_image_lock`.
+3. Inspect the uploaded `platform-timeweb-deploy` artifact.
+4. Run the Platform `Timeweb Publish` workflow with `publish_deploy_branch=true`
+   to publish the generated tree to a Platform-owned deploy branch.
 5. Validate the branch with `scripts/platform.py deploy timeweb-validate` and
    `docker compose --file docker-compose.yml config`.
 6. Change the Timeweb Cloud Apps repository/branch setting from SpecSpace to the
