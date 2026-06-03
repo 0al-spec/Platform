@@ -69,6 +69,13 @@ class TimewebManifest:
     manifest: Path
 
 
+@dataclass(frozen=True)
+class TimewebImageRefs:
+    specspace_api_image_ref: str
+    specspace_ui_image_ref: str
+    image_lock: Path | None = None
+
+
 def load_yaml(path: Path) -> dict[str, Any]:
     try:
         import yaml
@@ -1210,6 +1217,81 @@ def require_digest_image_ref(value: str, *, label: str) -> None:
         )
 
 
+def image_ref_from_lock_service(
+    services: dict[str, Any],
+    service_id: str,
+    *,
+    lock_path: Path,
+) -> str:
+    service = services.get(service_id)
+    if not isinstance(service, dict):
+        raise PlatformError(
+            f"image lock {lock_path} must contain services.{service_id}"
+        )
+    image_ref = service.get("image_ref")
+    if not isinstance(image_ref, str) or not image_ref:
+        raise PlatformError(
+            f"image lock {lock_path} must contain services.{service_id}.image_ref"
+        )
+    return image_ref
+
+
+def load_timeweb_image_lock(path: Path) -> TimewebImageRefs:
+    if not path.is_file():
+        raise PlatformError(f"image lock does not exist: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise PlatformError(f"image lock is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise PlatformError(f"image lock must be a JSON object: {path}")
+    artifact_kind = payload.get("artifact_kind")
+    if artifact_kind != "platform_service_image_lock":
+        raise PlatformError(
+            f"image lock artifact_kind must be platform_service_image_lock: {path}"
+        )
+    services = payload.get("services")
+    if not isinstance(services, dict):
+        raise PlatformError(f"image lock {path} must contain a services object")
+    return TimewebImageRefs(
+        specspace_api_image_ref=image_ref_from_lock_service(
+            services,
+            "specspace_api",
+            lock_path=path,
+        ),
+        specspace_ui_image_ref=image_ref_from_lock_service(
+            services,
+            "specspace_ui",
+            lock_path=path,
+        ),
+        image_lock=path,
+    )
+
+
+def resolve_timeweb_image_refs(args: argparse.Namespace) -> TimewebImageRefs:
+    locked = (
+        load_timeweb_image_lock(Path(args.image_lock))
+        if args.image_lock
+        else TimewebImageRefs("", "")
+    )
+    refs = TimewebImageRefs(
+        specspace_api_image_ref=args.specspace_api_image_ref
+        or locked.specspace_api_image_ref,
+        specspace_ui_image_ref=args.specspace_ui_image_ref
+        or locked.specspace_ui_image_ref,
+        image_lock=locked.image_lock,
+    )
+    require_digest_image_ref(
+        refs.specspace_api_image_ref,
+        label="SPECSPACE API image ref",
+    )
+    require_digest_image_ref(
+        refs.specspace_ui_image_ref,
+        label="SPECSPACE UI image ref",
+    )
+    return refs
+
+
 def safe_output_dir(path: Path) -> None:
     if str(path) in ("", "/", ".", ".."):
         raise PlatformError(f"refusing unsafe output directory: {path}")
@@ -1257,8 +1339,7 @@ def render_timeweb_compose(
 
 
 def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
-    require_digest_image_ref(args.specspace_api_image_ref, label="SPECSPACE API image ref")
-    require_digest_image_ref(args.specspace_ui_image_ref, label="SPECSPACE UI image ref")
+    image_refs = resolve_timeweb_image_refs(args)
 
     output_dir = Path(args.output_dir)
     safe_output_dir(output_dir)
@@ -1279,8 +1360,8 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
 
     compose_file.write_text(
         render_timeweb_compose(
-            api_image_ref=args.specspace_api_image_ref,
-            ui_image_ref=args.specspace_ui_image_ref,
+            api_image_ref=image_refs.specspace_api_image_ref,
+            ui_image_ref=image_refs.specspace_ui_image_ref,
             artifact_base_url=args.artifact_base_url,
             specpm_registry_url=args.specpm_registry_url,
             release_commit=release_commit,
@@ -1295,8 +1376,9 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         "## Release\n\n"
         f"- Source commit: `{release_commit}`\n"
         f"- Generated at: `{release_created_at}`\n"
-        f"- API image: `{args.specspace_api_image_ref}`\n"
-        f"- UI image: `{args.specspace_ui_image_ref}`\n"
+        f"- API image: `{image_refs.specspace_api_image_ref}`\n"
+        f"- UI image: `{image_refs.specspace_ui_image_ref}`\n"
+        f"- Image lock: `{image_refs.image_lock or '(not used)'}`\n"
         f"- SpecGraph artifact source: `{args.artifact_base_url}`\n"
         f"- SpecPM registry source: `{args.specpm_registry_url}`\n\n"
         "## Notes\n\n"
@@ -1315,8 +1397,9 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                 "readme": readme.name,
                 "release_commit": release_commit,
                 "release_created_at": release_created_at,
-                "specspace_api_image_ref": args.specspace_api_image_ref,
-                "specspace_ui_image_ref": args.specspace_ui_image_ref,
+                "image_lock": str(image_refs.image_lock) if image_refs.image_lock else None,
+                "specspace_api_image_ref": image_refs.specspace_api_image_ref,
+                "specspace_ui_image_ref": image_refs.specspace_ui_image_ref,
                 "artifact_base_url": args.artifact_base_url,
                 "specpm_registry_url": args.specpm_registry_url,
             },
@@ -1761,6 +1844,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         required=True,
         help="Directory to create or replace with the Timeweb deploy tree.",
+    )
+    timeweb_render_parser.add_argument(
+        "--image-lock",
+        default=os.environ.get("PLATFORM_SERVICE_IMAGE_LOCK", ""),
+        help=(
+            "JSON platform_service_image_lock file with digest-pinned service "
+            "image refs. Explicit image-ref flags or env vars override lock values."
+        ),
     )
     timeweb_render_parser.add_argument(
         "--specspace-api-image-ref",
