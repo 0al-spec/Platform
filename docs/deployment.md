@@ -87,9 +87,10 @@ contract.
 
 ## CI Ownership
 
-Timeweb Cloud Apps deployment is moving toward Platform ownership. Platform now
-defines a Timeweb-compatible manifest-only deploy tree, while SpecSpace remains
-the producer of the API/UI images and deployment health signal.
+Timeweb Cloud Apps deployment is Platform-owned. Platform defines the
+Timeweb-compatible manifest-only deploy tree and publishes the deploy branch
+watched by Timeweb. SpecSpace remains the producer of the API/UI images and the
+deployment health signal.
 
 Platform CI publishes a `platform-deploy-bundle` artifact for the
 `production-web` profile. The bundle targets Compose-capable single-node hosts
@@ -105,10 +106,10 @@ The bundle deliberately ships `.env.example`, not `.env`. Machine-local values
 such as `ORG_ROOT`, public ports, and image pins remain outside git and outside
 the Platform artifact.
 
-The current SpecSpace Timeweb Cloud Apps path is also manifest-only, uses
-digest-pinned images, and avoids bind mounts and required environment
-interpolation. Do not switch that path to the single-node Platform bundle
-directly. Use the Platform Timeweb manifest profile instead.
+The Timeweb Cloud Apps path is manifest-only, uses digest-pinned images, and
+avoids bind mounts and required environment interpolation. Do not switch that
+path to the single-node Platform bundle directly. Use the Platform Timeweb
+manifest profile instead.
 
 ## Timeweb Manifest Profile
 
@@ -148,9 +149,9 @@ built:
 ```
 
 Explicit `--specspace-api-image-ref` and `--specspace-ui-image-ref` values, or
-their environment variables, override image lock values. This supports gradual
-CI migration while preserving one Platform-owned renderer for the final
-Timeweb tree.
+their environment variables, override image lock values. This keeps local
+operator checks possible while preserving one Platform-owned renderer for the
+production Timeweb tree.
 
 The rendered tree contains only:
 
@@ -169,75 +170,35 @@ Guardrails:
 - SpecSpace API must read SpecGraph artifacts through `--artifact-base-url`;
 - SpecSpace API must read SpecPM metadata through `--specpm-registry-url`.
 
-SpecSpace CI can switch its publish step to invoke this Platform renderer once
-it provides either the digest-pinned image refs or a `platform_service_image_lock`
-artifact as input. Timeweb secrets or deploy variables should move only in that
-explicit cutover step.
+## Timeweb Production Control Plane
 
-## Timeweb Ownership Cutover
-
-The cutover from SpecSpace-owned upload to Platform-owned upload should be an
-explicit release operation, not an incidental renderer change.
-
-Current state:
+The production control plane is split by ownership boundary:
 
 - SpecSpace CI builds and publishes the API/UI images.
 - SpecSpace CI writes `platform_service_image_lock`.
-- SpecSpace CI invokes the Platform renderer.
-- SpecSpace CI still publishes the rendered manifest tree to the Timeweb-watched
-  branch.
-- Timeweb Cloud Apps is still configured to read the SpecSpace repository and
-  branch.
+- SpecSpace CI triggers Platform's `Timeweb Publish` workflow.
+- Platform CI renders and validates the manifest-only deploy tree.
+- Platform CI publishes the generated tree to `0al-spec/Platform:timeweb-deploy`.
+- Timeweb Cloud Apps deploys from `0al-spec/Platform:timeweb-deploy`.
 
-Platform ownership is ready only when all of these are true:
-
-- Platform CI can consume a real `platform_service_image_lock` from the
-  service-producing pipeline or from a trusted artifact source.
-- Platform CI can render and validate the manifest-only deploy tree with the
-  same guardrails used by `deploy timeweb-validate`.
-- The generated tree is byte-for-byte compatible in shape with the current
-  Timeweb branch contract: root `docker-compose.yml`, `README.md`, and
-  `platform-timeweb-deploy.json` only.
-- Timeweb deploy credentials or repository-write permissions have been moved to
-  Platform CI without copying secrets into git or logs.
-- A rollback branch/ref is identified before changing Timeweb application
-  settings.
-
-Platform exposes the cutover publisher as a manual GitHub Actions workflow:
+Platform exposes the publisher as a GitHub Actions workflow:
 
 - workflow: `Timeweb Publish`;
 - input: `service_image_lock_json`, containing a
   `platform_service_image_lock` JSON object;
 - input: `publish_deploy_branch`, default `false`;
 - output artifact: `platform-timeweb-deploy`;
-- optional branch publish: enabled only when `publish_deploy_branch=true`.
+- branch publish: enabled when `publish_deploy_branch=true`.
 
-Run it first with `publish_deploy_branch=false` to verify rendering, validation,
-and the uploaded deploy artifact without changing any branch watched by Timeweb.
+SpecSpace should call the workflow with `publish_deploy_branch=true` for the
+production path. Manual operator checks can use `publish_deploy_branch=false` to
+verify rendering, validation, and the uploaded deploy artifact without changing
+the branch watched by Timeweb.
 
-Cutover sequence:
-
-1. Keep SpecSpace as the image producer.
-2. Run the Platform `Timeweb Publish` workflow with `publish_deploy_branch=false`
-   and a real `platform_service_image_lock`.
-3. Inspect the uploaded `platform-timeweb-deploy` artifact.
-4. Run the Platform `Timeweb Publish` workflow with `publish_deploy_branch=true`
-   to publish the generated tree to a Platform-owned deploy branch.
-5. Validate the branch with `scripts/platform.py deploy timeweb-validate` and
-   `docker compose --file docker-compose.yml config`.
-6. Change the Timeweb Cloud Apps repository/branch setting from SpecSpace to the
-   Platform deploy branch.
-7. Trigger one deploy and verify `/api/v1/health` reports the expected release
-   commit.
-8. Disable the old SpecSpace deploy-branch publisher only after the Platform
-   deploy has been observed healthy.
-
-Rollback:
-
-- Repoint Timeweb Cloud Apps back to the previous SpecSpace repository/branch.
-- Re-enable the SpecSpace publisher if it was disabled.
-- Keep the same image digests in the rollback deploy unless the image itself is
-  the failure source.
+Rollback is Platform-side: republish the last known-good image lock, or reset
+`timeweb-deploy` to a known-good generated deploy commit and redeploy Timeweb.
+Keep the same image digests in the rollback deploy unless the image itself is
+the failure source.
 
 ## Service Boundaries
 

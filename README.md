@@ -153,9 +153,10 @@ interpolation.
 service-producing CI job. The lock carries digest-pinned image refs for
 `specspace_api` and `specspace_ui`, letting Platform render one composite deploy
 manifest without storing Timeweb secrets or rebuilding service images.
-The manual GitHub Actions workflow `Timeweb Publish` uses the same image-lock
-contract to render, validate, upload, and optionally publish a Platform-owned
-Timeweb deploy branch during the explicit cutover.
+The GitHub Actions workflow `Timeweb Publish` is the production Timeweb deploy
+publisher. SpecSpace CI produces the service image lock and triggers this
+workflow; Platform renders, validates, and publishes the `timeweb-deploy` branch
+watched by Timeweb.
 
 ## Starter Files
 

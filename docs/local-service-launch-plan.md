@@ -77,9 +77,9 @@ Status: implemented in PR #12.
 - Keep machine-local `.env` values outside git.
 - Prefer image tags and immutable inputs over rebuilding from live checkouts on
   the VPS.
-- Do not treat this bundle as the current Timeweb Cloud Apps manifest. SpecSpace
-  currently owns that manifest-only path because it avoids bind mounts and
-  required environment interpolation.
+- Do not treat this bundle as the current Timeweb Cloud Apps manifest. Platform
+  owns that manifest-only path through `deploy timeweb-render` because Timeweb
+  requires no bind mounts and no required environment interpolation.
 
 ### Slice 5: Image Hardening
 
@@ -91,8 +91,7 @@ Status: planned.
 
 ### Slice 6: Timeweb Manifest Ownership
 
-Status: renderer implemented; SpecSpace CI handoff implemented; Platform-owned
-uploader cutover planned.
+Status: complete for current production path.
 
 - Add a Platform-owned Timeweb Cloud Apps manifest renderer.
 - Preserve the existing Timeweb constraints from SpecSpace:
@@ -105,11 +104,10 @@ uploader cutover planned.
   hand digest-pinned image refs to the Platform renderer without moving deploy
   secrets or rebuilding services in Platform.
 - Keep SpecSpace responsible for producing API/UI images and health endpoints.
-- SpecSpace CI calls the Platform renderer through the image-lock handoff while
-  it remains the Timeweb deploy-branch uploader.
-- Move the Timeweb-watched repository/branch and deploy credentials to Platform
-  only through the explicit cutover checklist in
-  [`deployment.md`](deployment.md).
+- SpecSpace CI calls Platform's `Timeweb Publish` workflow through the
+  image-lock handoff.
+- Platform publishes `0al-spec/Platform:timeweb-deploy`, the branch watched by
+  Timeweb.
 
 ## Guardrails
 
