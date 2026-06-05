@@ -2,18 +2,18 @@ name: specspace
 
 services:
   app:
-    image: "ghcr.io/0al-spec/specspace-ui@sha256:36a16dbdf3bfccf791cc81e0f768a401daa0801786e19c8b41c2b350c9adddaf"
+    image: "ghcr.io/0al-spec/specspace-ui@sha256:64b085c439cf5bfe55796ff1ec5d8c8433569e6b29f3466624471c806b57f292"
     ports:
       - "${SPECSPACE_UI_PORT:-5173}:80"
     depends_on:
       - specspace-api
 
   specspace-api:
-    image: "ghcr.io/0al-spec/specspace-api@sha256:610be80bb5d04c8282653a05269e8cb425a31af85b4c40453e4385aab1bfc139"
+    image: "ghcr.io/0al-spec/specspace-api@sha256:93ecc68bc1e8eb79b43a71284b916e06713b1ee386ed6c382ffe6d56265dc999"
     environment:
-      SPECSPACE_API_IMAGE_REF: "ghcr.io/0al-spec/specspace-api@sha256:610be80bb5d04c8282653a05269e8cb425a31af85b4c40453e4385aab1bfc139"
-      SPECSPACE_UI_IMAGE_REF: "ghcr.io/0al-spec/specspace-ui@sha256:36a16dbdf3bfccf791cc81e0f768a401daa0801786e19c8b41c2b350c9adddaf"
-      SPECSPACE_RELEASE_COMMIT: "1b00c09f5452dfb3028aa2732d2c771acc1749ba"
+      SPECSPACE_API_IMAGE_REF: "ghcr.io/0al-spec/specspace-api@sha256:93ecc68bc1e8eb79b43a71284b916e06713b1ee386ed6c382ffe6d56265dc999"
+      SPECSPACE_UI_IMAGE_REF: "ghcr.io/0al-spec/specspace-ui@sha256:64b085c439cf5bfe55796ff1ec5d8c8433569e6b29f3466624471c806b57f292"
+      SPECSPACE_RELEASE_COMMIT: "fd0b6b5e26ade95891f286db30e52ec8428e6b6e"
     command:
       - python
       - viewer/server.py
