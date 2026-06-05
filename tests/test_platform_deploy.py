@@ -290,8 +290,26 @@ class PlatformDeployTests(unittest.TestCase):
             self.assertNotIn("volumes:", compose)
             self.assertNotIn("build:", compose)
             self.assertNotIn("${ORG_ROOT", compose)
+            self.assertIn(
+                'SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED: "true"',
+                compose,
+            )
+            self.assertIn('SPECSPACE_HYPERPROMPT_WORK_DIR: "/tmp"', compose)
+            self.assertIn(
+                'SPECSPACE_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS: "60"',
+                compose,
+            )
+            self.assertIn('SPECSPACE_HYPERPROMPT_MAX_INPUT_BYTES: "1048576"', compose)
+            self.assertIn('SPECSPACE_HYPERPROMPT_MAX_OUTPUT_BYTES: "2097152"', compose)
+            self.assertIn(
+                'SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT: "20"',
+                compose,
+            )
             self.assertEqual(manifest["artifact_kind"], "platform_timeweb_deploy_manifest")
             self.assertEqual(manifest["release_commit"], "abc123")
+            self.assertTrue(manifest["hyperprompt_http_compile_enabled"])
+            self.assertEqual(manifest["hyperprompt_work_dir"], "/tmp")
+            self.assertEqual(manifest["hyperprompt_compile_timeout_seconds"], "60")
 
     def test_timeweb_render_rejects_mutable_image_ref(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -352,6 +370,65 @@ class PlatformDeployTests(unittest.TestCase):
             self.assertEqual(manifest["image_lock"], str(image_lock))
             self.assertEqual(manifest["specspace_api_image_ref"], API_IMAGE)
             self.assertEqual(manifest["specspace_ui_image_ref"], UI_IMAGE)
+
+    def test_timeweb_render_can_disable_hyperprompt_http_compile(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--disable-hyperprompt-http-compile",
+            )
+            result = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--disable-hyperprompt-http-compile",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(render.returncode, 0, render.stderr)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            compose = (output_dir / "docker-compose.yml").read_text(encoding="utf-8")
+            manifest = json.loads(
+                (output_dir / "platform-timeweb-deploy.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertIn(
+                'SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED: "false"',
+                compose,
+            )
+            self.assertNotIn("SPECSPACE_HYPERPROMPT_WORK_DIR", compose)
+            self.assertFalse(manifest["hyperprompt_http_compile_enabled"])
+            self.assertIsNone(manifest["hyperprompt_work_dir"])
+            self.assertTrue(json.loads(result.stdout)["valid"])
+
+    def test_timeweb_render_rejects_invalid_hyperprompt_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(Path(root) / "timeweb"),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--hyperprompt-max-output-bytes",
+                "0",
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Hyperprompt max output bytes must be a positive integer", result.stderr)
 
     def test_timeweb_render_validates_image_lock_refs(self) -> None:
         with tempfile.TemporaryDirectory() as root:
