@@ -153,6 +153,9 @@ interpolation.
 service-producing CI job. The lock carries digest-pinned image refs for
 `specspace_api` and `specspace_ui`, letting Platform render one composite deploy
 manifest without storing Timeweb secrets or rebuilding service images.
+The Timeweb renderer also enables SpecSpace HTTP-provider Hyperprompt compile
+with a `/tmp` scratch workspace and bounded runtime limits; use
+`--disable-hyperprompt-http-compile` for a manifest-level rollback.
 The GitHub Actions workflow `Timeweb Publish` is the production Timeweb deploy
 publisher. SpecSpace CI produces the service image lock and triggers this
 workflow; Platform renders, validates, and publishes the `timeweb-deploy` branch

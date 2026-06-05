@@ -26,6 +26,11 @@ DEFAULT_LOCAL_ENV = REPO_ROOT / ".env"
 SPECGRAPH_SUPERVISOR_REL = Path("tools") / "supervisor.py"
 PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 INIT_TIMEOUT_SECONDS = 120
+DEFAULT_TIMEWEB_HYPERPROMPT_WORK_DIR = "/tmp"
+DEFAULT_TIMEWEB_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS = "60"
+DEFAULT_TIMEWEB_HYPERPROMPT_MAX_INPUT_BYTES = "1048576"
+DEFAULT_TIMEWEB_HYPERPROMPT_MAX_OUTPUT_BYTES = "2097152"
+DEFAULT_TIMEWEB_HYPERPROMPT_BUNDLE_RETENTION_COUNT = "20"
 DIGEST_IMAGE_RE = re.compile(
     r"^[a-z0-9][a-z0-9._/-]*(?::[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$"
 )
@@ -74,6 +79,16 @@ class TimewebImageRefs:
     specspace_api_image_ref: str
     specspace_ui_image_ref: str
     image_lock: Path | None = None
+
+
+@dataclass(frozen=True)
+class TimewebHyperpromptRuntime:
+    http_compile_enabled: bool
+    work_dir: str
+    compile_timeout_seconds: str
+    max_input_bytes: str
+    max_output_bytes: str
+    bundle_retention_count: str
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -1302,6 +1317,67 @@ def safe_output_dir(path: Path) -> None:
         raise PlatformError(f"refusing unsafe output directory: {path}")
 
 
+def bool_from_env(name: str, *, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def positive_int_string(value: str, *, label: str) -> str:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise PlatformError(f"{label} must be a positive integer, got {value!r}") from exc
+    if parsed < 1:
+        raise PlatformError(f"{label} must be a positive integer, got {value!r}")
+    return str(parsed)
+
+
+def timeweb_hyperprompt_runtime_from_args(args: argparse.Namespace) -> TimewebHyperpromptRuntime:
+    work_dir = str(args.hyperprompt_work_dir)
+    if args.hyperprompt_http_compile_enabled and not work_dir:
+        raise PlatformError("Hyperprompt work dir must be set when HTTP compile is enabled")
+    return TimewebHyperpromptRuntime(
+        http_compile_enabled=bool(args.hyperprompt_http_compile_enabled),
+        work_dir=work_dir,
+        compile_timeout_seconds=positive_int_string(
+            str(args.hyperprompt_compile_timeout_seconds),
+            label="Hyperprompt compile timeout seconds",
+        ),
+        max_input_bytes=positive_int_string(
+            str(args.hyperprompt_max_input_bytes),
+            label="Hyperprompt max input bytes",
+        ),
+        max_output_bytes=positive_int_string(
+            str(args.hyperprompt_max_output_bytes),
+            label="Hyperprompt max output bytes",
+        ),
+        bundle_retention_count=positive_int_string(
+            str(args.hyperprompt_bundle_retention_count),
+            label="Hyperprompt bundle retention count",
+        ),
+    )
+
+
+def render_timeweb_hyperprompt_environment(runtime: TimewebHyperpromptRuntime) -> str:
+    lines = [
+        f"      SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED: "
+        f"\"{str(runtime.http_compile_enabled).lower()}\"\n",
+    ]
+    if runtime.http_compile_enabled:
+        lines += [
+            f"      SPECSPACE_HYPERPROMPT_WORK_DIR: \"{runtime.work_dir}\"\n",
+            f"      SPECSPACE_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS: "
+            f"\"{runtime.compile_timeout_seconds}\"\n",
+            f"      SPECSPACE_HYPERPROMPT_MAX_INPUT_BYTES: \"{runtime.max_input_bytes}\"\n",
+            f"      SPECSPACE_HYPERPROMPT_MAX_OUTPUT_BYTES: \"{runtime.max_output_bytes}\"\n",
+            f"      SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT: "
+            f"\"{runtime.bundle_retention_count}\"\n",
+        ]
+    return "".join(lines)
+
+
 def render_timeweb_compose(
     *,
     api_image_ref: str,
@@ -1309,6 +1385,7 @@ def render_timeweb_compose(
     artifact_base_url: str,
     specpm_registry_url: str,
     release_commit: str,
+    hyperprompt_runtime: TimewebHyperpromptRuntime,
 ) -> str:
     return (
         "name: specspace\n\n"
@@ -1325,6 +1402,7 @@ def render_timeweb_compose(
         f"      SPECSPACE_API_IMAGE_REF: \"{api_image_ref}\"\n"
         f"      SPECSPACE_UI_IMAGE_REF: \"{ui_image_ref}\"\n"
         f"      SPECSPACE_RELEASE_COMMIT: \"{release_commit}\"\n"
+        f"{render_timeweb_hyperprompt_environment(hyperprompt_runtime)}"
         "    command:\n"
         "      - python\n"
         "      - viewer/server.py\n"
@@ -1345,6 +1423,7 @@ def render_timeweb_compose(
 
 def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
     image_refs = resolve_timeweb_image_refs(args)
+    hyperprompt_runtime = timeweb_hyperprompt_runtime_from_args(args)
 
     output_dir = Path(args.output_dir)
     safe_output_dir(output_dir)
@@ -1370,6 +1449,7 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
             artifact_base_url=args.artifact_base_url,
             specpm_registry_url=args.specpm_registry_url,
             release_commit=release_commit,
+            hyperprompt_runtime=hyperprompt_runtime,
         ),
         encoding="utf-8",
     )
@@ -1385,7 +1465,11 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         f"- UI image: `{image_refs.specspace_ui_image_ref}`\n"
         f"- Image lock: `{image_refs.image_lock or '(not used)'}`\n"
         f"- SpecGraph artifact source: `{args.artifact_base_url}`\n"
-        f"- SpecPM registry source: `{args.specpm_registry_url}`\n\n"
+        f"- SpecPM registry source: `{args.specpm_registry_url}`\n"
+        f"- HTTP Hyperprompt compile: "
+        f"`{'enabled' if hyperprompt_runtime.http_compile_enabled else 'disabled'}`\n"
+        f"- Hyperprompt scratch workspace: "
+        f"`{hyperprompt_runtime.work_dir if hyperprompt_runtime.http_compile_enabled else '(not used)'}`\n\n"
         "## Notes\n\n"
         "- The first service is named `app` because Timeweb proxies the public "
         "domain to the first compose service.\n"
@@ -1406,6 +1490,22 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                 "specspace_api_image_ref": image_refs.specspace_api_image_ref,
                 "specspace_ui_image_ref": image_refs.specspace_ui_image_ref,
                 "artifact_base_url": args.artifact_base_url,
+                "hyperprompt_http_compile_enabled": (
+                    hyperprompt_runtime.http_compile_enabled
+                ),
+                "hyperprompt_work_dir": (
+                    hyperprompt_runtime.work_dir
+                    if hyperprompt_runtime.http_compile_enabled
+                    else None
+                ),
+                "hyperprompt_compile_timeout_seconds": (
+                    hyperprompt_runtime.compile_timeout_seconds
+                ),
+                "hyperprompt_max_input_bytes": hyperprompt_runtime.max_input_bytes,
+                "hyperprompt_max_output_bytes": hyperprompt_runtime.max_output_bytes,
+                "hyperprompt_bundle_retention_count": (
+                    hyperprompt_runtime.bundle_retention_count
+                ),
                 "specpm_registry_url": args.specpm_registry_url,
             },
             indent=2,
@@ -1463,6 +1563,23 @@ def command_for_service(blocks: dict[str, list[str]], service_name: str) -> list
     return values
 
 
+def environment_for_service(blocks: dict[str, list[str]], service_name: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    in_environment = False
+    for line in blocks.get(service_name, []):
+        if re.match(r"^    environment:\s*$", line):
+            in_environment = True
+            continue
+        if in_environment:
+            match = re.match(r"^      ([A-Za-z_][A-Za-z0-9_]*):\s*(.*?)\s*$", line)
+            if match:
+                values[match.group(1)] = match.group(2).strip().strip('"').strip("'")
+                continue
+            if line.strip() and not line.startswith("      "):
+                break
+    return values
+
+
 def command_value_after(command: list[str], flag: str) -> str | None:
     try:
         index = command.index(flag)
@@ -1486,6 +1603,7 @@ def validate_timeweb_manifest_tree(
     *,
     artifact_base_url: str,
     specpm_registry_url: str,
+    hyperprompt_runtime: TimewebHyperpromptRuntime,
 ) -> list[str]:
     target_file = "docker-compose.yml"
     compose_path = root / target_file
@@ -1546,6 +1664,37 @@ def validate_timeweb_manifest_tree(
             f"{specpm_registry_url}, got {actual_specpm_registry_url}"
         )
 
+    api_environment = environment_for_service(blocks, "specspace-api")
+    expected_compile_enabled = str(hyperprompt_runtime.http_compile_enabled).lower()
+    actual_compile_enabled = api_environment.get(
+        "SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED"
+    )
+    if actual_compile_enabled != expected_compile_enabled:
+        errors.append(
+            f"{target_file} specspace-api environment must set "
+            "SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED to "
+            f"{expected_compile_enabled}, got {actual_compile_enabled!r}"
+        )
+    if hyperprompt_runtime.http_compile_enabled:
+        expected_hyperprompt_environment = {
+            "SPECSPACE_HYPERPROMPT_WORK_DIR": hyperprompt_runtime.work_dir,
+            "SPECSPACE_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS": (
+                hyperprompt_runtime.compile_timeout_seconds
+            ),
+            "SPECSPACE_HYPERPROMPT_MAX_INPUT_BYTES": hyperprompt_runtime.max_input_bytes,
+            "SPECSPACE_HYPERPROMPT_MAX_OUTPUT_BYTES": hyperprompt_runtime.max_output_bytes,
+            "SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT": (
+                hyperprompt_runtime.bundle_retention_count
+            ),
+        }
+        for key, expected in expected_hyperprompt_environment.items():
+            actual = api_environment.get(key)
+            if actual != expected:
+                errors.append(
+                    f"{target_file} specspace-api environment must set {key} "
+                    f"to {expected}, got {actual!r}"
+                )
+
     for service_name in ("app", "specspace-api"):
         image = image_for_service(blocks, service_name)
         if image is None:
@@ -1560,10 +1709,12 @@ def validate_timeweb_manifest_tree(
 
 def deploy_timeweb_render(args: argparse.Namespace) -> int:
     manifest = write_timeweb_manifest(args)
+    hyperprompt_runtime = timeweb_hyperprompt_runtime_from_args(args)
     errors = validate_timeweb_manifest_tree(
         manifest.output_dir,
         artifact_base_url=args.artifact_base_url,
         specpm_registry_url=args.specpm_registry_url,
+        hyperprompt_runtime=hyperprompt_runtime,
     )
     if errors:
         raise PlatformError("generated Timeweb manifest is invalid: " + "; ".join(errors))
@@ -1586,10 +1737,12 @@ def deploy_timeweb_render(args: argparse.Namespace) -> int:
 
 def deploy_timeweb_validate(args: argparse.Namespace) -> int:
     root = Path(args.path)
+    hyperprompt_runtime = timeweb_hyperprompt_runtime_from_args(args)
     errors = validate_timeweb_manifest_tree(
         root,
         artifact_base_url=args.artifact_base_url,
         specpm_registry_url=args.specpm_registry_url,
+        hyperprompt_runtime=hyperprompt_runtime,
     )
     payload = {
         "action": "timeweb-validate",
@@ -1841,6 +1994,69 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bundle_parser.set_defaults(func=deploy_bundle, env_file=None)
 
+    def add_timeweb_hyperprompt_args(command_parser: argparse.ArgumentParser) -> None:
+        command_parser.set_defaults(
+            hyperprompt_http_compile_enabled=bool_from_env(
+                "SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED",
+                default=True,
+            )
+        )
+        command_parser.add_argument(
+            "--enable-hyperprompt-http-compile",
+            dest="hyperprompt_http_compile_enabled",
+            action="store_true",
+            help=(
+                "Render SpecSpace HTTP-provider Hyperprompt compile settings "
+                "(default for Timeweb production)."
+            ),
+        )
+        command_parser.add_argument(
+            "--disable-hyperprompt-http-compile",
+            dest="hyperprompt_http_compile_enabled",
+            action="store_false",
+            help="Render SpecSpace HTTP-provider Hyperprompt compile as disabled.",
+        )
+        command_parser.add_argument(
+            "--hyperprompt-work-dir",
+            default=os.environ.get(
+                "SPECSPACE_HYPERPROMPT_WORK_DIR",
+                DEFAULT_TIMEWEB_HYPERPROMPT_WORK_DIR,
+            ),
+            help="Writable scratch directory for SpecSpace Hyperprompt compile.",
+        )
+        command_parser.add_argument(
+            "--hyperprompt-compile-timeout-seconds",
+            default=os.environ.get(
+                "SPECSPACE_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS",
+                DEFAULT_TIMEWEB_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS,
+            ),
+            help="SpecSpace Hyperprompt compile subprocess timeout.",
+        )
+        command_parser.add_argument(
+            "--hyperprompt-max-input-bytes",
+            default=os.environ.get(
+                "SPECSPACE_HYPERPROMPT_MAX_INPUT_BYTES",
+                DEFAULT_TIMEWEB_HYPERPROMPT_MAX_INPUT_BYTES,
+            ),
+            help="Maximum generated Markdown input bytes accepted by SpecSpace.",
+        )
+        command_parser.add_argument(
+            "--hyperprompt-max-output-bytes",
+            default=os.environ.get(
+                "SPECSPACE_HYPERPROMPT_MAX_OUTPUT_BYTES",
+                DEFAULT_TIMEWEB_HYPERPROMPT_MAX_OUTPUT_BYTES,
+            ),
+            help="Maximum compiled Markdown bytes returned by SpecSpace.",
+        )
+        command_parser.add_argument(
+            "--hyperprompt-bundle-retention-count",
+            default=os.environ.get(
+                "SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT",
+                DEFAULT_TIMEWEB_HYPERPROMPT_BUNDLE_RETENTION_COUNT,
+            ),
+            help="Number of SpecSpace-owned Hyperprompt scratch bundles to retain.",
+        )
+
     timeweb_render_parser = deploy_subcommands.add_parser(
         "timeweb-render",
         help="Write a Timeweb Cloud Apps manifest-only deploy tree.",
@@ -1888,6 +2104,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("SPECSPACE_RELEASE_CREATED_AT"),
         help="UTC release timestamp to embed in deployment metadata.",
     )
+    add_timeweb_hyperprompt_args(timeweb_render_parser)
     timeweb_render_parser.add_argument(
         "--format",
         choices=["table", "json"],
@@ -1915,6 +2132,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("TIMEWEB_REQUIRED_SPECPM_REGISTRY_URL", "https://specpm.dev"),
         help="Required readonly SpecPM registry URL.",
     )
+    add_timeweb_hyperprompt_args(timeweb_validate_parser)
     timeweb_validate_parser.add_argument(
         "--format",
         choices=["table", "json"],

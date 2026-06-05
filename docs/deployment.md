@@ -153,6 +153,24 @@ their environment variables, override image lock values. This keeps local
 operator checks possible while preserving one Platform-owned renderer for the
 production Timeweb tree.
 
+The Timeweb renderer enables SpecSpace HTTP-provider Hyperprompt compile by
+default. The rendered API service keeps SpecGraph artifacts read-only and passes
+a scratch workspace plus bounded runtime limits to SpecSpace:
+
+```text
+SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED=true
+SPECSPACE_HYPERPROMPT_WORK_DIR=/tmp
+SPECSPACE_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS=60
+SPECSPACE_HYPERPROMPT_MAX_INPUT_BYTES=1048576
+SPECSPACE_HYPERPROMPT_MAX_OUTPUT_BYTES=2097152
+SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT=20
+```
+
+Use `--disable-hyperprompt-http-compile` for an emergency rollback without
+changing service images. The same values can be overridden through the matching
+`SPECSPACE_HYPERPROMPT_*` environment variables or the `deploy timeweb-render`
+flags.
+
 The rendered tree contains only:
 
 - `docker-compose.yml`;
@@ -168,7 +186,9 @@ Guardrails:
 - no bind mounts or named volumes;
 - no required `${VAR:?message}` interpolation;
 - SpecSpace API must read SpecGraph artifacts through `--artifact-base-url`;
-- SpecSpace API must read SpecPM metadata through `--specpm-registry-url`.
+- SpecSpace API must read SpecPM metadata through `--specpm-registry-url`;
+- SpecSpace API must carry the expected Hyperprompt HTTP compile flag and
+  limits.
 
 ## Timeweb Production Control Plane
 
