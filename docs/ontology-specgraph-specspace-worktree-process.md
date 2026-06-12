@@ -36,7 +36,7 @@ artifact contract is validated.
 Prefer one common root under the local organization checkout:
 
 ```bash
-ORG_ROOT=/Users/egor/Development/GitHub/0AL
+ORG_ROOT="${ORG_ROOT:-$HOME/Development/GitHub/0AL}"
 SLICE_ID=ont-sg-0061
 WT_ROOT="$ORG_ROOT/.worktrees/ont-sg-ss"
 ```
@@ -68,8 +68,9 @@ git -C "$ORG_ROOT/SpecSpace" worktree add \
 If a branch already exists, inspect it first:
 
 ```bash
-git -C "$ORG_ROOT/<Repo>" status -sb
-git -C "$ORG_ROOT/<Repo>" worktree list
+REPO=SpecGraph
+git -C "$ORG_ROOT/$REPO" status -sb
+git -C "$ORG_ROOT/$REPO" worktree list
 ```
 
 Then either reuse the existing worktree or create a new worktree from that
