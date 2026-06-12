@@ -23,3 +23,8 @@ Use `.0al` only for coordination. Canonical Platform changes belong in this
 repository. Do not edit `../.0al/tasks.md` or `../.0al/decisions.md` directly unless
 the user explicitly asks for tracker maintenance, and never write secrets,
 credentials, private keys, or machine-local tokens to `.0al`.
+
+## Cross-Repo Worktrees
+
+When coordinating parallel Ontology-SpecGraph-SpecSpace work, follow the explicit
+[Ontology-SpecGraph-SpecSpace worktree process](docs/ontology-specgraph-specspace-worktree-process.md).
