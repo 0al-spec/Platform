@@ -28,3 +28,7 @@ credentials, private keys, or machine-local tokens to `.0al`.
 
 When coordinating parallel Ontology-SpecGraph-SpecSpace work, follow the explicit
 [Ontology-SpecGraph-SpecSpace worktree process](docs/ontology-specgraph-specspace-worktree-process.md).
+
+For the active Ontology-SpecGraph-SpecSpace sequencing and next recommended
+slice, consult the
+[Ontology-SpecGraph-SpecSpace roadmap](docs/ontology-specgraph-specspace-roadmap.md).
