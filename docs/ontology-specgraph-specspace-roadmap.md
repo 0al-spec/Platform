@@ -20,7 +20,7 @@ repository that owns the behavior:
 
 ## Current Anchors
 
-As of 2026-06-13:
+As of 2026-06-14:
 
 - Ontology PR `#53` is merged: `ontologyc` adapter report artifact line.
 - Ontology PR `#54` is merged: Hypercode IR v2 ontology package import.
@@ -29,11 +29,22 @@ As of 2026-06-13:
   `ontologyc validate-specgraph` adapter report boundary.
 - SpecGraph proposal `0100` records the operator intent for
   ontology-grounded semantic control.
-- SpecGraph proposals `0103` through `0106` are implemented:
+- SpecGraph proposals `0103` through `0115` are implemented:
   - `0103` semantic control policy;
   - `0104` semantic context pack;
   - `0105` semantic lint report;
-  - `0106` ontology delta candidate review packet.
+  - `0106` ontology delta candidate review packet;
+  - `0108` semantic review surface;
+  - `0109` supervisor semantic gate evidence;
+  - `0110` Ontology delta draft intake;
+  - `0111` closed-loop evidence;
+  - `0113` ontology review dashboard;
+  - `0114` Ontology owner decision report contract;
+  - `0115` decision import preview.
+- SpecSpace has read-only consumers for:
+  - ontology semantic review surface;
+  - ontology review dashboard;
+  - ontology owner decision review.
 
 The product intent is to reduce hallucinated terms, misunderstood domain
 language, wrong aliases, wrong relation directions, and hidden missing concepts
@@ -41,89 +52,85 @@ in agent-generated specs, proposals, and review surfaces.
 
 ## Roadmap
 
-### 1. SpecGraph 0108: Semantic Review Surface
+### 1. SpecGraph 0116: Source-Backed Semantic Lint Input
 
-Create the next SpecGraph slice as a stable derived artifact, likely:
+Move the full semantic lint report off policy fixture terms and onto a
+source-backed input artifact, likely:
 
 ```text
-runs/ontology_semantic_review_surface.json
+runs/ontology_semantic_lint_input.json
 ```
 
-The surface should combine:
+The input should collect declared semantic terms from tracked SpecGraph
+proposal, spec, or supervisor output sources and preserve:
 
-- `runs/ontology_semantic_context_pack.json`;
-- `runs/ontology_semantic_lint_report.json`;
-- `runs/ontology_delta_candidate_review_packet.json`;
-- review actions and authority boundaries.
+- source id and kind;
+- repository path;
+- text digest;
+- source spans;
+- detected terms and optional ontology refs.
 
-This slice should not add SpecSpace UI, mutation routes, ontology lockfiles, or
-canonical spec mutations.
+This remains an MVP guardrail. It must not become arbitrary NLP parsing, prompt
+execution, ontology package mutation, ontology lockfile update, or canonical
+SpecGraph mutation.
 
-### 2. SpecSpace Read-Only Consumer
+### 2. SpecGraph 0117: Soft Supervisor Gate Wiring
 
-After SpecGraph publishes a stable review surface contract, add a SpecSpace
-consumer that renders the surface read-only.
+Wire `runs/ontology_supervisor_semantic_gate.json` into ordinary targeted
+supervisor runs as soft review evidence first.
 
-The UI/API may show:
+The first integration should:
 
-- accepted ontology terms;
-- accepted aliases;
-- deprecated terms;
-- unknown terms;
-- relation conflicts;
-- ontology gaps;
-- ontology delta candidates;
-- review-intent actions such as approve, reject, or clarify.
+- warn or route `review_pending` rather than hard-block every generation;
+- preserve current hard blockers for deprecated terms and relation conflicts;
+- keep gate decisions explicit in run artifacts;
+- avoid hidden prompt-pack execution inside supervisor behavior.
 
-SpecSpace must not become the authority for accepted ontology changes and must
-not write Ontology packages or SpecGraph canonical specs.
+### 3. SpecGraph 0118: Prompt-Agent Ontology Context Artifact
 
-### 3. SpecGraph Supervisor Semantic Gate
+Add a typed invocation boundary for agent generation that receives the
+ontology semantic context pack before drafting.
 
-Add a bounded supervisor integration that consumes the semantic artifacts as
-gate evidence:
+The artifact should carry:
 
-- before generation, build or load the semantic context pack;
-- after generation, run semantic lint over the generated output or candidate
-  fixture;
-- block or route review when relation conflicts, deprecated terms, or unknown
-  critical terms appear;
-- emit ontology gaps or delta candidate review packets for missing concepts.
+- accepted terms and relations;
+- aliases and deprecated terms;
+- unresolved gaps;
+- package refs, versions, and digests;
+- prompt input/output refs and failure modes.
 
-This must remain a typed artifact boundary. Do not hide prompt-pack execution
-inside the supervisor as implicit behavior.
+This is grounding input, not proof of correctness and not permission for agents
+to write Ontology packages or canonical specs.
 
-### 4. Ontology Delta Draft Intake
+### 4. Ontology Owner Decision Production
 
-Add an Ontology-side contract for receiving an approved SpecGraph ontology
-delta candidate and turning it into a reviewable `DomainOntologyPackage` draft
-or patch candidate.
+Add the Ontology-side path that turns reviewed SpecGraph delta candidates into
+real owner decision artifacts.
 
-This intake should require:
+The decision path should require:
 
 - `ontologyc check`;
 - golden-intent or repeatability evidence where applicable;
 - Ontology governance decision evidence;
 - source, version, and digest references.
 
-An approved SpecGraph candidate is input to Ontology owner review. It is not
-automatic acceptance.
+Accepted, rejected, and clarification decisions can then flow back into the
+existing SpecGraph `0114` and `0115` read-only decision surfaces.
 
-### 5. Closed-Loop Evidence Back To SpecGraph
+### 5. SpecSpace Acknowledgement Workflow
 
-After Ontology governance, SpecGraph should be able to consume evidence that a
-candidate was accepted, rejected, or sent back for clarification.
+Add SpecSpace-owned acknowledgement or operator workflow state for owner
+decisions and semantic gate review.
 
-The returned evidence should include:
+This may let reviewers mark that they inspected:
 
-- Ontology source ref and digest;
-- `ontologyc` adapter/report evidence;
-- governance decision reference;
-- updated normalized IR or package ref;
-- gap resolution or rejection state.
+- accepted/rejected owner decisions;
+- linked evidence;
+- affected review items;
+- before/after semantic status.
 
-This closes the review loop without making SpecGraph the owner of Ontology
-package authority.
+It must not mutate Ontology packages, SpecGraph canonical specs, or import
+locks.
 
 ### 6. Deferred Materialization And Packaging
 
@@ -135,16 +142,16 @@ Defer these until the review loop above is stable:
 - SpecSpace mutation UI;
 - automatic ontology package writes from SpecGraph supervisor output.
 
-## Preferred Next PR
+## Preferred Immediate Slice
 
-The next productive PR should be:
+The current productive slice is:
 
 ```text
-SpecGraph 0108: semantic review surface contract + artifact builder + tests
+SpecGraph 0116: source-backed semantic lint input + report wiring + tests
 ```
 
-It is the most direct bridge from implemented SpecGraph slices `0103` through
-`0106` to SpecSpace and supervisor usage.
+After that lands, the next most valuable slice is a conservative
+`0117` supervisor gate integration in soft-review mode.
 
 ## Operating Notes
 
