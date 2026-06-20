@@ -20,10 +20,13 @@ repository that owns the behavior:
 
 ## Current Anchors
 
-As of 2026-06-14:
+As of 2026-06-20:
 
 - Ontology PR `#53` is merged: `ontologyc` adapter report artifact line.
 - Ontology PR `#54` is merged: Hypercode IR v2 ontology package import.
+- Ontology PR `#57` is merged: the curated `specgraph-core`
+  `DomainOntologyPackage` exists as a compiler-backed package and remains usable
+  as an example/fixture.
 - SpecGraph proposal `0060` defines the external ontology import plane.
 - SpecGraph `docs/ontologyc_adapter_report_contract.md` defines the
   `ontologyc validate-specgraph` adapter report boundary.
@@ -45,94 +48,148 @@ As of 2026-06-14:
   - ontology semantic review surface;
   - ontology review dashboard;
   - ontology owner decision review.
+- SpecGraph and SpecSpace have since moved toward project-local ontology
+  consumption: compiler artifacts are public-safe `runs` inputs, and SpecSpace
+  shows a curated practical ontology/workbench surface rather than extracted
+  topology/proposal text as ontology authority.
 
 The product intent is to reduce hallucinated terms, misunderstood domain
 language, wrong aliases, wrong relation directions, and hidden missing concepts
 in agent-generated specs, proposals, and review surfaces.
 
-## Roadmap
+## Ownership Adjustment
 
-### 1. SpecGraph 0116: Source-Backed Semantic Lint Input
+The Ontology repository should not become a global storage location for product
+ontologies created by arbitrary SpecGraph/SpecSpace workspaces. It owns:
 
-Move the full semantic lint report off policy fixture terms and onto a
-source-backed input artifact, likely:
+- the `DomainOntologyPackage` schema and compiler;
+- validation, normalization, diff, governance, and TypeScript emission behavior;
+- reusable examples and fixtures such as `specgraph-core`.
+
+Project/product ontology packages should live with the product graph or project
+workspace that owns them, then be checked, compiled, diffed, and reviewed with
+Ontology tooling. SpecGraph imports the resulting compiler artifacts and derived
+review reports; SpecSpace presents them as read-only review/workbench surfaces.
+
+## Layered Ontology Direction
+
+The next architectural step is to stop treating ontology refs as one flat list
+of concepts. The desired model is a layered ontology stack:
 
 ```text
-runs/ontology_semantic_lint_input.json
+ProductOntologyStack
+  -> objective       goals, stakeholders, utility functions, tradeoffs
+  -> mechanics       deterministic entities, relations, rules, invariants
+  -> execution       latency, uncertainty, human error, offline mode, drift
+  -> meta            versioning, gaps, deltas, compatibility, invalidation
+  -> multi_agent     adaptive actors, adversaries, competitors, AI agents
 ```
 
-The input should collect declared semantic terms from tracked SpecGraph
-proposal, spec, or supervisor output sources and preserve:
+This is an MVP-friendly extension, not a move to a fully formal system. The
+first version should add layer metadata and reporting so agents and reviewers
+can distinguish:
 
-- source id and kind;
-- repository path;
-- text digest;
-- source spans;
-- detected terms and optional ontology refs.
+- a goal from a deterministic domain entity;
+- an ideal rule from an execution assumption;
+- a data update from a structural ontology change;
+- a missing concept from a missing layer/applicability claim;
+- a stable decision from a model that is invalidated by changed assumptions.
 
-This remains an MVP guardrail. It must not become arbitrary NLP parsing, prompt
-execution, ontology package mutation, ontology lockfile update, or canonical
-SpecGraph mutation.
+## Roadmap
 
-### 2. SpecGraph 0117: Soft Supervisor Gate Wiring
+### 1. Ontology 039: Layered Ontology Compiler Model
 
-Wire `runs/ontology_supervisor_semantic_gate.json` into ordinary targeted
-supervisor runs as soft review evidence first.
+Add first-class layer metadata to the ontology authoring and compiler path.
+The minimal contract should include:
 
-The first integration should:
+- a constrained `OntologyLayer` vocabulary:
+  `objective`, `mechanics`, `execution`, `meta`, `multi_agent`;
+- optional `layer` fields on concepts, relations, invariants, policies, and
+  generated IR entries;
+- schema and compiler validation for unknown layer values;
+- normalized IR and TypeScript SDK emission of layer metadata;
+- compatibility behavior that can identify layer additions/changes.
 
-- warn or route `review_pending` rather than hard-block every generation;
-- preserve current hard blockers for deprecated terms and relation conflicts;
-- keep gate decisions explicit in run artifacts;
-- avoid hidden prompt-pack execution inside supervisor behavior.
+This belongs in Ontology first because SpecGraph and SpecSpace should consume a
+versioned compiler contract rather than invent their own layer vocabulary.
 
-### 3. SpecGraph 0118: Prompt-Agent Ontology Context Artifact
+### 2. SpecGraph Layered Concept Refs And Applicability
 
-Add a typed invocation boundary for agent generation that receives the
-ontology semantic context pack before drafting.
+After Ontology emits layer-aware IR, add graph-side references that preserve
+which layer a spec claim uses. The target shape is a `LayeredConceptRef` or
+equivalent extension over existing refs, plus a `ModelApplicabilityProfile`
+record for specs, generated artifacts, and supervisor outputs that need scoped
+validity.
 
-The artifact should carry:
+The profile should capture:
 
-- accepted terms and relations;
-- aliases and deprecated terms;
-- unresolved gaps;
-- package refs, versions, and digests;
-- prompt input/output refs and failure modes.
+- objective refs;
+- mechanics package/version refs;
+- execution assumptions;
+- uncontrolled variables;
+- invalidation triggers;
+- adaptive or adversarial agents when relevant.
 
-This is grounding input, not proof of correctness and not permission for agents
-to write Ontology packages or canonical specs.
+Legacy specs should remain report-only until backfill batches are explicitly
+reviewed.
 
-### 4. Ontology Owner Decision Production
+### 3. SpecGraph Layer-Aware Gaps, Diffs, And Backfill
 
-Add the Ontology-side path that turns reviewed SpecGraph delta candidates into
-real owner decision artifacts.
+Extend existing gap, diff, validation, owner-decision, and legacy backfill
+surfaces so they can report more than "missing concept":
 
-The decision path should require:
+- missing objective;
+- missing mechanics rule;
+- missing execution assumption;
+- missing meta/change contract;
+- missing multi-agent actor or adversarial scenario;
+- layer mismatch on an existing concept ref;
+- `dataChange` versus `structuralChange`.
 
-- `ontologyc check`;
-- golden-intent or repeatability evidence where applicable;
-- Ontology governance decision evidence;
-- source, version, and digest references.
+This is still review-first. The reports should not rewrite specs, accept terms,
+update lockfiles, or write project ontology packages.
 
-Accepted, rejected, and clarification decisions can then flow back into the
-existing SpecGraph `0114` and `0115` read-only decision surfaces.
+### 4. SpecSpace Layer Lens And Workbench Review
 
-### 5. SpecSpace Acknowledgement Workflow
+Once SpecGraph publishes layer-aware artifacts, SpecSpace should add a layer
+lens to the Ontology Workbench:
 
-Add SpecSpace-owned acknowledgement or operator workflow state for owner
-decisions and semantic gate review.
+- filter concepts and relations by layer;
+- show layer distribution for the active package;
+- show layer-aware gaps/diffs/backfill items;
+- connect applicability profiles to affected specs or generated artifacts;
+- keep the surface read-only except for SpecSpace-owned acknowledgement state.
 
-This may let reviewers mark that they inspected:
+### 5. SpecAuthor Agent Layer Classification
 
-- accepted/rejected owner decisions;
-- linked evidence;
-- affected review items;
-- before/after semantic status.
+Update SpecAuthor-facing prompt and write-gate contracts so generated artifacts
+classify new ontology references by layer before graph write:
 
-It must not mutate Ontology packages, SpecGraph canonical specs, or import
-locks.
+- objective claims require objective refs;
+- deterministic rules require mechanics refs;
+- real-world limitations require execution refs;
+- compatibility/version claims require meta refs;
+- adaptive actors or adversarial behavior require multi-agent refs;
+- broad claims must carry explicit applicability and invalidation assumptions.
 
-### 6. Deferred Materialization And Packaging
+This strengthens the existing claim-calibration and ontology write-gate line
+without forcing legacy specs into strict validation.
+
+### 6. Continue Existing Review Loop
+
+The previously planned review surfaces remain useful and should continue where
+they are already in flight:
+
+- source-backed semantic lint input;
+- soft supervisor gate evidence;
+- prompt-agent ontology context artifacts;
+- Ontology owner-decision production;
+- SpecSpace acknowledgement workflows.
+
+The layered model should become the semantic contract those surfaces report
+against, not a replacement for the review loop.
+
+### 7. Deferred Materialization And Packaging
 
 Defer these until the review loop above is stable:
 
@@ -147,11 +204,11 @@ Defer these until the review loop above is stable:
 The current productive slice is:
 
 ```text
-SpecGraph 0116: source-backed semantic lint input + report wiring + tests
+Ontology 039: layered ontology compiler model
 ```
 
-After that lands, the next most valuable slice is a conservative
-`0117` supervisor gate integration in soft-review mode.
+After that lands, the next most valuable slice is SpecGraph support for
+layered concept refs plus a minimal model applicability profile.
 
 ## Operating Notes
 
