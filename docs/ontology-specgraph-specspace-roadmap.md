@@ -27,6 +27,11 @@ As of 2026-06-20:
 - Ontology PR `#57` is merged: the curated `specgraph-core`
   `DomainOntologyPackage` exists as a compiler-backed package and remains usable
   as an example/fixture.
+- Ontology PR `#59` is merged: `DomainOntologyPackage` supports optional
+  ontology layer metadata, normalized IR carries layers, TypeScript outputs
+  expose layers, and compatibility reports include layer changes.
+- Ontology PR `#60` is merged: ONT-040 is selected and planned as the next
+  compiler-side model applicability and structural change classification slice.
 - SpecGraph proposal `0060` defines the external ontology import plane.
 - SpecGraph `docs/ontologyc_adapter_report_contract.md` defines the
   `ontologyc validate-specgraph` adapter report boundary.
@@ -52,6 +57,14 @@ As of 2026-06-20:
   consumption: compiler artifacts are public-safe `runs` inputs, and SpecSpace
   shows a curated practical ontology/workbench surface rather than extracted
   topology/proposal text as ontology authority.
+- SpecGraph proposals `0141` through `0143` are implemented:
+  - `0141` consumes layer metadata from project-local ontology compiler artifacts;
+  - `0142` reports layer-aware ontology gaps and compatibility diffs;
+  - `0143` requires SpecAuthor generated artifacts to declare active ontology
+    layer context before write-gate approval.
+- SpecSpace PRs `#248` and `#249` are merged: the Ontology Workbench reads the
+  consolidated ontology artifacts and exposes a read-only layer lens over package,
+  gap, and diff layer data.
 
 The product intent is to reduce hallucinated terms, misunderstood domain
 language, wrong aliases, wrong relation directions, and hidden missing concepts
@@ -99,6 +112,8 @@ can distinguish:
 
 ### 1. Ontology 039: Layered Ontology Compiler Model
 
+Status: landed in Ontology PR `#59`.
+
 Add first-class layer metadata to the ontology authoring and compiler path.
 The minimal contract should include:
 
@@ -113,13 +128,42 @@ The minimal contract should include:
 This belongs in Ontology first because SpecGraph and SpecSpace should consume a
 versioned compiler contract rather than invent their own layer vocabulary.
 
-### 2. SpecGraph Layered Concept Refs And Applicability
+### 2. Ontology 040: Model Applicability And Structural Change Classification
 
-After Ontology emits layer-aware IR, add graph-side references that preserve
-which layer a spec claim uses. The target shape is a `LayeredConceptRef` or
-equivalent extension over existing refs, plus a `ModelApplicabilityProfile`
-record for specs, generated artifacts, and supervisor outputs that need scoped
-validity.
+Status: planned in Ontology PR `#60`; implementation is the next compiler-side
+slice.
+
+After layer metadata exists, the compiler should define a minimal
+`ModelApplicabilityProfile` and review-only structural change classification.
+This slice should describe when a model applies, which assumptions support it,
+which triggers invalidate it, and whether a compatibility diff is structural,
+annotation-only, or applicability-only where the compiler can determine that
+without inference.
+
+The initial profile should capture:
+
+- applies-to scopes;
+- exclusions;
+- execution assumptions;
+- invalidation triggers;
+- structural versus annotation/applicability change classification.
+
+The contract remains inert review data. It should not authorize runtime
+enforcement, ontology package writes, lockfile updates, or SpecGraph canonical
+spec mutations.
+
+### 3. SpecGraph Layered Concept Refs And Applicability
+
+Status: partially landed for import, gap/diff review, and SpecAuthor write-gate
+context in SpecGraph proposals `0141`, `0142`, and `0143`. The remaining slice
+is a graph-side `ModelApplicabilityProfile` import surface once ONT-040 emits
+compiler-backed applicability data.
+
+After Ontology emits applicability-aware IR, add graph-side references that
+preserve which layer and applicability frame a spec claim uses. The target shape
+is a `LayeredConceptRef` or equivalent extension over existing refs, plus a
+`ModelApplicabilityProfile` record for specs, generated artifacts, and
+supervisor outputs that need scoped validity.
 
 The profile should capture:
 
@@ -133,7 +177,10 @@ The profile should capture:
 Legacy specs should remain report-only until backfill batches are explicitly
 reviewed.
 
-### 3. SpecGraph Layer-Aware Gaps, Diffs, And Backfill
+### 4. SpecGraph Layer-Aware Gaps, Diffs, And Backfill
+
+Status: partially landed for layer-aware gap/diff review in SpecGraph proposal
+`0142`; applicability-aware gaps/diffs remain future work after ONT-040.
 
 Extend existing gap, diff, validation, owner-decision, and legacy backfill
 surfaces so they can report more than "missing concept":
@@ -149,7 +196,11 @@ surfaces so they can report more than "missing concept":
 This is still review-first. The reports should not rewrite specs, accept terms,
 update lockfiles, or write project ontology packages.
 
-### 4. SpecSpace Layer Lens And Workbench Review
+### 5. SpecSpace Layer Lens And Workbench Review
+
+Status: initial layer lens landed in SpecSpace PR `#249`. Applicability and
+invalidation review remain future work after ONT-040 and the SpecGraph import
+surface.
 
 Once SpecGraph publishes layer-aware artifacts, SpecSpace should add a layer
 lens to the Ontology Workbench:
@@ -160,7 +211,11 @@ lens to the Ontology Workbench:
 - connect applicability profiles to affected specs or generated artifacts;
 - keep the surface read-only except for SpecSpace-owned acknowledgement state.
 
-### 5. SpecAuthor Agent Layer Classification
+### 6. SpecAuthor Agent Layer Classification
+
+Status: deterministic write-gate context landed in SpecGraph proposal `0143`.
+Prompt-side invocation behavior and Agent Passport extensions remain future
+work.
 
 Update SpecAuthor-facing prompt and write-gate contracts so generated artifacts
 classify new ontology references by layer before graph write:
@@ -175,7 +230,7 @@ classify new ontology references by layer before graph write:
 This strengthens the existing claim-calibration and ontology write-gate line
 without forcing legacy specs into strict validation.
 
-### 6. Continue Existing Review Loop
+### 7. Continue Existing Review Loop
 
 The previously planned review surfaces remain useful and should continue where
 they are already in flight:
@@ -189,7 +244,7 @@ they are already in flight:
 The layered model should become the semantic contract those surfaces report
 against, not a replacement for the review loop.
 
-### 7. Deferred Materialization And Packaging
+### 8. Deferred Materialization And Packaging
 
 Defer these until the review loop above is stable:
 
@@ -204,11 +259,12 @@ Defer these until the review loop above is stable:
 The current productive slice is:
 
 ```text
-Ontology 039: layered ontology compiler model
+Ontology 040: model applicability and structural change classification
 ```
 
 After that lands, the next most valuable slice is SpecGraph support for
-layered concept refs plus a minimal model applicability profile.
+importing compiler-backed applicability profiles into layered concept refs,
+gap/diff reports, and SpecAuthor prompt/write-gate surfaces.
 
 ## Operating Notes
 
