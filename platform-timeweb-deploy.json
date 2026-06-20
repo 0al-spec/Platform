@@ -10,10 +10,10 @@
   "hyperprompt_work_dir": "/tmp",
   "image_lock": "dist/platform-service-images.json",
   "readme": "README.md",
-  "release_commit": "3049db9ca14066d9978cf36c552290843aec36c0",
-  "release_created_at": "2026-06-19T20:30:49Z",
+  "release_commit": "995531a5e12bbf19ba72cc9726254900b1d18b95",
+  "release_created_at": "2026-06-20T07:55:48Z",
   "schema_version": 1,
   "specpm_registry_url": "https://specpm.dev",
-  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:1ed5c04c0aaf7a7bc0d7c09a7c473a8774c0357351b4f411e072c97c464df299",
-  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:2d9803971b78265f8d7249cdc6cc176d7987a24500a0650459416f24f4707236"
+  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:088a342a64b8fc4ff51f274cd4c597a0943801b945db640d126c709ba64c82e1",
+  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:a874ccd952fc6b2d532af12e45279b83a2f66bfcd69ffce1236dac8780b501f9"
 }
