@@ -70,6 +70,7 @@ class PlatformCliTests(unittest.TestCase):
         runs_dir: Path,
         *,
         candidate_authority_expanded: bool = False,
+        candidate_ready: bool = True,
         repair_ready: bool = True,
         context_required_count: int = 0,
     ) -> None:
@@ -87,7 +88,7 @@ class PlatformCliTests(unittest.TestCase):
                 "canonical_mutations_allowed": candidate_authority_expanded,
                 "tracked_artifacts_written": False,
                 "pre_sib_readiness": {
-                    "ready": True,
+                    "ready": candidate_ready,
                     "review_state": "ready",
                 },
             },
@@ -565,6 +566,35 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("graph_repository_artifact_missing", codes)
         self.assertFalse(payload["ok"])
+
+    def test_graph_repository_plan_blocks_when_candidate_is_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                candidate_ready=False,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        operations = {
+            operation["name"]: operation for operation in payload["operations"]
+        }
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["ready_for_branch"])
+        self.assertEqual(operations["prepare_branch"]["status"], "blocked")
+        self.assertEqual(operations["prepare_branch"]["reason"], "candidate_not_ready")
 
     def test_graph_repository_plan_rejects_artifact_authority_expansion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

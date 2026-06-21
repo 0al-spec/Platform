@@ -711,6 +711,8 @@ def build_graph_repository_execution_plan(
             context_required_count = 0
 
         prepare_blockers: list[str] = []
+        if candidate_readiness.get("ready") is not True:
+            prepare_blockers.append("candidate_not_ready")
         if candidate_readiness.get("review_state") == "context_required":
             prepare_blockers.append("candidate_context_required")
         if pre_sib_readiness.get("ready") is not True:
