@@ -34,6 +34,24 @@ DEFAULT_TIMEWEB_HYPERPROMPT_BUNDLE_RETENTION_COUNT = "20"
 DIGEST_IMAGE_RE = re.compile(
     r"^[a-z0-9][a-z0-9._/-]*(?::[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$"
 )
+GRAPH_REPOSITORY_REQUIRED_RUN_ARTIFACTS = {
+    "idea_event_storming_intake": (
+        "idea_event_storming_intake.json",
+        "idea_event_storming_intake",
+    ),
+    "candidate_spec_graph": (
+        "candidate_spec_graph.json",
+        "candidate_spec_graph",
+    ),
+    "pre_sib_coherence_report": (
+        "pre_sib_coherence_report.json",
+        "pre_sib_coherence_report",
+    ),
+    "candidate_repair_loop_report": (
+        "candidate_repair_loop_report.json",
+        "candidate_repair_loop_report",
+    ),
+}
 
 
 class PlatformError(Exception):
@@ -494,6 +512,340 @@ def graph_repository_validate(args: argparse.Namespace) -> int:
         print(render_diagnostic_table(diagnostics))
     else:
         print("OK: graph repository service contract is valid")
+    return 0 if error_count == 0 else 1
+
+
+def nested_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def graph_repository_run_artifact_status(
+    *,
+    runs_dir: Path,
+    artifact_key: str,
+    filename: str,
+    expected_kind: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[Diagnostic]]:
+    path = runs_dir / filename
+    subject = f"runs.{filename}"
+    if not path.is_file():
+        return (
+            {
+                "key": artifact_key,
+                "path": str(path),
+                "available": False,
+                "artifact_kind": None,
+                "expected_artifact_kind": expected_kind,
+            },
+            None,
+            [
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_artifact_missing",
+                    subject=subject,
+                    message="required SpecGraph run artifact is missing",
+                )
+            ],
+        )
+
+    try:
+        payload = load_json_mapping(path, label="SpecGraph run artifact")
+    except PlatformError as exc:
+        return (
+            {
+                "key": artifact_key,
+                "path": str(path),
+                "available": False,
+                "artifact_kind": None,
+                "expected_artifact_kind": expected_kind,
+            },
+            None,
+            [
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_artifact_unreadable",
+                    subject=subject,
+                    message=str(exc),
+                )
+            ],
+        )
+
+    diagnostics: list[Diagnostic] = []
+    artifact_kind = payload.get("artifact_kind")
+    if artifact_kind != expected_kind:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_artifact_kind_mismatch",
+                subject=f"{subject}.artifact_kind",
+                message=(
+                    f"expected `{expected_kind}` but found "
+                    f"`{artifact_kind if artifact_kind is not None else 'missing'}`"
+                ),
+            )
+        )
+
+    for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
+        if payload.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_artifact_authority_expanded",
+                    subject=f"{subject}.{field}",
+                    message=f"{field} must be false before repository materialization",
+                )
+            )
+
+    readiness = nested_mapping(payload, "readiness")
+    pre_sib_readiness = nested_mapping(payload, "pre_sib_readiness")
+    review_state = payload.get("review_state")
+    if not isinstance(review_state, str):
+        review_state = readiness.get("review_state")
+    if not isinstance(review_state, str):
+        review_state = pre_sib_readiness.get("review_state")
+
+    status = {
+        "key": artifact_key,
+        "path": str(path),
+        "available": True,
+        "artifact_kind": artifact_kind,
+        "expected_artifact_kind": expected_kind,
+        "proposal_id": payload.get("proposal_id"),
+        "contract_ref": payload.get("contract_ref"),
+        "review_state": review_state,
+        "readiness_ready": readiness.get("ready"),
+        "pre_sib_ready": pre_sib_readiness.get("ready"),
+    }
+    return status, payload, diagnostics
+
+
+def graph_repository_operation(
+    *,
+    name: str,
+    status: str,
+    reason: str,
+    evidence: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "reason": reason,
+        "evidence": evidence or [],
+    }
+
+
+def build_graph_repository_execution_plan(
+    *,
+    contract_path: Path,
+    contract: dict[str, Any],
+    runs_dir: Path,
+) -> tuple[dict[str, Any], list[Diagnostic]]:
+    diagnostics = [
+        *validate_graph_repository_contract_schema(contract),
+        *graph_repository_contract_semantic_diagnostics(contract),
+    ]
+    source_artifacts: list[dict[str, Any]] = []
+    payloads: dict[str, dict[str, Any]] = {}
+    for artifact_key, (
+        filename,
+        expected_kind,
+    ) in GRAPH_REPOSITORY_REQUIRED_RUN_ARTIFACTS.items():
+        status, payload, artifact_diagnostics = graph_repository_run_artifact_status(
+            runs_dir=runs_dir,
+            artifact_key=artifact_key,
+            filename=filename,
+            expected_kind=expected_kind,
+        )
+        source_artifacts.append(status)
+        if payload is not None:
+            payloads[artifact_key] = payload
+        diagnostics.extend(artifact_diagnostics)
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    operations: list[dict[str, Any]]
+    ready_for_branch = False
+    if error_count:
+        operations = [
+            graph_repository_operation(
+                name="create_candidate_workspace",
+                status="blocked",
+                reason="contract_or_required_run_artifacts_invalid",
+            ),
+            graph_repository_operation(
+                name="validate_candidate_graph",
+                status="blocked",
+                reason="contract_or_required_run_artifacts_invalid",
+            ),
+            graph_repository_operation(
+                name="prepare_branch",
+                status="blocked",
+                reason="contract_or_required_run_artifacts_invalid",
+            ),
+            graph_repository_operation(
+                name="create_commit",
+                status="blocked",
+                reason="prepare_branch_not_ready",
+            ),
+            graph_repository_operation(
+                name="open_review",
+                status="blocked",
+                reason="create_commit_not_ready",
+            ),
+            graph_repository_operation(
+                name="publish_read_model",
+                status="blocked",
+                reason="review_not_opened",
+            ),
+        ]
+    else:
+        candidate = payloads["candidate_spec_graph"]
+        pre_sib = payloads["pre_sib_coherence_report"]
+        repair = payloads["candidate_repair_loop_report"]
+        candidate_readiness = nested_mapping(candidate, "pre_sib_readiness")
+        pre_sib_readiness = nested_mapping(pre_sib, "readiness")
+        repair_readiness = nested_mapping(repair, "readiness")
+        repair_summary = nested_mapping(repair, "summary")
+        context_required_count = repair_summary.get("context_required_count", 0)
+        if not isinstance(context_required_count, int):
+            context_required_count = 0
+
+        prepare_blockers: list[str] = []
+        if candidate_readiness.get("review_state") == "context_required":
+            prepare_blockers.append("candidate_context_required")
+        if pre_sib_readiness.get("ready") is not True:
+            prepare_blockers.append("pre_sib_not_ready")
+        if repair_readiness.get("ready") is not True:
+            prepare_blockers.append("repair_loop_not_ready")
+        if context_required_count > 0:
+            prepare_blockers.append("repair_context_required")
+
+        ready_for_branch = not prepare_blockers
+        operations = [
+            graph_repository_operation(
+                name="create_candidate_workspace",
+                status="ready",
+                reason="required read-only run artifacts are available",
+                evidence=[
+                    "idea_event_storming_intake",
+                    "candidate_spec_graph",
+                ],
+            ),
+            graph_repository_operation(
+                name="validate_candidate_graph",
+                status="ready",
+                reason="candidate graph and pre-SIB report are available",
+                evidence=[
+                    "candidate_spec_graph",
+                    "pre_sib_coherence_report",
+                ],
+            ),
+            graph_repository_operation(
+                name="prepare_branch",
+                status="ready" if ready_for_branch else "blocked",
+                reason="pre_sib_and_repair_loop_ready"
+                if ready_for_branch
+                else ",".join(prepare_blockers),
+                evidence=[
+                    "pre_sib_coherence_report",
+                    "candidate_repair_loop_report",
+                ],
+            ),
+            graph_repository_operation(
+                name="create_commit",
+                status="blocked_until_prepare_branch",
+                reason="report-only plan does not execute git commit",
+            ),
+            graph_repository_operation(
+                name="open_review",
+                status="blocked_until_create_commit",
+                reason="report-only plan does not open pull requests",
+            ),
+            graph_repository_operation(
+                name="publish_read_model",
+                status="blocked_until_review_or_policy",
+                reason="report-only plan does not publish read models",
+            ),
+        ]
+
+    plan = {
+        "schema_version": 1,
+        "artifact_kind": "platform_graph_repository_execution_plan",
+        "contract_ref": str(contract_path),
+        "runs_dir": str(runs_dir),
+        "ok": error_count == 0,
+        "ready_for_branch": ready_for_branch,
+        "read_only": True,
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "write_actions_executed": [],
+        "authority_boundary": {
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "mutates_canonical_specs": False,
+            "publishes_private_artifacts": False,
+        },
+        "source_artifacts": source_artifacts,
+        "operations": operations,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "source_artifact_count": len(source_artifacts),
+            "ready_operation_count": sum(
+                1 for operation in operations if operation["status"] == "ready"
+            ),
+            "blocked_operation_count": sum(
+                1 for operation in operations if operation["status"] != "ready"
+            ),
+        },
+    }
+    return plan, diagnostics
+
+
+def graph_repository_plan(args: argparse.Namespace) -> int:
+    contract_path = Path(args.contract)
+    runs_dir = Path(args.runs_dir)
+    contract = load_json_mapping(contract_path, label="graph repository contract")
+    plan, diagnostics = build_graph_repository_execution_plan(
+        contract_path=contract_path,
+        contract=contract,
+        runs_dir=runs_dir,
+    )
+    error_count = plan["summary"]["error_count"]
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(plan, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(plan, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        rows = [
+            {
+                "operation": operation["name"],
+                "status": operation["status"],
+                "reason": operation["reason"],
+            }
+            for operation in plan["operations"]
+        ]
+        print(
+            render_rows(
+                rows,
+                [
+                    ("operation", "OPERATION"),
+                    ("status", "STATUS"),
+                    ("reason", "REASON"),
+                ],
+            )
+        )
     return 0 if error_count == 0 else 1
 
 
@@ -2077,6 +2429,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     graph_repository_validate_parser.set_defaults(func=graph_repository_validate)
+    graph_repository_plan_parser = graph_repository_subcommands.add_parser(
+        "plan",
+        help=(
+            "Build a report-only graph repository execution plan from "
+            "SpecGraph run artifacts."
+        ),
+    )
+    graph_repository_plan_parser.add_argument(
+        "--contract",
+        required=True,
+        help="Path to a graph repository service contract JSON artifact.",
+    )
+    graph_repository_plan_parser.add_argument(
+        "--runs-dir",
+        required=True,
+        help="Directory containing required SpecGraph run JSON artifacts.",
+    )
+    graph_repository_plan_parser.add_argument(
+        "--output",
+        help="Optional path where the execution plan JSON should be written.",
+    )
+    graph_repository_plan_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    graph_repository_plan_parser.set_defaults(func=graph_repository_plan)
 
     deploy_parser = subcommands.add_parser(
         "deploy",
