@@ -149,6 +149,45 @@ class PlatformCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return plan_path
 
+    def run_git(self, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def create_graph_repository_checkout(self, tmp_root: Path) -> Path:
+        source = tmp_root / "source"
+        source.mkdir()
+        self.run_git(source, "init")
+        self.run_git(source, "config", "user.email", "test@example.com")
+        self.run_git(source, "config", "user.name", "Platform Tests")
+        (source / "README.md").write_text("# Test graph\n", encoding="utf-8")
+        self.run_git(source, "add", "README.md")
+        self.run_git(source, "commit", "-m", "Initial graph")
+        self.run_git(source, "branch", "-M", "main")
+
+        origin = tmp_root / "origin.git"
+        subprocess.run(
+            ["git", "clone", "--bare", str(source), str(origin)],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        checkout = tmp_root / "checkout"
+        subprocess.run(
+            ["git", "clone", str(origin), str(checkout)],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        return checkout
+
     def test_workspace_list_json(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
             catalog.write(CATALOG)
@@ -762,6 +801,127 @@ workspaces:
         self.assertIn("graph_repository_prepare_branch_not_ready", codes)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["local_files_written"], [])
+        self.assertFalse(workspace_dir.exists())
+
+    def test_graph_repository_prepare_worktree_creates_git_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+
+            result = self.run_cli(
+                "graph-repository",
+                "prepare-worktree",
+                "--plan",
+                str(plan_path),
+                "--repository-dir",
+                str(repository_dir),
+                "--candidate-id",
+                "idea-alpha",
+                "--workspace-dir",
+                str(workspace_dir),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_graph_repository_worktree_prepare_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["candidate_branch"], "graph-candidate/idea-alpha")
+            self.assertEqual(len(payload["git_commands_executed"]), 2)
+            self.assertEqual(payload["pull_requests_opened"], [])
+            self.assertEqual(payload["commits_created"], [])
+            self.assertEqual(payload["merges_performed"], [])
+            self.assertFalse(payload["canonical_mutations_allowed"])
+            self.assertFalse(payload["tracked_artifacts_written"])
+            self.assertTrue((workspace_dir / ".git").exists())
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_worktree_prepare_report.json"
+                ).is_file()
+            )
+            branch = self.run_git(
+                workspace_dir,
+                "rev-parse",
+                "--abbrev-ref",
+                "HEAD",
+            ).stdout.strip()
+            self.assertEqual(branch, "graph-candidate/idea-alpha")
+
+    def test_graph_repository_prepare_worktree_resolves_relative_workspace(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "relative-candidate-worktree"
+            relative_workspace = Path(os.path.relpath(workspace_dir, REPO_ROOT))
+
+            result = self.run_cli(
+                "graph-repository",
+                "prepare-worktree",
+                "--plan",
+                str(plan_path),
+                "--repository-dir",
+                str(repository_dir),
+                "--candidate-id",
+                "idea-alpha",
+                "--workspace-dir",
+                str(relative_workspace),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["workspace_dir"], str(workspace_dir.resolve()))
+            self.assertEqual(
+                payload["git_commands_executed"][1]["command"][5],
+                str(workspace_dir.resolve()),
+            )
+            self.assertTrue((workspace_dir / ".git").exists())
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_worktree_prepare_report.json"
+                ).is_file()
+            )
+
+    def test_graph_repository_prepare_worktree_rejects_missing_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+
+            result = self.run_cli(
+                "graph-repository",
+                "prepare-worktree",
+                "--plan",
+                str(plan_path),
+                "--repository-dir",
+                str(tmp_root / "missing-repository"),
+                "--candidate-id",
+                "idea-alpha",
+                "--workspace-dir",
+                str(workspace_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_repository_missing", codes)
+        self.assertFalse(payload["ok"])
         self.assertFalse(workspace_dir.exists())
 
 
