@@ -20,7 +20,7 @@ repository that owns the behavior:
 
 ## Current Anchors
 
-As of 2026-06-20:
+As of 2026-06-21:
 
 - Ontology PR `#53` is merged: `ontologyc` adapter report artifact line.
 - Ontology PR `#54` is merged: Hypercode IR v2 ontology package import.
@@ -65,6 +65,19 @@ As of 2026-06-20:
 - SpecSpace PRs `#248` and `#249` are merged: the Ontology Workbench reads the
   consolidated ontology artifacts and exposes a read-only layer lens over package,
   gap, and diff layer data.
+- SpecGraph PRs `#590`, `#591`, and `#592` are merged as a stacked SpecAuthor
+  prompt-side sequence:
+  - `#590` adds the deterministic SpecAuthor authoring flow that emits
+    `runs/specauthor_invocation_artifact.json`;
+  - `#591` publishes public-safe SpecAuthor invocation artifacts through the
+    static bundle;
+  - `#592` declares a local report-only SpecAuthorAgent Passport with
+    experimental `x-behaviorPolicies`.
+- SpecSpace PR `#251` is merged: the Ontology Workbench shows the SpecAuthor
+  invocation chain as a read-only review lane.
+- agent-passport PR `#6` is merged: `x-behaviorPolicies` is documented as an
+  experimental `x-*` extension that remains report-only unless a consumer
+  defines explicit enforcement semantics.
 
 The product intent is to reduce hallucinated terms, misunderstood domain
 language, wrong aliases, wrong relation directions, and hidden missing concepts
@@ -214,8 +227,10 @@ lens to the Ontology Workbench:
 ### 6. SpecAuthor Agent Layer Classification
 
 Status: deterministic write-gate context landed in SpecGraph proposal `0143`.
-Prompt-side invocation behavior and Agent Passport extensions remain future
-work.
+Prompt-side invocation behavior is now in the SpecGraph `0146` stack, public
+artifact publishing is in `0147`, and the local report-only Agent Passport
+behavior declaration is in `0148`. SpecSpace has a matching read-only
+invocation review lane in PR `#251`.
 
 Update SpecAuthor-facing prompt and write-gate contracts so generated artifacts
 classify new ontology references by layer before graph write:
@@ -229,6 +244,21 @@ classify new ontology references by layer before graph write:
 
 This strengthens the existing claim-calibration and ontology write-gate line
 without forcing legacy specs into strict validation.
+
+The active implementation order for this line is:
+
+1. SpecGraph `0146`: prompt-side authoring flow emits a typed invocation
+   artifact from operator intent, active ontology context, generated draft
+   artifact, generated artifact contract report, and write-gate report.
+2. SpecGraph `0147`: publish the invocation artifact, invocation contract
+   report, and authoring-flow report as public-safe `runs` artifacts.
+3. SpecSpace: show active frame, selected ontology layers, model applicability
+   refs, generated artifact status, write-gate status, invocation contract
+   status, and operator decision state in the Ontology Workbench.
+4. SpecGraph `0148`: declare SpecAuthorAgent behavior through local
+   `x-behaviorPolicies` in Agent Passport, with no runtime enforcement claim.
+5. agent-passport: document `x-behaviorPolicies` as an experimental extension
+   pattern, not a required core schema field.
 
 ### 7. Continue Existing Review Loop
 
@@ -256,15 +286,31 @@ Defer these until the review loop above is stable:
 
 ## Preferred Immediate Slice
 
-The current productive slice is:
+The immediate cross-repo stack is now:
 
 ```text
-Ontology 040: model applicability and structural change classification
+SpecGraph 0146 -> SpecGraph 0147 -> SpecSpace invocation lane -> SpecGraph 0148 -> agent-passport x-behaviorPolicies docs
 ```
 
-After that lands, the next most valuable slice is SpecGraph support for
-importing compiler-backed applicability profiles into layered concept refs,
-gap/diff reports, and SpecAuthor prompt/write-gate surfaces.
+This stack keeps Ontology unchanged for now because it only consumes existing
+review refs and metadata: layer refs, current model-applicability refs already
+present in SpecGraph authoring artifacts, and report-only validation status.
+It does not implement the future graph-side
+`ModelApplicabilityProfile` import surface.
+
+ONT-040 remains the prerequisite for compiler-backed applicability profiles,
+invalidation triggers, and structural change classification that downstream
+SpecGraph/SpecSpace applicability dashboards should treat as authoritative.
+It no longer blocks the current SpecAuthor prompt-side/Passport work, but it
+does block the stronger applicability import and review slices.
+
+After this stack merges, the next valuable implementation choices are:
+
+- connect real SpecAuthor execution/wrapper output to the deterministic
+  authoring-flow builder;
+- backfill selected legacy specs into review-only invocation/claim records;
+- continue compiler-backed applicability profile import if Ontology emits
+  stronger applicability data.
 
 ## Operating Notes
 
@@ -278,3 +324,5 @@ gap/diff reports, and SpecAuthor prompt/write-gate surfaces.
   governance accepts the relevant change.
 - Record cross-repo handoffs and blockers through the local `.0al` logging CLI
   when available.
+- Treat `x-behaviorPolicies` as semantic/report-only declaration data until a
+  repository explicitly implements and tests enforcement semantics.
