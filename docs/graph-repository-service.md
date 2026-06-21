@@ -111,6 +111,31 @@ It does not execute the planned Git commands. The report includes the branch
 name and planned commands so the next executor slice can replace this local
 metadata step with controlled worktree creation.
 
+## Promotion Request
+
+Build a report-only handoff artifact when SpecSpace or another operator surface
+asks to promote a candidate graph into review:
+
+```bash
+scripts/platform.py graph-repository promotion-request \
+  --plan runs/graph_repository_execution_plan.json \
+  --candidate-id my-idea-v1 \
+  --path specs/nodes/SG-SPEC-CANDIDATE.yaml \
+  --title "Add candidate spec graph" \
+  --body "Review candidate spec graph produced from the idea-to-spec flow." \
+  --output runs/graph_repository_promotion_request.json
+```
+
+`promotion-request` validates the execution plan, candidate id, review metadata,
+and materialized candidate paths before any executor step runs. Paths must stay
+inside the future worktree and under `specs/`, `docs/proposals/`, or `runs/`.
+
+The generated `platform_graph_repository_promotion_request` remains report-only:
+it does not execute Git commands, create commits, open pull requests, merge
+branches, publish read models, accept specs, or write Ontology packages. It is
+the stable boundary a future SpecSpace promotion UI can inspect before handing
+control to `prepare-worktree`, `commit-worktree`, and `open-review`.
+
 ## Prepare Worktree
 
 Create the local Git worktree once the execution plan is ready:

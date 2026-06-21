@@ -52,6 +52,11 @@ GRAPH_REPOSITORY_REQUIRED_RUN_ARTIFACTS = {
         "candidate_repair_loop_report",
     ),
 }
+GRAPH_REPOSITORY_PROMOTION_PATH_PREFIXES = (
+    "specs/",
+    "docs/proposals/",
+    "runs/",
+)
 
 
 class PlatformError(Exception):
@@ -518,6 +523,10 @@ def graph_repository_validate(args: argparse.Namespace) -> int:
 def nested_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
     value = payload.get(key)
     return value if isinstance(value, dict) else {}
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def graph_repository_run_artifact_status(
@@ -1106,6 +1115,175 @@ def graph_repository_prepare_local(args: argparse.Namespace) -> int:
                     ("candidate_id", "CANDIDATE"),
                     ("branch", "BRANCH"),
                     ("workspace", "WORKSPACE"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
+def graph_repository_promotion_path_allowed(raw_path: str) -> bool:
+    normalized = raw_path.replace("\\", "/")
+    return any(
+        normalized.startswith(prefix)
+        for prefix in GRAPH_REPOSITORY_PROMOTION_PATH_PREFIXES
+    )
+
+
+def graph_repository_promotion_request_diagnostics(
+    plan: dict[str, Any],
+    *,
+    candidate_id: str,
+    candidate_branch: str,
+    paths: list[str],
+    title: str,
+    body: str,
+) -> list[Diagnostic]:
+    diagnostics = [
+        *graph_repository_prepare_plan_diagnostics(
+            plan,
+            candidate_id=candidate_id,
+            workspace_dir=Path("."),
+            dry_run=True,
+        ),
+        *graph_repository_branch_name_diagnostics(candidate_branch),
+        *graph_repository_relative_paths_diagnostics(paths),
+    ]
+    for index, raw_path in enumerate(paths):
+        if Path(raw_path).is_absolute() or ".." in Path(raw_path).parts:
+            continue
+        if graph_repository_promotion_path_allowed(raw_path):
+            continue
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_promotion_path_not_allowed",
+                subject=f"path[{index}]",
+                message=(
+                    "promotion request paths must be under specs/, "
+                    "docs/proposals/, or runs/"
+                ),
+            )
+        )
+    if not title.strip():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_promotion_title_missing",
+                subject="title",
+                message="promotion request must include a review title",
+            )
+        )
+    if not body.strip():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_promotion_body_missing",
+                subject="body",
+                message="promotion request must include a review body",
+            )
+        )
+    return diagnostics
+
+
+def graph_repository_promotion_request(args: argparse.Namespace) -> int:
+    plan_path = Path(args.plan)
+    plan = load_json_mapping(plan_path, label="graph repository execution plan")
+    contract_ref = plan.get("contract_ref")
+    contract_path = Path(contract_ref) if isinstance(contract_ref, str) else None
+    contract = (
+        load_json_mapping(contract_path, label="graph repository contract")
+        if contract_path is not None and contract_path.is_file()
+        else {}
+    )
+    candidate_id = args.candidate_id
+    branch_name = graph_repository_candidate_branch(contract, candidate_id)
+    paths = list(args.path or [])
+    diagnostics = graph_repository_promotion_request_diagnostics(
+        plan,
+        candidate_id=candidate_id,
+        candidate_branch=branch_name,
+        paths=paths,
+        title=args.title,
+        body=args.body,
+    )
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    output_path = Path(args.output) if args.output else None
+    local_files_written = (
+        [str(output_path)]
+        if output_path is not None and error_count == 0 and not args.dry_run
+        else []
+    )
+    request = {
+        "schema_version": 1,
+        "artifact_kind": "platform_graph_repository_promotion_request",
+        "generated_at": utc_now_iso(),
+        "plan_ref": str(plan_path),
+        "ok": error_count == 0,
+        "dry_run": args.dry_run,
+        "candidate_id": candidate_id,
+        "candidate_branch": branch_name,
+        "commit_paths": paths if error_count == 0 else [],
+        "review": {
+            "title": args.title.strip(),
+            "body": args.body.strip(),
+            "base_branch": args.base,
+        },
+        "requested_operations": [
+            "prepare_branch",
+            "create_commit",
+            "open_review",
+        ],
+        "source_artifacts": plan.get("source_artifacts", []),
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "write_actions_executed": [],
+        "git_commands_executed": [],
+        "pull_requests_opened": [],
+        "merges_performed": [],
+        "read_models_published": [],
+        "local_files_written": local_files_written,
+        "authority_boundary": {
+            "executes_git_commands": False,
+            "creates_commits": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "mutates_canonical_specs": False,
+            "publishes_read_models": False,
+        },
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "commit_path_count": len(paths) if error_count == 0 else 0,
+            "promotion_ready": error_count == 0,
+        },
+    }
+
+    if output_path is not None and error_count == 0 and not args.dry_run:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(request, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(request, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "candidate_id": candidate_id,
+                        "branch": branch_name,
+                        "paths": str(len(paths)),
+                    }
+                ],
+                [
+                    ("candidate_id", "CANDIDATE"),
+                    ("branch", "BRANCH"),
+                    ("paths", "PATHS"),
                 ],
             )
         )
@@ -3855,6 +4033,62 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     graph_repository_prepare_parser.set_defaults(func=graph_repository_prepare_local)
+    graph_repository_promotion_parser = graph_repository_subcommands.add_parser(
+        "promotion-request",
+        help="Build a report-only request to promote a candidate graph to review.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--plan",
+        required=True,
+        help="Path to a graph repository execution plan JSON artifact.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--candidate-id",
+        required=True,
+        help="Stable candidate id used to derive the candidate branch name.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        help=(
+            "Materialized candidate path to include in the future review commit. "
+            "May be provided multiple times."
+        ),
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--base",
+        default="main",
+        help="Base branch for the future review pull request.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--title",
+        required=True,
+        help="Review title requested for the future pull request.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--body",
+        required=True,
+        help="Review body requested for the future pull request.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--output",
+        help="Optional path where the promotion request JSON should be written.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the promotion request without writing files.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    graph_repository_promotion_parser.set_defaults(
+        func=graph_repository_promotion_request
+    )
     graph_repository_worktree_parser = graph_repository_subcommands.add_parser(
         "prepare-worktree",
         help="Create a local Git worktree from a ready graph repository execution plan.",

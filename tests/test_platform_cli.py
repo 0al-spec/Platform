@@ -969,6 +969,157 @@ workspaces:
         self.assertEqual(payload["local_files_written"], [])
         self.assertFalse(workspace_dir.exists())
 
+    def test_graph_repository_promotion_request_writes_review_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            output = tmp_root / "graph_repository_promotion_request.json"
+
+            result = self.run_cli(
+                "graph-repository",
+                "promotion-request",
+                "--plan",
+                str(plan_path),
+                "--candidate-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--title",
+                "Add candidate spec graph",
+                "--body",
+                "Review materialized candidate graph from the idea-to-spec flow.",
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            persisted = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload, persisted)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_graph_repository_promotion_request",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["candidate_branch"], "graph-candidate/idea-alpha")
+            self.assertEqual(
+                payload["commit_paths"],
+                ["specs/nodes/SG-SPEC-CANDIDATE.yaml"],
+            )
+            self.assertEqual(
+                payload["requested_operations"],
+                ["prepare_branch", "create_commit", "open_review"],
+            )
+            self.assertFalse(payload["canonical_mutations_allowed"])
+            self.assertFalse(payload["tracked_artifacts_written"])
+            self.assertEqual(payload["write_actions_executed"], [])
+            self.assertEqual(payload["git_commands_executed"], [])
+            self.assertEqual(payload["pull_requests_opened"], [])
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+            self.assertFalse(payload["authority_boundary"]["creates_commits"])
+            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+            self.assertEqual(payload["summary"]["commit_path_count"], 1)
+            self.assertTrue(payload["summary"]["promotion_ready"])
+
+    def test_graph_repository_promotion_request_rejects_unsafe_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            output = tmp_root / "graph_repository_promotion_request.json"
+
+            result = self.run_cli(
+                "graph-repository",
+                "promotion-request",
+                "--plan",
+                str(plan_path),
+                "--candidate-id",
+                "idea-alpha",
+                "--path",
+                "../outside.yaml",
+                "--title",
+                "Add candidate spec graph",
+                "--body",
+                "Review materialized candidate graph.",
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_commit_path_outside_worktree", codes)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["commit_paths"], [])
+        self.assertFalse(output.exists())
+
+    def test_graph_repository_promotion_request_rejects_unsupported_path_root(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+
+            result = self.run_cli(
+                "graph-repository",
+                "promotion-request",
+                "--plan",
+                str(plan_path),
+                "--candidate-id",
+                "idea-alpha",
+                "--path",
+                "README.md",
+                "--title",
+                "Add candidate spec graph",
+                "--body",
+                "Review materialized candidate graph.",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_promotion_path_not_allowed", codes)
+        self.assertFalse(payload["ok"])
+
+    def test_graph_repository_promotion_request_rejects_not_ready_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(
+                tmp_root,
+                repair_ready=False,
+                context_required_count=1,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "promotion-request",
+                "--plan",
+                str(plan_path),
+                "--candidate-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--title",
+                "Add candidate spec graph",
+                "--body",
+                "Review materialized candidate graph.",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_plan_not_ready", codes)
+        self.assertIn("graph_repository_prepare_branch_not_ready", codes)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["commit_paths"], [])
+
     def test_graph_repository_prepare_worktree_creates_git_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
