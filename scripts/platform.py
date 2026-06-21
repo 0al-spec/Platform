@@ -1568,6 +1568,242 @@ def graph_repository_commit_worktree(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
+def graph_repository_open_review_preflight_diagnostics(
+    commit_report: dict[str, Any],
+    *,
+    worktree_dir: Path,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if commit_report.get("artifact_kind") != (
+        "platform_graph_repository_review_commit_report"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_commit_report_kind_mismatch",
+                subject="artifact_kind",
+                message="expected platform_graph_repository_review_commit_report",
+            )
+        )
+    if commit_report.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_commit_report_not_ok",
+                subject="ok",
+                message="review commit report must be ok before opening review",
+            )
+        )
+    if not isinstance(commit_report.get("candidate_branch"), str):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_candidate_branch_missing",
+                subject="candidate_branch",
+                message="commit report must include candidate branch",
+            )
+        )
+    if not isinstance(commit_report.get("commit_sha"), str):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_commit_sha_missing",
+                subject="commit_sha",
+                message="commit report must include commit sha",
+            )
+        )
+    if commit_report.get("canonical_mutations_allowed") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_commit_report_authority_expanded",
+                subject="canonical_mutations_allowed",
+                message="review commit report must not allow canonical mutations",
+            )
+        )
+    if commit_report.get("canonical_tracked_artifacts_written") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_commit_report_authority_expanded",
+                subject="canonical_tracked_artifacts_written",
+                message="review commit report must not write canonical tracked artifacts",
+            )
+        )
+    if not worktree_dir.is_dir() or not (worktree_dir / ".git").exists():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_worktree_missing",
+                subject="worktree_dir",
+                message="worktree directory must be an existing Git worktree",
+            )
+        )
+    return diagnostics
+
+
+def graph_repository_open_review(args: argparse.Namespace) -> int:
+    commit_report_path = Path(args.commit_report)
+    worktree_dir = Path(args.worktree_dir)
+    commit_report = load_json_mapping(
+        commit_report_path,
+        label="graph repository review commit report",
+    )
+    candidate_branch = commit_report.get("candidate_branch")
+    commit_sha = commit_report.get("commit_sha")
+    diagnostics = graph_repository_open_review_preflight_diagnostics(
+        commit_report,
+        worktree_dir=worktree_dir,
+    )
+    command_results: list[dict[str, Any]] = []
+    current_branch: str | None = None
+    current_head: str | None = None
+
+    if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics):
+        current_branch, diagnostic = git_stdout(
+            ["git", "-C", str(worktree_dir), "rev-parse", "--abbrev-ref", "HEAD"]
+        )
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+        elif current_branch != candidate_branch:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_worktree_branch_mismatch",
+                    subject="worktree_dir",
+                    message=(
+                        f"expected branch `{candidate_branch}` but found "
+                        f"`{current_branch}`"
+                    ),
+                )
+            )
+
+    if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics):
+        current_head, diagnostic = git_stdout(
+            ["git", "-C", str(worktree_dir), "rev-parse", "HEAD"]
+        )
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+        elif current_head != commit_sha:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_worktree_head_mismatch",
+                    subject="worktree_dir",
+                    message=(
+                        f"expected HEAD `{commit_sha}` but found "
+                        f"`{current_head}`"
+                    ),
+                )
+            )
+
+    review_url: str | None = None
+    git_commands_planned = [
+        ["git", "-C", str(worktree_dir), "push", "-u", "origin", str(candidate_branch)]
+    ]
+    gh_command = [
+        args.gh_bin,
+        "pr",
+        "create",
+        "--base",
+        args.base,
+        "--head",
+        str(candidate_branch),
+        "--title",
+        args.title,
+        "--body",
+        args.body,
+    ]
+    if args.repo:
+        gh_command.extend(["--repo", args.repo])
+
+    if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics) and not args.dry_run:
+        push_result, diagnostic = run_graph_repository_command(git_commands_planned[0])
+        command_results.append(push_result)
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+
+    if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics) and not args.dry_run:
+        gh_result, diagnostic = run_graph_repository_command(gh_command)
+        command_results.append(gh_result)
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+        else:
+            review_url = gh_result["stdout"].strip().splitlines()[-1]
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    report_path = (
+        worktree_dir
+        / ".platform"
+        / "graph_repository_open_review_report.json"
+    )
+    local_files_written: list[str] = []
+    if error_count == 0 and not args.dry_run:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        local_files_written.append(str(report_path))
+
+    report = {
+        "schema_version": 1,
+        "artifact_kind": "platform_graph_repository_open_review_report",
+        "commit_report_ref": str(commit_report_path),
+        "ok": error_count == 0,
+        "dry_run": args.dry_run,
+        "candidate_branch": candidate_branch,
+        "commit_sha": commit_sha,
+        "current_branch": current_branch,
+        "current_head": current_head,
+        "base_branch": args.base,
+        "worktree_dir": str(worktree_dir),
+        "canonical_mutations_allowed": False,
+        "canonical_tracked_artifacts_written": False,
+        "candidate_branch_pushed": (
+            not args.dry_run and error_count == 0 and len(command_results) >= 1
+        ),
+        "pull_requests_opened": [] if review_url is None else [review_url],
+        "review_url": review_url,
+        "commits_created": [],
+        "merges_performed": [],
+        "git_commands_planned": git_commands_planned,
+        "review_commands_planned": [gh_command],
+        "commands_executed": [] if args.dry_run else command_results,
+        "local_files_written": local_files_written,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "review_opened": review_url is not None and error_count == 0,
+        },
+    }
+
+    if error_count == 0 and not args.dry_run:
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "branch": str(candidate_branch),
+                        "base": args.base,
+                        "review": str(review_url),
+                    }
+                ],
+                [
+                    ("branch", "BRANCH"),
+                    ("base", "BASE"),
+                    ("review", "REVIEW"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
 def expected_profile(kind: Any) -> str | None:
     if kind == "core_repository":
         return "self_hosted_bootstrap"
@@ -3287,6 +3523,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     graph_repository_commit_parser.set_defaults(func=graph_repository_commit_worktree)
+    graph_repository_review_parser = graph_repository_subcommands.add_parser(
+        "open-review",
+        help="Push a candidate branch and open a pull request review.",
+    )
+    graph_repository_review_parser.add_argument(
+        "--commit-report",
+        required=True,
+        help="Path to a graph repository review commit report.",
+    )
+    graph_repository_review_parser.add_argument(
+        "--worktree-dir",
+        required=True,
+        help="Git worktree containing the candidate branch commit.",
+    )
+    graph_repository_review_parser.add_argument(
+        "--base",
+        default="main",
+        help="Base branch for the review pull request.",
+    )
+    graph_repository_review_parser.add_argument(
+        "--title",
+        required=True,
+        help="Pull request title.",
+    )
+    graph_repository_review_parser.add_argument(
+        "--body",
+        required=True,
+        help="Pull request body.",
+    )
+    graph_repository_review_parser.add_argument(
+        "--repo",
+        help="Optional GitHub repository passed to gh as owner/name.",
+    )
+    graph_repository_review_parser.add_argument(
+        "--gh-bin",
+        default="gh",
+        help="GitHub CLI executable to use.",
+    )
+    graph_repository_review_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render planned push/review commands without executing them.",
+    )
+    graph_repository_review_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    graph_repository_review_parser.set_defaults(func=graph_repository_open_review)
 
     deploy_parser = subcommands.add_parser(
         "deploy",

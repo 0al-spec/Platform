@@ -209,6 +209,49 @@ class PlatformCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return workspace_dir
 
+    def commit_graph_repository_candidate(self, tmp_root: Path) -> tuple[Path, Path]:
+        workspace_dir = self.prepare_graph_repository_worktree(tmp_root)
+        spec_path = workspace_dir / "specs" / "nodes" / "SG-SPEC-CANDIDATE.yaml"
+        spec_path.parent.mkdir(parents=True)
+        spec_path.write_text(
+            "id: SG-SPEC-CANDIDATE\nsummary: Candidate spec\n",
+            encoding="utf-8",
+        )
+        prepare_report = (
+            workspace_dir
+            / ".platform"
+            / "graph_repository_worktree_prepare_report.json"
+        )
+        result = self.run_cli(
+            "graph-repository",
+            "commit-worktree",
+            "--prepare-report",
+            str(prepare_report),
+            "--worktree-dir",
+            str(workspace_dir),
+            "--path",
+            "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+            "--message",
+            "Add candidate spec",
+            "--format",
+            "json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return (
+            workspace_dir,
+            workspace_dir / ".platform" / "graph_repository_review_commit_report.json",
+        )
+
+    def write_fake_gh(self, tmp_root: Path) -> Path:
+        fake_gh = tmp_root / "fake-gh"
+        fake_gh.write_text(
+            "#!/usr/bin/env sh\n"
+            "printf '%s\\n' 'https://github.com/example/repo/pull/123'\n",
+            encoding="utf-8",
+        )
+        fake_gh.chmod(0o755)
+        return fake_gh
+
     def test_workspace_list_json(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
             catalog.write(CATALOG)
@@ -1039,6 +1082,105 @@ workspaces:
         self.assertIn("graph_repository_commit_path_outside_worktree", codes)
         self.assertFalse(payload["ok"])
         self.assertIsNone(payload["commit_sha"])
+
+    def test_graph_repository_open_review_pushes_branch_and_invokes_gh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir, commit_report = self.commit_graph_repository_candidate(
+                tmp_root
+            )
+            fake_gh = self.write_fake_gh(tmp_root)
+
+            result = self.run_cli(
+                "graph-repository",
+                "open-review",
+                "--commit-report",
+                str(commit_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--base",
+                "main",
+                "--title",
+                "Add candidate spec",
+                "--body",
+                "Review candidate spec graph.",
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_graph_repository_open_review_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["candidate_branch_pushed"])
+            self.assertEqual(
+                payload["review_url"],
+                "https://github.com/example/repo/pull/123",
+            )
+            self.assertEqual(
+                payload["pull_requests_opened"],
+                ["https://github.com/example/repo/pull/123"],
+            )
+            self.assertEqual(payload["commits_created"], [])
+            self.assertEqual(payload["merges_performed"], [])
+            self.assertFalse(payload["canonical_mutations_allowed"])
+            self.assertFalse(payload["canonical_tracked_artifacts_written"])
+            self.assertEqual(len(payload["commands_executed"]), 2)
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_open_review_report.json"
+                ).is_file()
+            )
+            remote_heads = self.run_git(
+                workspace_dir,
+                "ls-remote",
+                "--heads",
+                "origin",
+                "graph-candidate/idea-alpha",
+            ).stdout
+            self.assertIn("refs/heads/graph-candidate/idea-alpha", remote_heads)
+
+    def test_graph_repository_open_review_rejects_failed_commit_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir, commit_report = self.commit_graph_repository_candidate(
+                tmp_root
+            )
+            payload = json.loads(commit_report.read_text(encoding="utf-8"))
+            payload["ok"] = False
+            commit_report.write_text(json.dumps(payload), encoding="utf-8")
+            fake_gh = self.write_fake_gh(tmp_root)
+
+            result = self.run_cli(
+                "graph-repository",
+                "open-review",
+                "--commit-report",
+                str(commit_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--title",
+                "Add candidate spec",
+                "--body",
+                "Review candidate spec graph.",
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_commit_report_not_ok", codes)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["pull_requests_opened"], [])
 
 
 if __name__ == "__main__":
