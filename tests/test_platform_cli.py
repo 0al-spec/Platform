@@ -65,6 +65,60 @@ class PlatformCliTests(unittest.TestCase):
             stderr=subprocess.PIPE,
         )
 
+    def write_graph_repository_run_artifacts(
+        self,
+        runs_dir: Path,
+        *,
+        candidate_authority_expanded: bool = False,
+        candidate_ready: bool = True,
+        repair_ready: bool = True,
+        context_required_count: int = 0,
+    ) -> None:
+        artifacts = {
+            "idea_event_storming_intake.json": {
+                "schema_version": 1,
+                "artifact_kind": "idea_event_storming_intake",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "review_state": "review_ready",
+            },
+            "candidate_spec_graph.json": {
+                "schema_version": 1,
+                "artifact_kind": "candidate_spec_graph",
+                "canonical_mutations_allowed": candidate_authority_expanded,
+                "tracked_artifacts_written": False,
+                "pre_sib_readiness": {
+                    "ready": candidate_ready,
+                    "review_state": "ready",
+                },
+            },
+            "pre_sib_coherence_report.json": {
+                "schema_version": 1,
+                "artifact_kind": "pre_sib_coherence_report",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "readiness": {
+                    "ready": True,
+                    "review_state": "ready",
+                },
+            },
+            "candidate_repair_loop_report.json": {
+                "schema_version": 1,
+                "artifact_kind": "candidate_repair_loop_report",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "readiness": {
+                    "ready": repair_ready,
+                    "review_state": "ready" if repair_ready else "context_required",
+                },
+                "summary": {
+                    "context_required_count": context_required_count,
+                },
+            },
+        }
+        for filename, payload in artifacts.items():
+            (runs_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
+
     def test_workspace_list_json(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
             catalog.write(CATALOG)
@@ -445,6 +499,127 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("graph_repository_contract_schema_invalid", codes)
         self.assertIn("graph_repository_validation_gate_empty", codes)
+
+    def test_graph_repository_plan_builds_readonly_execution_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            output = runs_dir / "graph_repository_execution_plan.json"
+            self.write_graph_repository_run_artifacts(runs_dir)
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            persisted = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload, persisted)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_graph_repository_execution_plan",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["read_only"])
+            self.assertTrue(payload["ready_for_branch"])
+            self.assertFalse(payload["canonical_mutations_allowed"])
+            self.assertFalse(payload["tracked_artifacts_written"])
+            self.assertEqual(payload["write_actions_executed"], [])
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+            operations = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(operations["prepare_branch"], "ready")
+            self.assertEqual(
+                operations["create_commit"],
+                "blocked_until_prepare_branch",
+            )
+
+    def test_graph_repository_plan_rejects_missing_required_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(runs_dir)
+            (runs_dir / "candidate_repair_loop_report.json").unlink()
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_artifact_missing", codes)
+        self.assertFalse(payload["ok"])
+
+    def test_graph_repository_plan_blocks_when_candidate_is_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                candidate_ready=False,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        operations = {
+            operation["name"]: operation for operation in payload["operations"]
+        }
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["ready_for_branch"])
+        self.assertEqual(operations["prepare_branch"]["status"], "blocked")
+        self.assertEqual(operations["prepare_branch"]["reason"], "candidate_not_ready")
+
+    def test_graph_repository_plan_rejects_artifact_authority_expansion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                candidate_authority_expanded=True,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_artifact_authority_expanded", codes)
+        self.assertFalse(payload["ok"])
 
 
 if __name__ == "__main__":

@@ -96,6 +96,10 @@ scripts/platform.py workspace init \
   --root-intent "describe the product goal"
 scripts/platform.py graph-repository validate \
   --contract graph-repository-service.example.json
+scripts/platform.py graph-repository plan \
+  --contract graph-repository-service.example.json \
+  --runs-dir ../SpecGraph/runs \
+  --output runs/graph_repository_execution_plan.json
 scripts/platform.py deploy render --dry-run
 scripts/platform.py deploy up
 scripts/platform.py deploy status
@@ -132,6 +136,11 @@ contract. The contract fixes the production write boundary for candidate
 workspaces, validation gates, branch/commit/review operations, and public-safe
 read-model publication without granting SpecSpace direct canonical write
 authority.
+
+`graph-repository plan` reads the required SpecGraph idea-to-spec run artifacts
+and emits a report-only execution plan for the repository service boundary. The
+planner verifies that the inputs remain review-only and does not run Git, open
+reviews, publish read models, or mutate canonical SpecGraph specs.
 
 Install local Python tooling with:
 

@@ -15,7 +15,8 @@ local validator:
 
 - schema: `schemas/graph-repository-service-contract.schema.json`;
 - example: `graph-repository-service.example.json`;
-- CLI: `scripts/platform.py graph-repository validate`.
+- CLI: `scripts/platform.py graph-repository validate`;
+- report-only execution plan: `scripts/platform.py graph-repository plan`.
 
 The validator is intentionally stricter than ordinary JSON parsing. It checks
 the schema and report-only authority rules:
@@ -59,3 +60,31 @@ scripts/platform.py graph-repository validate \
   --contract graph-repository-service.example.json \
   --format json
 ```
+
+## Plan
+
+Build a local report-only execution plan from SpecGraph run artifacts:
+
+```bash
+scripts/platform.py graph-repository plan \
+  --contract graph-repository-service.example.json \
+  --runs-dir ../SpecGraph/runs \
+  --output runs/graph_repository_execution_plan.json
+```
+
+The planner requires these SpecGraph artifacts:
+
+- `idea_event_storming_intake.json`;
+- `candidate_spec_graph.json`;
+- `pre_sib_coherence_report.json`;
+- `candidate_repair_loop_report.json`.
+
+Each artifact must remain review-only:
+
+- `canonical_mutations_allowed: false`;
+- `tracked_artifacts_written: false`.
+
+The planner does not run Git, create commits, open pull requests, publish read
+models, write Ontology packages, or mutate canonical SpecGraph specs. It only
+reports whether the read-only inputs are ready for the later repository service
+executor.
