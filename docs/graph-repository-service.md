@@ -88,3 +88,25 @@ The planner does not run Git, create commits, open pull requests, publish read
 models, write Ontology packages, or mutate canonical SpecGraph specs. It only
 reports whether the read-only inputs are ready for the later repository service
 executor.
+
+## Prepare Local
+
+Prepare a local candidate workspace from a ready execution plan:
+
+```bash
+scripts/platform.py graph-repository prepare-local \
+  --plan runs/graph_repository_execution_plan.json \
+  --candidate-id my-idea-v1 \
+  --workspace-dir .platform/candidates/my-idea-v1
+```
+
+`prepare-local` validates that the plan is `ok`, `ready_for_branch`, and still
+within the report-only authority boundary. It writes only local candidate
+metadata:
+
+- `candidate_workspace_manifest.json`;
+- `graph_repository_local_prepare_report.json`.
+
+It does not execute the planned Git commands. The report includes the branch
+name and planned commands so the next executor slice can replace this local
+metadata step with controlled worktree creation.

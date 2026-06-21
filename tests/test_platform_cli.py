@@ -119,6 +119,36 @@ class PlatformCliTests(unittest.TestCase):
         for filename, payload in artifacts.items():
             (runs_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
 
+    def build_graph_repository_execution_plan(
+        self,
+        tmp_root: Path,
+        *,
+        repair_ready: bool = True,
+        context_required_count: int = 0,
+    ) -> Path:
+        runs_dir = tmp_root / "runs"
+        runs_dir.mkdir()
+        self.write_graph_repository_run_artifacts(
+            runs_dir,
+            repair_ready=repair_ready,
+            context_required_count=context_required_count,
+        )
+        plan_path = tmp_root / "graph_repository_execution_plan.json"
+        result = self.run_cli(
+            "graph-repository",
+            "plan",
+            "--contract",
+            "graph-repository-service.example.json",
+            "--runs-dir",
+            str(runs_dir),
+            "--output",
+            str(plan_path),
+            "--format",
+            "json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return plan_path
+
     def test_workspace_list_json(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
             catalog.write(CATALOG)
@@ -620,6 +650,119 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("graph_repository_artifact_authority_expanded", codes)
         self.assertFalse(payload["ok"])
+
+    def test_graph_repository_prepare_local_writes_workspace_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            workspace_dir = tmp_root / "candidate-workspace"
+
+            result = self.run_cli(
+                "graph-repository",
+                "prepare-local",
+                "--plan",
+                str(plan_path),
+                "--candidate-id",
+                "idea-alpha",
+                "--workspace-dir",
+                str(workspace_dir),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_graph_repository_local_prepare_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["dry_run"])
+            self.assertEqual(payload["candidate_branch"], "graph-candidate/idea-alpha")
+            self.assertEqual(payload["git_commands_executed"], [])
+            self.assertEqual(payload["pull_requests_opened"], [])
+            self.assertFalse(payload["canonical_mutations_allowed"])
+            self.assertFalse(payload["tracked_artifacts_written"])
+            self.assertTrue(
+                (workspace_dir / "candidate_workspace_manifest.json").is_file()
+            )
+            self.assertTrue(
+                (workspace_dir / "graph_repository_local_prepare_report.json").is_file()
+            )
+            manifest = json.loads(
+                (workspace_dir / "candidate_workspace_manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                manifest["artifact_kind"],
+                "platform_graph_repository_candidate_workspace_manifest",
+            )
+            self.assertFalse(
+                manifest["authority_boundary"]["canonical_specs_mutated"]
+            )
+            self.assertFalse(
+                manifest["authority_boundary"]["ontology_packages_written"]
+            )
+
+    def test_graph_repository_prepare_local_rejects_invalid_branch_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            workspace_dir = tmp_root / "candidate-workspace"
+
+            result = self.run_cli(
+                "graph-repository",
+                "prepare-local",
+                "--plan",
+                str(plan_path),
+                "--candidate-id",
+                "idea..alpha",
+                "--workspace-dir",
+                str(workspace_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_candidate_branch_invalid", codes)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["local_files_written"], [])
+        self.assertFalse(workspace_dir.exists())
+
+    def test_graph_repository_prepare_local_rejects_not_ready_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(
+                tmp_root,
+                repair_ready=False,
+                context_required_count=1,
+            )
+            workspace_dir = tmp_root / "candidate-workspace"
+
+            result = self.run_cli(
+                "graph-repository",
+                "prepare-local",
+                "--plan",
+                str(plan_path),
+                "--candidate-id",
+                "idea-alpha",
+                "--workspace-dir",
+                str(workspace_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_plan_not_ready", codes)
+        self.assertIn("graph_repository_prepare_branch_not_ready", codes)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["local_files_written"], [])
+        self.assertFalse(workspace_dir.exists())
 
 
 if __name__ == "__main__":
