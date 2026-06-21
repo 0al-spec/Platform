@@ -65,7 +65,7 @@ As of 2026-06-21:
 - SpecSpace PRs `#248` and `#249` are merged: the Ontology Workbench reads the
   consolidated ontology artifacts and exposes a read-only layer lens over package,
   gap, and diff layer data.
-- SpecGraph PRs `#590`, `#591`, and `#592` are open as a stacked SpecAuthor
+- SpecGraph PRs `#590`, `#591`, and `#592` are merged as a stacked SpecAuthor
   prompt-side sequence:
   - `#590` adds the deterministic SpecAuthor authoring flow that emits
     `runs/specauthor_invocation_artifact.json`;
@@ -73,9 +73,9 @@ As of 2026-06-21:
     static bundle;
   - `#592` declares a local report-only SpecAuthorAgent Passport with
     experimental `x-behaviorPolicies`.
-- SpecSpace PR `#251` is open: the Ontology Workbench shows the SpecAuthor
+- SpecSpace PR `#251` is merged: the Ontology Workbench shows the SpecAuthor
   invocation chain as a read-only review lane.
-- agent-passport PR `#6` is open: `x-behaviorPolicies` is documented as an
+- agent-passport PR `#6` is merged: `x-behaviorPolicies` is documented as an
   experimental `x-*` extension that remains report-only unless a consumer
   defines explicit enforcement semantics.
 
@@ -292,14 +292,20 @@ The immediate cross-repo stack is now:
 SpecGraph 0146 -> SpecGraph 0147 -> SpecSpace invocation lane -> SpecGraph 0148 -> agent-passport x-behaviorPolicies docs
 ```
 
-This stack keeps Ontology unchanged for now because the compiler contracts
-needed by the slice already exist: layers, model applicability, and change
-classification. The next Ontology compiler slice remains useful, but it no
-longer blocks the current SpecAuthor prompt-side/Passport work.
+This stack keeps Ontology unchanged for now because it only consumes existing
+review refs and metadata: layer refs, current model-applicability refs already
+present in SpecGraph authoring artifacts, and report-only validation status.
+It does not implement the future graph-side
+`ModelApplicabilityProfile` import surface.
+
+ONT-040 remains the prerequisite for compiler-backed applicability profiles,
+invalidation triggers, and structural change classification that downstream
+SpecGraph/SpecSpace applicability dashboards should treat as authoritative.
+It no longer blocks the current SpecAuthor prompt-side/Passport work, but it
+does block the stronger applicability import and review slices.
 
 After this stack merges, the next valuable implementation choices are:
 
-- merge and deploy the SpecSpace invocation review lane;
 - connect real SpecAuthor execution/wrapper output to the deterministic
   authoring-flow builder;
 - backfill selected legacy specs into review-only invocation/claim records;
