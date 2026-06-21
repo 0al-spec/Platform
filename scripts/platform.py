@@ -1166,8 +1166,8 @@ def run_graph_repository_command(
 
 def graph_repository_prepare_worktree(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan)
-    repository_dir = Path(args.repository_dir)
-    workspace_dir = Path(args.workspace_dir)
+    repository_dir = Path(args.repository_dir).resolve()
+    workspace_dir = Path(args.workspace_dir).resolve()
     candidate_id = args.candidate_id
     plan = load_json_mapping(plan_path, label="graph repository execution plan")
     contract_ref = plan.get("contract_ref")

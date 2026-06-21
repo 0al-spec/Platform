@@ -855,6 +855,47 @@ workspaces:
             ).stdout.strip()
             self.assertEqual(branch, "graph-candidate/idea-alpha")
 
+    def test_graph_repository_prepare_worktree_resolves_relative_workspace(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "relative-candidate-worktree"
+            relative_workspace = Path(os.path.relpath(workspace_dir, REPO_ROOT))
+
+            result = self.run_cli(
+                "graph-repository",
+                "prepare-worktree",
+                "--plan",
+                str(plan_path),
+                "--repository-dir",
+                str(repository_dir),
+                "--candidate-id",
+                "idea-alpha",
+                "--workspace-dir",
+                str(relative_workspace),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["workspace_dir"], str(workspace_dir.resolve()))
+            self.assertEqual(
+                payload["git_commands_executed"][1]["command"][5],
+                str(workspace_dir.resolve()),
+            )
+            self.assertTrue((workspace_dir / ".git").exists())
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_worktree_prepare_report.json"
+                ).is_file()
+            )
+
     def test_graph_repository_prepare_worktree_rejects_missing_repository(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
