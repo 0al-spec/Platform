@@ -109,6 +109,11 @@ scripts/platform.py graph-repository prepare-worktree \
   --repository-dir ../SpecGraph \
   --candidate-id my-idea-v1 \
   --workspace-dir .platform/candidates/my-idea-v1-worktree
+scripts/platform.py graph-repository commit-worktree \
+  --prepare-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_worktree_prepare_report.json \
+  --worktree-dir .platform/candidates/my-idea-v1-worktree \
+  --path specs/nodes/SG-SPEC-CANDIDATE.yaml \
+  --message "Add candidate spec graph"
 scripts/platform.py deploy render --dry-run
 scripts/platform.py deploy up
 scripts/platform.py deploy status
@@ -160,6 +165,10 @@ promote candidate specs.
 creates a local Git worktree and candidate branch from a ready execution plan,
 but still does not commit, open reviews, merge, accept specs, or publish read
 models.
+
+`graph-repository commit-worktree` creates a candidate-branch commit from
+explicit relative paths. It does not open reviews, merge, accept specs into the
+canonical branch, write Ontology packages, or publish read models.
 
 Install local Python tooling with:
 

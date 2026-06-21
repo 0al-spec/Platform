@@ -188,6 +188,27 @@ class PlatformCliTests(unittest.TestCase):
         )
         return checkout
 
+    def prepare_graph_repository_worktree(self, tmp_root: Path) -> Path:
+        plan_path = self.build_graph_repository_execution_plan(tmp_root)
+        repository_dir = self.create_graph_repository_checkout(tmp_root)
+        workspace_dir = tmp_root / "candidate-worktree"
+        result = self.run_cli(
+            "graph-repository",
+            "prepare-worktree",
+            "--plan",
+            str(plan_path),
+            "--repository-dir",
+            str(repository_dir),
+            "--candidate-id",
+            "idea-alpha",
+            "--workspace-dir",
+            str(workspace_dir),
+            "--format",
+            "json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return workspace_dir
+
     def test_workspace_list_json(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
             catalog.write(CATALOG)
@@ -923,6 +944,101 @@ workspaces:
         self.assertIn("graph_repository_repository_missing", codes)
         self.assertFalse(payload["ok"])
         self.assertFalse(workspace_dir.exists())
+
+    def test_graph_repository_commit_worktree_creates_candidate_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir = self.prepare_graph_repository_worktree(tmp_root)
+            spec_path = workspace_dir / "specs" / "nodes" / "SG-SPEC-CANDIDATE.yaml"
+            spec_path.parent.mkdir(parents=True)
+            spec_path.write_text(
+                "id: SG-SPEC-CANDIDATE\nsummary: Candidate spec\n",
+                encoding="utf-8",
+            )
+            prepare_report = (
+                workspace_dir
+                / ".platform"
+                / "graph_repository_worktree_prepare_report.json"
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "commit-worktree",
+                "--prepare-report",
+                str(prepare_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--message",
+                "Add candidate spec",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_graph_repository_review_commit_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["candidate_tracked_artifacts_written"])
+            self.assertFalse(payload["canonical_tracked_artifacts_written"])
+            self.assertFalse(payload["canonical_mutations_allowed"])
+            self.assertEqual(payload["pull_requests_opened"], [])
+            self.assertEqual(payload["merges_performed"], [])
+            self.assertEqual(
+                payload["committed_paths"],
+                ["specs/nodes/SG-SPEC-CANDIDATE.yaml"],
+            )
+            self.assertIsInstance(payload["commit_sha"], str)
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_review_commit_report.json"
+                ).is_file()
+            )
+            subject = self.run_git(
+                workspace_dir,
+                "log",
+                "--format=%s",
+                "-1",
+            ).stdout.strip()
+            self.assertEqual(subject, "Add candidate spec")
+
+    def test_graph_repository_commit_worktree_rejects_outside_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir = self.prepare_graph_repository_worktree(tmp_root)
+            prepare_report = (
+                workspace_dir
+                / ".platform"
+                / "graph_repository_worktree_prepare_report.json"
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "commit-worktree",
+                "--prepare-report",
+                str(prepare_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--path",
+                "../outside.yaml",
+                "--message",
+                "Attempt outside path",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_commit_path_outside_worktree", codes)
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["commit_sha"])
 
 
 if __name__ == "__main__":
