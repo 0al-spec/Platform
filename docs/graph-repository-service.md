@@ -110,3 +110,25 @@ metadata:
 It does not execute the planned Git commands. The report includes the branch
 name and planned commands so the next executor slice can replace this local
 metadata step with controlled worktree creation.
+
+## Prepare Worktree
+
+Create the local Git worktree once the execution plan is ready:
+
+```bash
+scripts/platform.py graph-repository prepare-worktree \
+  --plan runs/graph_repository_execution_plan.json \
+  --repository-dir ../SpecGraph \
+  --candidate-id my-idea-v1 \
+  --workspace-dir .platform/candidates/my-idea-v1-worktree
+```
+
+`prepare-worktree` executes only the bounded Git preparation commands:
+
+- `git fetch origin <default_branch>`;
+- `git worktree add <workspace> -b <candidate_branch> origin/<default_branch>`.
+
+It still does not create commits, open pull requests, merge branches, accept
+candidate specs, write Ontology packages, or publish read models. The generated
+worktree receives a local `.platform/graph_repository_worktree_prepare_report.json`
+report with the executed commands and authority boundary.

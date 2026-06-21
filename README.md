@@ -104,6 +104,11 @@ scripts/platform.py graph-repository prepare-local \
   --plan runs/graph_repository_execution_plan.json \
   --candidate-id my-idea-v1 \
   --workspace-dir .platform/candidates/my-idea-v1
+scripts/platform.py graph-repository prepare-worktree \
+  --plan runs/graph_repository_execution_plan.json \
+  --repository-dir ../SpecGraph \
+  --candidate-id my-idea-v1 \
+  --workspace-dir .platform/candidates/my-idea-v1-worktree
 scripts/platform.py deploy render --dry-run
 scripts/platform.py deploy up
 scripts/platform.py deploy status
@@ -150,6 +155,11 @@ reviews, publish read models, or mutate canonical SpecGraph specs.
 local candidate workspace manifest/report. It calculates the candidate branch
 and planned Git commands, but still does not execute Git, open pull requests, or
 promote candidate specs.
+
+`graph-repository prepare-worktree` is the first controlled executor step. It
+creates a local Git worktree and candidate branch from a ready execution plan,
+but still does not commit, open reviews, merge, accept specs, or publish read
+models.
 
 Install local Python tooling with:
 

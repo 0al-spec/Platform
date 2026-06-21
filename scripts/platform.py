@@ -1112,6 +1112,186 @@ def graph_repository_prepare_local(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
+def graph_repository_repository_diagnostics(repository_dir: Path) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if not repository_dir.is_dir():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repository_missing",
+                subject="repository_dir",
+                message="repository directory must exist before worktree preparation",
+            )
+        )
+    elif not (repository_dir / ".git").exists():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repository_not_git_checkout",
+                subject="repository_dir",
+                message="repository directory must be a Git checkout",
+            )
+        )
+    return diagnostics
+
+
+def run_graph_repository_command(
+    command: list[str],
+) -> tuple[dict[str, Any], Diagnostic | None]:
+    completed = subprocess.run(
+        command,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    result = {
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout[-2000:],
+        "stderr": completed.stderr[-2000:],
+    }
+    if completed.returncode == 0:
+        return result, None
+    return result, Diagnostic(
+        level="ERROR",
+        code="graph_repository_git_command_failed",
+        subject=command[0],
+        message=(
+            f"command failed with exit code {completed.returncode}: "
+            f"{' '.join(command)}"
+        ),
+    )
+
+
+def graph_repository_prepare_worktree(args: argparse.Namespace) -> int:
+    plan_path = Path(args.plan)
+    repository_dir = Path(args.repository_dir)
+    workspace_dir = Path(args.workspace_dir)
+    candidate_id = args.candidate_id
+    plan = load_json_mapping(plan_path, label="graph repository execution plan")
+    contract_ref = plan.get("contract_ref")
+    contract_path = Path(contract_ref) if isinstance(contract_ref, str) else None
+    contract = (
+        load_json_mapping(contract_path, label="graph repository contract")
+        if contract_path is not None and contract_path.is_file()
+        else {}
+    )
+    repository_binding = nested_mapping(contract, "repository_binding")
+    default_branch = repository_binding.get("default_branch")
+    if not isinstance(default_branch, str) or not default_branch:
+        default_branch = "main"
+
+    branch_name = graph_repository_candidate_branch(contract, candidate_id)
+    diagnostics = [
+        *graph_repository_prepare_plan_diagnostics(
+            plan,
+            candidate_id=candidate_id,
+            workspace_dir=workspace_dir,
+            dry_run=args.dry_run,
+        ),
+        *graph_repository_repository_diagnostics(repository_dir),
+    ]
+    git_commands = [
+        ["git", "-C", str(repository_dir), "fetch", "origin", default_branch],
+        [
+            "git",
+            "-C",
+            str(repository_dir),
+            "worktree",
+            "add",
+            str(workspace_dir),
+            "-b",
+            branch_name,
+            f"origin/{default_branch}",
+        ],
+    ]
+    command_results: list[dict[str, Any]] = []
+    preflight_error_count = sum(
+        1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+    )
+
+    if preflight_error_count == 0 and not args.dry_run:
+        workspace_dir.parent.mkdir(parents=True, exist_ok=True)
+        for command in git_commands:
+            command_result, diagnostic = run_graph_repository_command(command)
+            command_results.append(command_result)
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
+                break
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    report_path = (
+        workspace_dir
+        / ".platform"
+        / "graph_repository_worktree_prepare_report.json"
+    )
+    local_files_written: list[str] = []
+    if error_count == 0 and not args.dry_run:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        local_files_written.append(str(report_path))
+
+    report = {
+        "schema_version": 1,
+        "artifact_kind": "platform_graph_repository_worktree_prepare_report",
+        "plan_ref": str(plan_path),
+        "ok": error_count == 0,
+        "dry_run": args.dry_run,
+        "candidate_id": candidate_id,
+        "candidate_branch": branch_name,
+        "repository_dir": str(repository_dir),
+        "workspace_dir": str(workspace_dir),
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "git_commands_planned": git_commands,
+        "git_commands_executed": [] if args.dry_run else command_results,
+        "pull_requests_opened": [],
+        "commits_created": [],
+        "merges_performed": [],
+        "local_files_written": local_files_written,
+        "source_artifacts": plan.get("source_artifacts", []),
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "git_command_count": len(command_results),
+            "worktree_created": (
+                not args.dry_run
+                and error_count == 0
+                and (workspace_dir / ".git").exists()
+            ),
+        },
+    }
+
+    if error_count == 0 and not args.dry_run:
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "candidate_id": candidate_id,
+                        "branch": branch_name,
+                        "workspace": str(workspace_dir),
+                    }
+                ],
+                [
+                    ("candidate_id", "CANDIDATE"),
+                    ("branch", "BRANCH"),
+                    ("workspace", "WORKTREE"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
 def expected_profile(kind: Any) -> str | None:
     if kind == "core_repository":
         return "self_hosted_bootstrap"
@@ -2751,6 +2931,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     graph_repository_prepare_parser.set_defaults(func=graph_repository_prepare_local)
+    graph_repository_worktree_parser = graph_repository_subcommands.add_parser(
+        "prepare-worktree",
+        help="Create a local Git worktree from a ready graph repository execution plan.",
+    )
+    graph_repository_worktree_parser.add_argument(
+        "--plan",
+        required=True,
+        help="Path to a graph repository execution plan JSON artifact.",
+    )
+    graph_repository_worktree_parser.add_argument(
+        "--repository-dir",
+        required=True,
+        help="Local Git checkout that owns the candidate worktree.",
+    )
+    graph_repository_worktree_parser.add_argument(
+        "--candidate-id",
+        required=True,
+        help="Stable candidate id used to derive the candidate branch name.",
+    )
+    graph_repository_worktree_parser.add_argument(
+        "--workspace-dir",
+        required=True,
+        help="Target directory for the local Git worktree.",
+    )
+    graph_repository_worktree_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render planned Git commands without executing them.",
+    )
+    graph_repository_worktree_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    graph_repository_worktree_parser.set_defaults(
+        func=graph_repository_prepare_worktree
+    )
 
     deploy_parser = subcommands.add_parser(
         "deploy",
