@@ -975,6 +975,38 @@ def graph_repository_candidate_branch(contract: dict[str, Any], candidate_id: st
     return f"{prefix}{candidate_id}"
 
 
+def graph_repository_branch_name_diagnostics(branch_name: str) -> list[Diagnostic]:
+    try:
+        completed = subprocess.run(
+            ["git", "check-ref-format", "--branch", branch_name],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        return [
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_git_unavailable",
+                subject="candidate_branch",
+                message=f"cannot validate candidate branch name: {exc}",
+            )
+        ]
+    if completed.returncode == 0:
+        return []
+    return [
+        Diagnostic(
+            level="ERROR",
+            code="graph_repository_candidate_branch_invalid",
+            subject="candidate_branch",
+            message=(
+                f"candidate branch `{branch_name}` is not a valid Git branch name"
+            ),
+        )
+    ]
+
+
 def graph_repository_prepare_local(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan)
     workspace_dir = Path(args.workspace_dir)
@@ -994,6 +1026,7 @@ def graph_repository_prepare_local(args: argparse.Namespace) -> int:
         workspace_dir=workspace_dir,
         dry_run=args.dry_run,
     )
+    diagnostics.extend(graph_repository_branch_name_diagnostics(branch_name))
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     local_files = [
         str(workspace_dir / "candidate_workspace_manifest.json"),

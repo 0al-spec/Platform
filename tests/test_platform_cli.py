@@ -705,6 +705,33 @@ workspaces:
                 manifest["authority_boundary"]["ontology_packages_written"]
             )
 
+    def test_graph_repository_prepare_local_rejects_invalid_branch_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            workspace_dir = tmp_root / "candidate-workspace"
+
+            result = self.run_cli(
+                "graph-repository",
+                "prepare-local",
+                "--plan",
+                str(plan_path),
+                "--candidate-id",
+                "idea..alpha",
+                "--workspace-dir",
+                str(workspace_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_candidate_branch_invalid", codes)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["local_files_written"], [])
+        self.assertFalse(workspace_dir.exists())
+
     def test_graph_repository_prepare_local_rejects_not_ready_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
