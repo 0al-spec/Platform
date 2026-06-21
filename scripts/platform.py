@@ -312,6 +312,191 @@ def duplicate_id_diagnostics(
     return diagnostics
 
 
+def load_json_mapping(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise PlatformError(f"cannot read {label} {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise PlatformError(f"cannot parse {label} {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise PlatformError(f"{label} {path} must contain a JSON object")
+    return data
+
+
+def validate_json_schema(
+    payload: dict[str, Any],
+    *,
+    schema_path: Path,
+    code: str,
+) -> list[Diagnostic]:
+    try:
+        jsonschema = import_jsonschema()
+    except ImportError as exc:
+        raise PlatformError(
+            "jsonschema is required to validate contracts. "
+            "Install it with `python3 -m pip install -r requirements-dev.txt`."
+        ) from exc
+
+    try:
+        schema = load_json_mapping(schema_path, label="schema")
+    except PlatformError:
+        raise
+
+    validator = jsonschema.Draft202012Validator(
+        schema,
+        format_checker=jsonschema.FormatChecker(),
+    )
+    return [
+        Diagnostic(
+            level="ERROR",
+            code=code,
+            subject=schema_path_to_subject(error.absolute_path),
+            message=error.message,
+        )
+        for error in sorted(validator.iter_errors(payload), key=lambda item: tuple(item.path))
+    ]
+
+
+def validate_graph_repository_contract_schema(
+    contract: dict[str, Any],
+) -> list[Diagnostic]:
+    return validate_json_schema(
+        contract,
+        schema_path=REPO_ROOT / "schemas" / "graph-repository-service-contract.schema.json",
+        code="graph_repository_contract_schema_invalid",
+    )
+
+
+def graph_repository_contract_semantic_diagnostics(
+    contract: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    promotion_policy = contract.get("promotion_policy")
+    if isinstance(promotion_policy, dict) and promotion_policy.get("auto_merge_allowed") is True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_auto_merge_not_allowed",
+                subject="promotion_policy.auto_merge_allowed",
+                message="auto-merge is outside the MVP graph repository authority boundary",
+            )
+        )
+
+    supported_operations = contract.get("supported_operations")
+    if isinstance(supported_operations, list):
+        operations = {
+            item.get("name")
+            for item in supported_operations
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        required = {
+            "create_candidate_workspace",
+            "validate_candidate_graph",
+            "prepare_branch",
+            "create_commit",
+            "open_review",
+            "publish_read_model",
+        }
+        missing = sorted(required - operations)
+        if missing:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_operation_missing",
+                    subject="supported_operations",
+                    message=f"missing required operations: {', '.join(missing)}",
+                )
+            )
+        expected_canonical_writes = {
+            "create_candidate_workspace": False,
+            "validate_candidate_graph": False,
+            "prepare_branch": False,
+            "create_commit": True,
+            "open_review": False,
+            "publish_read_model": False,
+        }
+        for index, item in enumerate(supported_operations):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str) or name not in expected_canonical_writes:
+                continue
+            expected = expected_canonical_writes[name]
+            if item.get("writes_canonical_store") != expected:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_operation_canonical_write_mismatch",
+                        subject=f"supported_operations[{index}].writes_canonical_store",
+                        message=(
+                            f"operation `{name}` must set writes_canonical_store "
+                            f"to {str(expected).lower()}"
+                        ),
+                    )
+                )
+
+    validation_gates = contract.get("validation_gates")
+    if isinstance(validation_gates, dict):
+        for key in (
+            "required_before_branch",
+            "required_before_commit",
+            "required_before_publish",
+        ):
+            value = validation_gates.get(key)
+            if isinstance(value, list) and not value:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_validation_gate_empty",
+                        subject=f"validation_gates.{key}",
+                        message="validation gate lists must not be empty",
+                    )
+                )
+
+    authority_boundary = contract.get("authority_boundary")
+    if isinstance(authority_boundary, dict):
+        for key, value in sorted(authority_boundary.items()):
+            if value is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_authority_expanded",
+                        subject=f"authority_boundary.{key}",
+                        message="authority boundary flags must remain false in the MVP contract",
+                    )
+                )
+    return diagnostics
+
+
+def graph_repository_validate(args: argparse.Namespace) -> int:
+    contract_path = Path(args.contract)
+    contract = load_json_mapping(contract_path, label="graph repository contract")
+    diagnostics = [
+        *validate_graph_repository_contract_schema(contract),
+        *graph_repository_contract_semantic_diagnostics(contract),
+    ]
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    payload = {
+        "contract": str(contract_path),
+        "ok": error_count == 0,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "operation_count": len(contract.get("supported_operations", []))
+            if isinstance(contract.get("supported_operations"), list)
+            else 0,
+        },
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print("OK: graph repository service contract is valid")
+    return 0 if error_count == 0 else 1
+
+
 def expected_profile(kind: Any) -> str | None:
     if kind == "core_repository":
         return "self_hosted_bootstrap"
@@ -1867,6 +2052,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     init_parser.set_defaults(func=workspace_init)
+
+    graph_repository_parser = subcommands.add_parser(
+        "graph-repository",
+        help="Validate Graph Repository Service contracts.",
+    )
+    graph_repository_subcommands = graph_repository_parser.add_subparsers(
+        dest="graph_repository_command",
+        required=True,
+    )
+    graph_repository_validate_parser = graph_repository_subcommands.add_parser(
+        "validate",
+        help="Validate a Graph Repository Service contract JSON artifact.",
+    )
+    graph_repository_validate_parser.add_argument(
+        "--contract",
+        required=True,
+        help="Path to a graph repository service contract JSON artifact.",
+    )
+    graph_repository_validate_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    graph_repository_validate_parser.set_defaults(func=graph_repository_validate)
 
     deploy_parser = subcommands.add_parser(
         "deploy",
