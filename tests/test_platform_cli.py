@@ -263,6 +263,43 @@ class PlatformCliTests(unittest.TestCase):
         fake_gh.chmod(0o755)
         return fake_gh
 
+    def write_fake_gh_view(self, tmp_root: Path, payload: dict[str, object]) -> Path:
+        fake_gh = tmp_root / "fake-gh-view"
+        fake_gh.write_text(
+            "#!/usr/bin/env sh\n"
+            f"printf '%s\\n' {json.dumps(json.dumps(payload))}\n",
+            encoding="utf-8",
+        )
+        fake_gh.chmod(0o755)
+        return fake_gh
+
+    def open_graph_repository_review(self, tmp_root: Path) -> tuple[Path, Path]:
+        workspace_dir, commit_report = self.commit_graph_repository_candidate(tmp_root)
+        fake_gh = self.write_fake_gh(tmp_root)
+        result = self.run_cli(
+            "graph-repository",
+            "open-review",
+            "--commit-report",
+            str(commit_report),
+            "--worktree-dir",
+            str(workspace_dir),
+            "--base",
+            "main",
+            "--title",
+            "Add candidate spec",
+            "--body",
+            "Review candidate spec graph.",
+            "--gh-bin",
+            str(fake_gh),
+            "--format",
+            "json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return (
+            workspace_dir,
+            workspace_dir / ".platform" / "graph_repository_open_review_report.json",
+        )
+
     def test_workspace_list_json(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
             catalog.write(CATALOG)
@@ -1239,6 +1276,103 @@ workspaces:
         self.assertIn("graph_repository_commit_report_not_ok", codes)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["pull_requests_opened"], [])
+
+    def test_graph_repository_review_status_reads_open_pull_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir, open_review_report = self.open_graph_repository_review(
+                tmp_root
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "mergedAt": None,
+                    "mergeCommit": None,
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "review-status",
+                "--open-review-report",
+                str(open_review_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_graph_repository_review_status_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["review_state"], "open")
+            self.assertEqual(payload["review_decision"], "APPROVED")
+            self.assertFalse(payload["summary"]["review_merged"])
+            self.assertFalse(payload["canonical_mutations_allowed"])
+            self.assertFalse(payload["canonical_tracked_artifacts_written"])
+            self.assertEqual(payload["merges_performed"], [])
+            self.assertEqual(payload["read_models_published"], [])
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_review_status_report.json"
+                ).is_file()
+            )
+
+    def test_graph_repository_review_status_marks_merged_pull_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir, open_review_report = self.open_graph_repository_review(
+                tmp_root
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "MERGED",
+                    "isDraft": False,
+                    "mergedAt": "2026-06-21T16:00:00Z",
+                    "mergeCommit": {"oid": "abc123"},
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "review-status",
+                "--open-review-report",
+                str(open_review_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["review_state"], "merged")
+        self.assertTrue(payload["summary"]["review_merged"])
+        self.assertEqual(payload["merges_performed"], [])
+        self.assertEqual(payload["read_models_published"], [])
 
 
 if __name__ == "__main__":

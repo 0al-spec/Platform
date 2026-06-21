@@ -177,3 +177,21 @@ that `HEAD` matches the commit recorded by `commit-worktree`. It then executes:
 The command writes `.platform/graph_repository_open_review_report.json` with
 the review URL. It still does not merge, accept candidate specs into the
 canonical branch, write Ontology packages, or publish read models.
+
+## Review Status
+
+Read pull request state after `open-review`:
+
+```bash
+scripts/platform.py graph-repository review-status \
+  --open-review-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_open_review_report.json \
+  --worktree-dir .platform/candidates/my-idea-v1-worktree
+```
+
+`review-status` runs `gh pr view` and writes
+`.platform/graph_repository_review_status_report.json`. It normalizes the review
+state as `open`, `draft`, `closed`, `merged`, or `unknown`.
+
+This command is read-only with respect to the graph lifecycle. It does not merge,
+accept candidate specs into the canonical branch, write Ontology packages, or
+publish read models. A later publish slice can consume a `merged` status report.
