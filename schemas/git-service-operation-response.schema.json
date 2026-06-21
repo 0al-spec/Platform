@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:0al:platform:schemas:git-service-operation-response:1",
+  "title": "0AL Platform Git Service Operation Response",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "operation",
+    "request_id",
+    "response_id",
+    "correlation_id",
+    "idempotency_key",
+    "status",
+    "started_at",
+    "completed_at",
+    "outputs",
+    "audit_events",
+    "writes"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "artifact_kind": {
+      "type": "string",
+      "const": "platform_git_service_operation_response"
+    },
+    "operation": {
+      "$ref": "#/$defs/operationName"
+    },
+    "request_id": {
+      "$ref": "#/$defs/id"
+    },
+    "response_id": {
+      "$ref": "#/$defs/id"
+    },
+    "correlation_id": {
+      "$ref": "#/$defs/id"
+    },
+    "idempotency_key": {
+      "$ref": "#/$defs/ref"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "blocked",
+        "failed",
+        "dry_run"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "audit_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "artifact_kind",
+          "event_id",
+          "operation",
+          "created_at"
+        ],
+        "properties": {
+          "artifact_kind": {
+            "type": "string",
+            "const": "platform_git_service_audit_event"
+          },
+          "event_id": {
+            "$ref": "#/$defs/id"
+          },
+          "operation": {
+            "$ref": "#/$defs/operationName"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "$ref": "#/$defs/ref"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "writes": {
+      "type": "object",
+      "required": [
+        "canonical_specs",
+        "ontology_packages",
+        "candidate_ref",
+        "review",
+        "read_model",
+        "private_artifacts"
+      ],
+      "properties": {
+        "canonical_specs": {
+          "type": "boolean",
+          "const": false
+        },
+        "ontology_packages": {
+          "type": "boolean",
+          "const": false
+        },
+        "candidate_ref": {
+          "type": "boolean"
+        },
+        "review": {
+          "type": "boolean"
+        },
+        "read_model": {
+          "type": "boolean"
+        },
+        "private_artifacts": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "minLength": 1,
+      "maxLength": 180
+    },
+    "ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "operationName": {
+      "type": "string",
+      "enum": [
+        "prepare_worktree",
+        "commit_candidate",
+        "open_review",
+        "review_status",
+        "publish_read_model"
+      ]
+    }
+  }
+}

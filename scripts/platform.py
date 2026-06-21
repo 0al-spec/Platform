@@ -57,6 +57,53 @@ GRAPH_REPOSITORY_PROMOTION_PATH_PREFIXES = (
     "docs/proposals/",
     "runs/",
 )
+GIT_SERVICE_REQUIRED_OPERATIONS = {
+    "prepare_worktree": {
+        "adapter_command": "graph-repository prepare-worktree",
+        "writes": {
+            "candidate_ref": True,
+            "review": False,
+            "read_model": False,
+        },
+        "lock_scopes": {"candidate_ref"},
+    },
+    "commit_candidate": {
+        "adapter_command": "graph-repository commit-worktree",
+        "writes": {
+            "candidate_ref": True,
+            "review": False,
+            "read_model": False,
+        },
+        "lock_scopes": {"candidate_ref"},
+    },
+    "open_review": {
+        "adapter_command": "graph-repository open-review",
+        "writes": {
+            "candidate_ref": True,
+            "review": True,
+            "read_model": False,
+        },
+        "lock_scopes": {"candidate_ref", "review_ref"},
+    },
+    "review_status": {
+        "adapter_command": "graph-repository review-status",
+        "writes": {
+            "candidate_ref": False,
+            "review": False,
+            "read_model": False,
+        },
+        "lock_scopes": {"review_ref"},
+    },
+    "publish_read_model": {
+        "adapter_command": "graph-repository publish-read-model",
+        "writes": {
+            "candidate_ref": False,
+            "review": False,
+            "read_model": True,
+        },
+        "lock_scopes": {"read_model_publish"},
+    },
+}
 
 
 class PlatformError(Exception):
@@ -518,6 +565,272 @@ def graph_repository_validate(args: argparse.Namespace) -> int:
     else:
         print("OK: graph repository service contract is valid")
     return 0 if error_count == 0 else 1
+
+
+def validate_git_service_operation_contract_schema(
+    contract: dict[str, Any],
+) -> list[Diagnostic]:
+    return validate_json_schema(
+        contract,
+        schema_path=REPO_ROOT
+        / "schemas"
+        / "git-service-operation-contract.schema.json",
+        code="git_service_operation_contract_schema_invalid",
+    )
+
+
+def validate_git_service_operation_request_schema(
+    request: dict[str, Any],
+) -> list[Diagnostic]:
+    return validate_json_schema(
+        request,
+        schema_path=REPO_ROOT / "schemas" / "git-service-operation-request.schema.json",
+        code="git_service_operation_request_schema_invalid",
+    )
+
+
+def validate_git_service_operation_response_schema(
+    response: dict[str, Any],
+) -> list[Diagnostic]:
+    return validate_json_schema(
+        response,
+        schema_path=REPO_ROOT
+        / "schemas"
+        / "git-service-operation-response.schema.json",
+        code="git_service_operation_response_schema_invalid",
+    )
+
+
+def git_service_operation_contract_semantic_diagnostics(
+    contract: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    operations = contract.get("operations")
+    operation_by_name: dict[str, tuple[int, dict[str, Any]]] = {}
+    if isinstance(operations, list):
+        for index, item in enumerate(operations):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str):
+                continue
+            if name in operation_by_name:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="git_service_operation_duplicate",
+                        subject=f"operations[{index}].name",
+                        message=f"duplicate operation `{name}`",
+                    )
+                )
+            operation_by_name[name] = (index, item)
+
+    missing = sorted(set(GIT_SERVICE_REQUIRED_OPERATIONS) - set(operation_by_name))
+    if missing:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_operation_missing",
+                subject="operations",
+                message=f"missing required operations: {', '.join(missing)}",
+            )
+        )
+
+    extra = sorted(set(operation_by_name) - set(GIT_SERVICE_REQUIRED_OPERATIONS))
+    if extra:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_operation_unknown",
+                subject="operations",
+                message=f"unknown operations: {', '.join(extra)}",
+            )
+        )
+
+    for name, expected in GIT_SERVICE_REQUIRED_OPERATIONS.items():
+        entry = operation_by_name.get(name)
+        if entry is None:
+            continue
+        index, operation = entry
+        if operation.get("adapter_command") != expected["adapter_command"]:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_adapter_command_mismatch",
+                    subject=f"operations[{index}].adapter_command",
+                    message=(
+                        f"operation `{name}` must use adapter command "
+                        f"`{expected['adapter_command']}`"
+                    ),
+                )
+            )
+        writes = operation.get("writes")
+        if isinstance(writes, dict):
+            for field, expected_value in expected["writes"].items():
+                if writes.get(field) != expected_value:
+                    diagnostics.append(
+                        Diagnostic(
+                            level="ERROR",
+                            code="git_service_write_boundary_mismatch",
+                            subject=f"operations[{index}].writes.{field}",
+                            message=(
+                                f"operation `{name}` must set writes.{field} to "
+                                f"{str(expected_value).lower()}"
+                            ),
+                        )
+                    )
+        lock_scopes = operation.get("lock_scopes")
+        if isinstance(lock_scopes, list):
+            missing_scopes = sorted(expected["lock_scopes"] - set(lock_scopes))
+            if missing_scopes:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="git_service_lock_scope_missing",
+                        subject=f"operations[{index}].lock_scopes",
+                        message=(
+                            f"operation `{name}` is missing lock scopes: "
+                            f"{', '.join(missing_scopes)}"
+                        ),
+                    )
+                )
+
+    repository_binding = contract.get("repository_binding")
+    ref_ownership = contract.get("ref_ownership")
+    if isinstance(repository_binding, dict) and isinstance(ref_ownership, dict):
+        branch_prefix = repository_binding.get("candidate_branch_prefix")
+        ref_prefix = ref_ownership.get("candidate_ref_prefix")
+        if branch_prefix != ref_prefix:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_candidate_ref_prefix_mismatch",
+                    subject="ref_ownership.candidate_ref_prefix",
+                    message=(
+                        "ref_ownership.candidate_ref_prefix must match "
+                        "repository_binding.candidate_branch_prefix"
+                    ),
+                )
+            )
+
+    audit = contract.get("audit")
+    if isinstance(audit, dict):
+        required_fields = audit.get("required_fields")
+        if isinstance(required_fields, list):
+            required_audit_fields = {
+                "event_id",
+                "operation",
+                "request_id",
+                "actor_ref",
+                "repository_ref",
+                "candidate_id",
+                "created_at",
+                "status",
+            }
+            missing_audit_fields = sorted(required_audit_fields - set(required_fields))
+            if missing_audit_fields:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="git_service_audit_field_missing",
+                        subject="audit.required_fields",
+                        message=(
+                            "missing required audit fields: "
+                            f"{', '.join(missing_audit_fields)}"
+                        ),
+                    )
+                )
+
+    authority_boundary = contract.get("authority_boundary")
+    if isinstance(authority_boundary, dict):
+        for key, value in sorted(authority_boundary.items()):
+            if value is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="git_service_authority_expanded",
+                        subject=f"authority_boundary.{key}",
+                        message="authority boundary flags must remain false",
+                    )
+                )
+    return diagnostics
+
+
+def git_service_validate_contract(args: argparse.Namespace) -> int:
+    contract_path = Path(args.contract)
+    contract = load_json_mapping(contract_path, label="git service contract")
+    diagnostics = [
+        *validate_git_service_operation_contract_schema(contract),
+        *git_service_operation_contract_semantic_diagnostics(contract),
+    ]
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    payload = {
+        "contract": str(contract_path),
+        "ok": error_count == 0,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "operation_count": len(contract.get("operations", []))
+            if isinstance(contract.get("operations"), list)
+            else 0,
+        },
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print("OK: git service operation contract is valid")
+    return 0 if error_count == 0 else 1
+
+
+def git_service_validate_operation_payload(
+    *,
+    path: Path,
+    label: str,
+    validator: Any,
+    success_message: str,
+    args: argparse.Namespace,
+) -> int:
+    payload_data = load_json_mapping(path, label=label)
+    diagnostics = validator(payload_data)
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    output = {
+        "path": str(path),
+        "ok": error_count == 0,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "operation": payload_data.get("operation"),
+        },
+    }
+    if args.format == "json":
+        print(json.dumps(output, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(success_message)
+    return 0 if error_count == 0 else 1
+
+
+def git_service_validate_request(args: argparse.Namespace) -> int:
+    return git_service_validate_operation_payload(
+        path=Path(args.request),
+        label="git service request",
+        validator=validate_git_service_operation_request_schema,
+        success_message="OK: git service operation request is valid",
+        args=args,
+    )
+
+
+def git_service_validate_response(args: argparse.Namespace) -> int:
+    return git_service_validate_operation_payload(
+        path=Path(args.response),
+        label="git service response",
+        validator=validate_git_service_operation_response_schema,
+        success_message="OK: git service operation response is valid",
+        args=args,
+    )
 
 
 def nested_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
@@ -3949,6 +4262,63 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     init_parser.set_defaults(func=workspace_init)
+
+    git_service_parser = subcommands.add_parser(
+        "git-service",
+        help="Validate Git Service operation contracts and envelopes.",
+    )
+    git_service_subcommands = git_service_parser.add_subparsers(
+        dest="git_service_command",
+        required=True,
+    )
+    git_service_contract_parser = git_service_subcommands.add_parser(
+        "validate-contract",
+        help="Validate a Git Service operation contract JSON artifact.",
+    )
+    git_service_contract_parser.add_argument(
+        "--contract",
+        required=True,
+        help="Path to a Git Service operation contract JSON artifact.",
+    )
+    git_service_contract_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    git_service_contract_parser.set_defaults(func=git_service_validate_contract)
+    git_service_request_parser = git_service_subcommands.add_parser(
+        "validate-request",
+        help="Validate a Git Service operation request envelope.",
+    )
+    git_service_request_parser.add_argument(
+        "--request",
+        required=True,
+        help="Path to a Git Service operation request JSON artifact.",
+    )
+    git_service_request_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    git_service_request_parser.set_defaults(func=git_service_validate_request)
+    git_service_response_parser = git_service_subcommands.add_parser(
+        "validate-response",
+        help="Validate a Git Service operation response envelope.",
+    )
+    git_service_response_parser.add_argument(
+        "--response",
+        required=True,
+        help="Path to a Git Service operation response JSON artifact.",
+    )
+    git_service_response_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    git_service_response_parser.set_defaults(func=git_service_validate_response)
 
     graph_repository_parser = subcommands.add_parser(
         "graph-repository",

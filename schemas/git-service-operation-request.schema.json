@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:0al:platform:schemas:git-service-operation-request:1",
+  "title": "0AL Platform Git Service Operation Request",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "operation",
+    "request_id",
+    "correlation_id",
+    "idempotency_key",
+    "actor_ref",
+    "repository_ref",
+    "candidate_id",
+    "requested_at",
+    "dry_run",
+    "inputs",
+    "authority_boundary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "artifact_kind": {
+      "type": "string",
+      "const": "platform_git_service_operation_request"
+    },
+    "operation": {
+      "$ref": "#/$defs/operationName"
+    },
+    "request_id": {
+      "$ref": "#/$defs/id"
+    },
+    "correlation_id": {
+      "$ref": "#/$defs/id"
+    },
+    "idempotency_key": {
+      "$ref": "#/$defs/ref"
+    },
+    "actor_ref": {
+      "$ref": "#/$defs/ref"
+    },
+    "repository_ref": {
+      "$ref": "#/$defs/ref"
+    },
+    "candidate_id": {
+      "$ref": "#/$defs/id"
+    },
+    "candidate_ref": {
+      "$ref": "#/$defs/ref"
+    },
+    "base_ref": {
+      "$ref": "#/$defs/ref"
+    },
+    "requested_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "authority_boundary": {
+      "$ref": "#/$defs/authorityBoundary"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "minLength": 1,
+      "maxLength": 180
+    },
+    "ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "operationName": {
+      "type": "string",
+      "enum": [
+        "prepare_worktree",
+        "commit_candidate",
+        "open_review",
+        "review_status",
+        "publish_read_model"
+      ]
+    },
+    "authorityBoundary": {
+      "type": "object",
+      "required": [
+        "specspace_direct_git_write",
+        "canonical_spec_mutation_without_review",
+        "ontology_package_write",
+        "auto_merge",
+        "private_artifact_publication"
+      ],
+      "properties": {
+        "specspace_direct_git_write": {
+          "type": "boolean",
+          "const": false
+        },
+        "canonical_spec_mutation_without_review": {
+          "type": "boolean",
+          "const": false
+        },
+        "ontology_package_write": {
+          "type": "boolean",
+          "const": false
+        },
+        "auto_merge": {
+          "type": "boolean",
+          "const": false
+        },
+        "private_artifact_publication": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

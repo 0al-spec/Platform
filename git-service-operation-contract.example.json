@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "platform_git_service_operation_contract",
+  "service_id": "platform.git-service.specgraph",
+  "repository_binding": {
+    "provider": "git",
+    "repository_ref": "git@github.com:0al-spec/SpecGraph.git",
+    "default_branch": "main",
+    "candidate_branch_prefix": "graph-candidate/"
+  },
+  "operation_envelope": {
+    "request_schema": "schemas/git-service-operation-request.schema.json",
+    "response_schema": "schemas/git-service-operation-response.schema.json",
+    "request_id_required": true,
+    "idempotency_key_required": true,
+    "actor_ref_required": true,
+    "correlation_id_required": true
+  },
+  "ref_ownership": {
+    "service_owns_candidate_refs": true,
+    "candidate_ref_prefix": "graph-candidate/",
+    "protected_ref_patterns": [
+      "main",
+      "release/*"
+    ],
+    "canonical_refs_require_review": true
+  },
+  "locking": {
+    "strategy": "per_candidate_ref",
+    "lock_timeout_seconds": 60,
+    "stale_lock_after_seconds": 900,
+    "required_scopes": {
+      "prepare_worktree": [
+        "candidate_ref"
+      ],
+      "commit_candidate": [
+        "candidate_ref"
+      ],
+      "open_review": [
+        "candidate_ref",
+        "review_ref"
+      ],
+      "review_status": [
+        "review_ref"
+      ],
+      "publish_read_model": [
+        "read_model_publish"
+      ]
+    }
+  },
+  "audit": {
+    "artifact_kind": "platform_git_service_audit_event",
+    "append_only": true,
+    "required_fields": [
+      "event_id",
+      "operation",
+      "request_id",
+      "actor_ref",
+      "repository_ref",
+      "candidate_id",
+      "created_at",
+      "status"
+    ]
+  },
+  "operations": [
+    {
+      "name": "prepare_worktree",
+      "adapter_command": "graph-repository prepare-worktree",
+      "request_artifact_kind": "platform_git_service_prepare_worktree_request",
+      "response_artifact_kind": "platform_git_service_prepare_worktree_response",
+      "idempotency_scope": "candidate_ref",
+      "lock_scopes": [
+        "candidate_ref"
+      ],
+      "required_inputs": [
+        "platform_graph_repository_promotion_request",
+        "platform_graph_repository_execution_plan"
+      ],
+      "writes": {
+        "canonical_specs": false,
+        "ontology_packages": false,
+        "candidate_ref": true,
+        "review": false,
+        "read_model": false
+      }
+    },
+    {
+      "name": "commit_candidate",
+      "adapter_command": "graph-repository commit-worktree",
+      "request_artifact_kind": "platform_git_service_commit_candidate_request",
+      "response_artifact_kind": "platform_git_service_commit_candidate_response",
+      "idempotency_scope": "candidate_ref",
+      "lock_scopes": [
+        "candidate_ref"
+      ],
+      "required_inputs": [
+        "platform_graph_repository_worktree_prepare_report",
+        "materialized_candidate_paths"
+      ],
+      "writes": {
+        "canonical_specs": false,
+        "ontology_packages": false,
+        "candidate_ref": true,
+        "review": false,
+        "read_model": false
+      }
+    },
+    {
+      "name": "open_review",
+      "adapter_command": "graph-repository open-review",
+      "request_artifact_kind": "platform_git_service_open_review_request",
+      "response_artifact_kind": "platform_git_service_open_review_response",
+      "idempotency_scope": "candidate_ref",
+      "lock_scopes": [
+        "candidate_ref",
+        "review_ref"
+      ],
+      "required_inputs": [
+        "platform_graph_repository_review_commit_report",
+        "review_title",
+        "review_body"
+      ],
+      "writes": {
+        "canonical_specs": false,
+        "ontology_packages": false,
+        "candidate_ref": true,
+        "review": true,
+        "read_model": false
+      }
+    },
+    {
+      "name": "review_status",
+      "adapter_command": "graph-repository review-status",
+      "request_artifact_kind": "platform_git_service_review_status_request",
+      "response_artifact_kind": "platform_git_service_review_status_response",
+      "idempotency_scope": "review_url",
+      "lock_scopes": [
+        "review_ref"
+      ],
+      "required_inputs": [
+        "platform_graph_repository_open_review_report"
+      ],
+      "writes": {
+        "canonical_specs": false,
+        "ontology_packages": false,
+        "candidate_ref": false,
+        "review": false,
+        "read_model": false
+      }
+    },
+    {
+      "name": "publish_read_model",
+      "adapter_command": "graph-repository publish-read-model",
+      "request_artifact_kind": "platform_git_service_publish_read_model_request",
+      "response_artifact_kind": "platform_git_service_publish_read_model_response",
+      "idempotency_scope": "publish_target",
+      "lock_scopes": [
+        "read_model_publish"
+      ],
+      "required_inputs": [
+        "platform_graph_repository_review_status_report",
+        "artifact_manifest"
+      ],
+      "writes": {
+        "canonical_specs": false,
+        "ontology_packages": false,
+        "candidate_ref": false,
+        "review": false,
+        "read_model": true
+      }
+    }
+  ],
+  "authority_boundary": {
+    "specspace_direct_git_write_allowed": false,
+    "canonical_spec_mutation_without_review_allowed": false,
+    "ontology_package_write_allowed": false,
+    "auto_merge_allowed": false,
+    "private_artifact_publication_allowed": false
+  }
+}
