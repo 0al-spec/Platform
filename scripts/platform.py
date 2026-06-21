@@ -1995,6 +1995,227 @@ def graph_repository_review_status(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
+def graph_repository_path_is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def graph_repository_publish_preflight_diagnostics(
+    review_status_report: dict[str, Any],
+    *,
+    bundle_dir: Path,
+    output_dir: Path,
+    manifest_name: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    manifest_path = Path(manifest_name)
+    manifest_name_invalid = (
+        not manifest_name
+        or manifest_path.is_absolute()
+        or any(part == ".." for part in manifest_path.parts)
+    )
+    resolved_bundle_dir = bundle_dir.resolve()
+    resolved_manifest_path = (bundle_dir / manifest_path).resolve()
+    if review_status_report.get("artifact_kind") != (
+        "platform_graph_repository_review_status_report"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_review_status_report_kind_mismatch",
+                subject="artifact_kind",
+                message="expected platform_graph_repository_review_status_report",
+            )
+        )
+    if review_status_report.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_review_status_report_not_ok",
+                subject="ok",
+                message="review status report must be ok before read-model publish",
+            )
+        )
+    if review_status_report.get("review_state") != "merged":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_review_not_merged",
+                subject="review_state",
+                message="read-model publish requires a merged review status",
+            )
+        )
+    if review_status_report.get("canonical_mutations_allowed") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_review_status_authority_expanded",
+                subject="canonical_mutations_allowed",
+                message="review status report must not allow canonical mutations",
+            )
+        )
+    if review_status_report.get("canonical_tracked_artifacts_written") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_review_status_authority_expanded",
+                subject="canonical_tracked_artifacts_written",
+                message="review status report must not write canonical tracked artifacts",
+            )
+        )
+    if manifest_name_invalid or not graph_repository_path_is_within(
+        resolved_manifest_path,
+        resolved_bundle_dir,
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_read_model_manifest_name_invalid",
+                subject=manifest_name,
+                message="manifest name must be a relative path inside the bundle",
+            )
+        )
+    if not bundle_dir.is_dir():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_read_model_bundle_missing",
+                subject="bundle_dir",
+                message="read-model bundle directory must exist",
+            )
+        )
+    elif not manifest_name_invalid:
+        if not (bundle_dir / manifest_path).is_file():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_read_model_manifest_missing",
+                    subject=manifest_name,
+                    message="read-model bundle manifest is required",
+                )
+            )
+        else:
+            try:
+                load_json_mapping(
+                    bundle_dir / manifest_path,
+                    label="read-model manifest",
+                )
+            except PlatformError as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_read_model_manifest_invalid",
+                        subject=manifest_name,
+                        message=str(exc),
+                    )
+                )
+    if output_dir.exists():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_read_model_output_exists",
+                subject="output_dir",
+                message="output directory must not exist before publish",
+            )
+        )
+    return diagnostics
+
+
+def graph_repository_publish_read_model(args: argparse.Namespace) -> int:
+    review_status_report_path = Path(args.review_status_report)
+    bundle_dir = Path(args.bundle_dir)
+    output_dir = Path(args.output_dir)
+    manifest_name = args.manifest_name
+    review_status_report = load_json_mapping(
+        review_status_report_path,
+        label="graph repository review status report",
+    )
+    diagnostics = graph_repository_publish_preflight_diagnostics(
+        review_status_report,
+        bundle_dir=bundle_dir,
+        output_dir=output_dir,
+        manifest_name=manifest_name,
+    )
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    copied_files: list[str] = []
+    report_path = (
+        output_dir
+        / ".platform"
+        / "graph_repository_publish_read_model_report.json"
+    )
+
+    if error_count == 0 and not args.dry_run:
+        shutil.copytree(bundle_dir, output_dir)
+        copied_files = [
+            str(path.relative_to(output_dir))
+            for path in sorted(output_dir.rglob("*"))
+            if path.is_file()
+        ]
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    report = {
+        "schema_version": 1,
+        "artifact_kind": "platform_graph_repository_publish_read_model_report",
+        "review_status_report_ref": str(review_status_report_path),
+        "ok": error_count == 0,
+        "dry_run": args.dry_run,
+        "review_url": review_status_report.get("review_url"),
+        "review_state": review_status_report.get("review_state"),
+        "bundle_dir": str(bundle_dir),
+        "output_dir": str(output_dir),
+        "manifest": str(output_dir / manifest_name),
+        "canonical_mutations_allowed": False,
+        "canonical_tracked_artifacts_written": False,
+        "ontology_packages_written": False,
+        "merges_performed": [],
+        "read_models_published": []
+        if args.dry_run or error_count
+        else [str(output_dir / manifest_name)],
+        "files_published": copied_files,
+        "local_files_written": []
+        if args.dry_run or error_count
+        else [str(report_path)],
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "file_count": len(copied_files),
+            "published": not args.dry_run and error_count == 0,
+        },
+    }
+
+    if error_count == 0 and not args.dry_run:
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "manifest": str(output_dir / manifest_name),
+                        "files": str(len(copied_files)),
+                        "published": str(not args.dry_run and error_count == 0),
+                    }
+                ],
+                [
+                    ("manifest", "MANIFEST"),
+                    ("files", "FILES"),
+                    ("published", "PUBLISHED"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
 def expected_profile(kind: Any) -> str | None:
     if kind == "core_repository":
         return "self_hosted_bootstrap"
@@ -3794,6 +4015,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     graph_repository_status_parser.set_defaults(func=graph_repository_review_status)
+    graph_repository_publish_parser = graph_repository_subcommands.add_parser(
+        "publish-read-model",
+        help="Publish a public-safe read-model bundle after merged review status.",
+    )
+    graph_repository_publish_parser.add_argument(
+        "--review-status-report",
+        required=True,
+        help="Path to a graph repository review status report.",
+    )
+    graph_repository_publish_parser.add_argument(
+        "--bundle-dir",
+        required=True,
+        help="Public-safe read-model bundle directory to publish.",
+    )
+    graph_repository_publish_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Destination directory for the published read model.",
+    )
+    graph_repository_publish_parser.add_argument(
+        "--manifest-name",
+        default="artifact_manifest.json",
+        help="Required bundle manifest file name.",
+    )
+    graph_repository_publish_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate publish readiness without copying the bundle.",
+    )
+    graph_repository_publish_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    graph_repository_publish_parser.set_defaults(
+        func=graph_repository_publish_read_model
+    )
 
     deploy_parser = subcommands.add_parser(
         "deploy",

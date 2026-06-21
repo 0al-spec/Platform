@@ -195,3 +195,23 @@ state as `open`, `draft`, `closed`, `merged`, or `unknown`.
 This command is read-only with respect to the graph lifecycle. It does not merge,
 accept candidate specs into the canonical branch, write Ontology packages, or
 publish read models. A later publish slice can consume a `merged` status report.
+
+## Publish Read Model
+
+Publish a public-safe read-model bundle after the review is merged:
+
+```bash
+scripts/platform.py graph-repository publish-read-model \
+  --review-status-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_review_status_report.json \
+  --bundle-dir ../SpecGraph/dist/specgraph-public \
+  --output-dir dist/specgraph-public
+```
+
+`publish-read-model` requires a `merged` review status report and a bundle
+manifest, defaulting to `artifact_manifest.json`. It copies the bundle into a
+new output directory and writes
+`.platform/graph_repository_publish_read_model_report.json`.
+
+The command does not mutate canonical specs, write Ontology packages, merge
+branches, or publish private artifacts. It assumes the source bundle has already
+passed the SpecGraph public-safe publish gates.

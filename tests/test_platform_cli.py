@@ -300,6 +300,60 @@ class PlatformCliTests(unittest.TestCase):
             workspace_dir / ".platform" / "graph_repository_open_review_report.json",
         )
 
+    def merged_graph_repository_review_status(self, tmp_root: Path) -> tuple[Path, Path]:
+        workspace_dir, open_review_report = self.open_graph_repository_review(tmp_root)
+        fake_gh = self.write_fake_gh_view(
+            tmp_root,
+            {
+                "number": 123,
+                "url": "https://github.com/example/repo/pull/123",
+                "state": "MERGED",
+                "isDraft": False,
+                "mergedAt": "2026-06-21T16:00:00Z",
+                "mergeCommit": {"oid": "abc123"},
+                "headRefName": "graph-candidate/idea-alpha",
+                "baseRefName": "main",
+                "reviewDecision": "APPROVED",
+            },
+        )
+        result = self.run_cli(
+            "graph-repository",
+            "review-status",
+            "--open-review-report",
+            str(open_review_report),
+            "--worktree-dir",
+            str(workspace_dir),
+            "--gh-bin",
+            str(fake_gh),
+            "--format",
+            "json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return (
+            workspace_dir,
+            workspace_dir / ".platform" / "graph_repository_review_status_report.json",
+        )
+
+    def write_public_read_model_bundle(self, tmp_root: Path) -> Path:
+        bundle_dir = tmp_root / "public-bundle"
+        bundle_dir.mkdir()
+        (bundle_dir / "artifact_manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "artifact_kind": "specgraph_public_artifact_manifest",
+                    "files": ["runs/candidate_spec_graph.json"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (bundle_dir / "runs").mkdir()
+        (bundle_dir / "runs" / "candidate_spec_graph.json").write_text(
+            json.dumps({"artifact_kind": "candidate_spec_graph"}),
+            encoding="utf-8",
+        )
+        return bundle_dir
+
     def test_workspace_list_json(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".yaml") as catalog:
             catalog.write(CATALOG)
@@ -1414,6 +1468,166 @@ workspaces:
         payload = json.loads(result.stdout)
         self.assertEqual(payload["review_state"], "merged")
         self.assertTrue(payload["summary"]["review_merged"])
+
+    def test_graph_repository_publish_read_model_copies_public_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            _workspace_dir, review_status_report = (
+                self.merged_graph_repository_review_status(tmp_root)
+            )
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            output_dir = tmp_root / "published-read-model"
+
+            result = self.run_cli(
+                "graph-repository",
+                "publish-read-model",
+                "--review-status-report",
+                str(review_status_report),
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_graph_repository_publish_read_model_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["review_state"], "merged")
+            self.assertFalse(payload["canonical_mutations_allowed"])
+            self.assertFalse(payload["canonical_tracked_artifacts_written"])
+            self.assertFalse(payload["ontology_packages_written"])
+            self.assertEqual(payload["merges_performed"], [])
+            self.assertEqual(
+                payload["read_models_published"],
+                [str(output_dir / "artifact_manifest.json")],
+            )
+            self.assertTrue((output_dir / "artifact_manifest.json").is_file())
+            self.assertTrue(
+                (output_dir / "runs" / "candidate_spec_graph.json").is_file()
+            )
+            self.assertTrue(
+                (
+                    output_dir
+                    / ".platform"
+                    / "graph_repository_publish_read_model_report.json"
+                ).is_file()
+            )
+
+    def test_graph_repository_publish_read_model_rejects_unmerged_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir, open_review_report = self.open_graph_repository_review(
+                tmp_root
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "mergedAt": None,
+                    "mergeCommit": None,
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+            status_result = self.run_cli(
+                "graph-repository",
+                "review-status",
+                "--open-review-report",
+                str(open_review_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+            self.assertEqual(status_result.returncode, 0, status_result.stderr)
+            review_status_report = (
+                workspace_dir
+                / ".platform"
+                / "graph_repository_review_status_report.json"
+            )
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            output_dir = tmp_root / "published-read-model"
+
+            result = self.run_cli(
+                "graph-repository",
+                "publish-read-model",
+                "--review-status-report",
+                str(review_status_report),
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_review_not_merged", codes)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["read_models_published"], [])
+        self.assertFalse(output_dir.exists())
+
+    def test_graph_repository_publish_read_model_rejects_escaped_manifest_name(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            _workspace_dir, review_status_report = (
+                self.merged_graph_repository_review_status(tmp_root)
+            )
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            external_manifest = tmp_root / "external_manifest.json"
+            external_manifest.write_text(
+                json.dumps({"artifact_kind": "external_manifest"}),
+                encoding="utf-8",
+            )
+
+            for index, manifest_name in enumerate(
+                ["../external_manifest.json", str(external_manifest)]
+            ):
+                with self.subTest(manifest_name=manifest_name):
+                    output_dir = tmp_root / f"published-read-model-{index}"
+                    result = self.run_cli(
+                        "graph-repository",
+                        "publish-read-model",
+                        "--review-status-report",
+                        str(review_status_report),
+                        "--bundle-dir",
+                        str(bundle_dir),
+                        "--output-dir",
+                        str(output_dir),
+                        "--manifest-name",
+                        manifest_name,
+                        "--format",
+                        "json",
+                    )
+
+                    self.assertEqual(result.returncode, 1)
+                    payload = json.loads(result.stdout)
+                    codes = {
+                        diagnostic["code"] for diagnostic in payload["diagnostics"]
+                    }
+                    self.assertIn(
+                        "graph_repository_read_model_manifest_name_invalid",
+                        codes,
+                    )
+                    self.assertFalse(payload["ok"])
+                    self.assertEqual(payload["read_models_published"], [])
+                    self.assertFalse(output_dir.exists())
 
 
 if __name__ == "__main__":
