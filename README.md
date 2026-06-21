@@ -123,6 +123,10 @@ scripts/platform.py graph-repository open-review \
 scripts/platform.py graph-repository review-status \
   --open-review-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_open_review_report.json \
   --worktree-dir .platform/candidates/my-idea-v1-worktree
+scripts/platform.py graph-repository publish-read-model \
+  --review-status-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_review_status_report.json \
+  --bundle-dir ../SpecGraph/dist/specgraph-public \
+  --output-dir dist/specgraph-public
 scripts/platform.py deploy render --dry-run
 scripts/platform.py deploy up
 scripts/platform.py deploy status
@@ -186,6 +190,10 @@ branch, write Ontology packages, or publish read models.
 `graph-repository review-status` reads pull request state through `gh pr view`
 and writes a local status report. It is read-only with respect to the graph
 lifecycle and does not publish read models.
+
+`graph-repository publish-read-model` copies a public-safe bundle after a merged
+review status. It requires an artifact manifest and assumes the source bundle
+has already passed SpecGraph publish gates.
 
 Install local Python tooling with:
 
