@@ -100,6 +100,29 @@ Each operation declares an idempotency scope, required lock scopes, adapter
 command, request/response artifact kinds, and write boundary. The existing
 `graph-repository` commands remain the local MVP adapter for those operations.
 
+The first orchestration command consumes the report-only promotion request and
+runs the local adapter sequence under the Git Service boundary:
+
+```bash
+scripts/platform.py git-service execute-promotion \
+  --contract git-service-operation-contract.example.json \
+  --promotion-request runs/graph_repository_promotion_request.json \
+  --repository-dir ../SpecGraph \
+  --workspace-dir .platform/candidates/my-idea-v1-worktree \
+  --materialized-source-dir runs/materialized-candidates
+```
+
+`execute-promotion` calls:
+
+1. `graph-repository prepare-worktree`;
+2. `graph-repository commit-worktree`;
+3. `graph-repository open-review`.
+
+The command writes `platform_git_service_promotion_execution_report`. It does
+not merge reviews, accept specs, write Ontology packages, or publish private
+artifacts. Use `--open-review-dry-run` when the operator wants to validate the
+handoff without pushing a branch or creating a pull request.
+
 ## Validate
 
 ```bash

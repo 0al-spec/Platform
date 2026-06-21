@@ -833,6 +833,538 @@ def git_service_validate_response(args: argparse.Namespace) -> int:
     )
 
 
+def resolve_artifact_path(raw_ref: Any, *, base_dir: Path) -> Path | None:
+    if not isinstance(raw_ref, str) or not raw_ref.strip():
+        return None
+    raw_path = Path(raw_ref)
+    candidates = [raw_path]
+    if not raw_path.is_absolute():
+        candidates.extend([base_dir / raw_path, REPO_ROOT / raw_path])
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return candidates[0].resolve()
+
+
+def git_service_promotion_request_diagnostics(
+    *,
+    contract: dict[str, Any],
+    promotion_request: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics = [
+        *validate_git_service_operation_contract_schema(contract),
+        *git_service_operation_contract_semantic_diagnostics(contract),
+    ]
+    if promotion_request.get("artifact_kind") != "platform_graph_repository_promotion_request":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_promotion_request_kind_mismatch",
+                subject="promotion_request.artifact_kind",
+                message="expected platform_graph_repository_promotion_request",
+            )
+        )
+    if promotion_request.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_promotion_request_not_ok",
+                subject="promotion_request.ok",
+                message="promotion request must be ok before Git Service execution",
+            )
+        )
+    for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
+        if promotion_request.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_promotion_request_authority_expanded",
+                    subject=f"promotion_request.{field}",
+                    message=f"{field} must be false before Git Service execution",
+                )
+            )
+    authority_boundary = nested_mapping(promotion_request, "authority_boundary")
+    for key, value in sorted(authority_boundary.items()):
+        if value is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_promotion_request_authority_expanded",
+                    subject=f"promotion_request.authority_boundary.{key}",
+                    message="promotion request must not execute write actions itself",
+                )
+            )
+    commit_paths = promotion_request.get("commit_paths")
+    if not isinstance(commit_paths, list) or not commit_paths:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_promotion_paths_missing",
+                subject="promotion_request.commit_paths",
+                message="promotion request must include at least one commit path",
+            )
+        )
+    elif graph_repository_relative_paths_diagnostics(
+        [path for path in commit_paths if isinstance(path, str)]
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_promotion_paths_invalid",
+                subject="promotion_request.commit_paths",
+                message="promotion request commit paths must be relative safe paths",
+            )
+        )
+    requested_operations = promotion_request.get("requested_operations")
+    if isinstance(requested_operations, list):
+        expected = ["prepare_branch", "create_commit", "open_review"]
+        missing = [operation for operation in expected if operation not in requested_operations]
+        if missing:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_requested_operation_missing",
+                    subject="promotion_request.requested_operations",
+                    message=f"promotion request is missing operations: {', '.join(missing)}",
+                )
+            )
+    return diagnostics
+
+
+def run_platform_json_command(command: list[str]) -> tuple[dict[str, Any] | None, dict[str, Any], Diagnostic | None]:
+    completed = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), *command],
+        check=False,
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    result = {
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout[-2000:],
+        "stderr": completed.stderr[-2000:],
+    }
+    payload: dict[str, Any] | None = None
+    if completed.stdout.strip():
+        try:
+            parsed = json.loads(completed.stdout)
+            if isinstance(parsed, dict):
+                payload = parsed
+        except json.JSONDecodeError:
+            payload = None
+    if completed.returncode == 0 and payload is not None:
+        return payload, result, None
+    code = "git_service_adapter_command_failed"
+    message = (
+        f"adapter command failed with exit code {completed.returncode}: "
+        f"{' '.join(command)}"
+    )
+    if completed.returncode == 0 and payload is None:
+        code = "git_service_adapter_json_invalid"
+        message = f"adapter command did not return a JSON object: {' '.join(command)}"
+    return payload, result, Diagnostic(
+        level="ERROR",
+        code=code,
+        subject=command[0] if command else "adapter_command",
+        message=message,
+    )
+
+
+def git_service_operation_record(
+    *,
+    name: str,
+    status: str,
+    request_artifact_kind: str,
+    response_artifact_kind: str,
+    report_ref: str | None = None,
+    adapter_command: list[str] | None = None,
+    diagnostics: list[Diagnostic] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "request_artifact_kind": request_artifact_kind,
+        "response_artifact_kind": response_artifact_kind,
+        "report_ref": report_ref,
+        "adapter_command": adapter_command or [],
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics or []],
+    }
+
+
+def git_service_copy_materialized_paths(
+    *,
+    source_dir: Path | None,
+    worktree_dir: Path,
+    paths: list[str],
+) -> tuple[list[dict[str, str]], list[Diagnostic]]:
+    if source_dir is None:
+        return [], []
+    diagnostics: list[Diagnostic] = []
+    copied: list[dict[str, str]] = []
+    for index, raw_path in enumerate(paths):
+        if Path(raw_path).is_absolute() or ".." in Path(raw_path).parts:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_materialized_path_invalid",
+                    subject=f"commit_paths[{index}]",
+                    message="materialized path must be relative and stay inside worktree",
+                )
+            )
+            continue
+        source_path = source_dir / raw_path
+        target_path = worktree_dir / raw_path
+        if not source_path.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_materialized_source_missing",
+                    subject=f"materialized_source_dir/{raw_path}",
+                    message="materialized source file is missing",
+                )
+            )
+            continue
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        copied.append({"source": str(source_path), "target": str(target_path)})
+    return copied, diagnostics
+
+
+def git_service_execute_promotion(args: argparse.Namespace) -> int:
+    contract_path = Path(args.contract)
+    promotion_request_path = Path(args.promotion_request)
+    repository_dir = Path(args.repository_dir).resolve()
+    workspace_dir = Path(args.workspace_dir).resolve()
+    materialized_source_dir = (
+        Path(args.materialized_source_dir).resolve()
+        if args.materialized_source_dir
+        else None
+    )
+    contract = load_json_mapping(contract_path, label="git service contract")
+    promotion_request = load_json_mapping(
+        promotion_request_path,
+        label="graph repository promotion request",
+    )
+    diagnostics = git_service_promotion_request_diagnostics(
+        contract=contract,
+        promotion_request=promotion_request,
+    )
+    plan_path = resolve_artifact_path(
+        promotion_request.get("plan_ref"),
+        base_dir=promotion_request_path.parent,
+    )
+    if plan_path is None or not plan_path.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_plan_missing",
+                subject="promotion_request.plan_ref",
+                message="promotion request plan_ref must point at an execution plan",
+            )
+        )
+
+    candidate_id = str(promotion_request.get("candidate_id") or "")
+    review = nested_mapping(promotion_request, "review")
+    commit_paths = [
+        path for path in promotion_request.get("commit_paths", []) if isinstance(path, str)
+    ]
+    base_branch = str(review.get("base_branch") or "main")
+    review_title = str(review.get("title") or "")
+    review_body = str(review.get("body") or "")
+    commit_message = args.message or review_title or f"Promote {candidate_id}"
+    operation_records: list[dict[str, Any]] = []
+    command_results: list[dict[str, Any]] = []
+    copied_files: list[dict[str, str]] = []
+    report_refs: dict[str, str] = {}
+
+    preflight_error_count = sum(
+        1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+    )
+    if preflight_error_count == 0 and args.dry_run:
+        operation_records.extend(
+            [
+                git_service_operation_record(
+                    name="prepare_worktree",
+                    status="dry_run",
+                    request_artifact_kind="platform_git_service_prepare_worktree_request",
+                    response_artifact_kind="platform_git_service_prepare_worktree_response",
+                ),
+                git_service_operation_record(
+                    name="commit_candidate",
+                    status="skipped_dry_run",
+                    request_artifact_kind="platform_git_service_commit_candidate_request",
+                    response_artifact_kind="platform_git_service_commit_candidate_response",
+                ),
+                git_service_operation_record(
+                    name="open_review",
+                    status="skipped_dry_run",
+                    request_artifact_kind="platform_git_service_open_review_request",
+                    response_artifact_kind="platform_git_service_open_review_response",
+                ),
+            ]
+        )
+    elif preflight_error_count == 0:
+        prepare_command = [
+            "graph-repository",
+            "prepare-worktree",
+            "--plan",
+            str(plan_path),
+            "--repository-dir",
+            str(repository_dir),
+            "--candidate-id",
+            candidate_id,
+            "--workspace-dir",
+            str(workspace_dir),
+            "--format",
+            "json",
+        ]
+        prepare_payload, prepare_result, prepare_diagnostic = run_platform_json_command(
+            prepare_command
+        )
+        command_results.append(prepare_result)
+        if prepare_diagnostic is not None:
+            diagnostics.append(prepare_diagnostic)
+        prepare_ok = prepare_payload is not None and prepare_payload.get("ok") is True
+        prepare_report = (
+            workspace_dir
+            / ".platform"
+            / "graph_repository_worktree_prepare_report.json"
+        )
+        if prepare_ok:
+            report_refs["prepare_worktree"] = str(prepare_report)
+        operation_records.append(
+            git_service_operation_record(
+                name="prepare_worktree",
+                status="succeeded" if prepare_ok else "failed",
+                request_artifact_kind="platform_git_service_prepare_worktree_request",
+                response_artifact_kind="platform_git_service_prepare_worktree_response",
+                report_ref=str(prepare_report) if prepare_ok else None,
+                adapter_command=prepare_command,
+                diagnostics=[prepare_diagnostic] if prepare_diagnostic else [],
+            )
+        )
+
+        if prepare_ok:
+            copied_files, copy_diagnostics = git_service_copy_materialized_paths(
+                source_dir=materialized_source_dir,
+                worktree_dir=workspace_dir,
+                paths=commit_paths,
+            )
+            diagnostics.extend(copy_diagnostics)
+            if copy_diagnostics:
+                operation_records.append(
+                    git_service_operation_record(
+                        name="commit_candidate",
+                        status="failed",
+                        request_artifact_kind="platform_git_service_commit_candidate_request",
+                        response_artifact_kind="platform_git_service_commit_candidate_response",
+                        diagnostics=copy_diagnostics,
+                    )
+                )
+            else:
+                commit_command = [
+                    "graph-repository",
+                    "commit-worktree",
+                    "--prepare-report",
+                    str(prepare_report),
+                    "--worktree-dir",
+                    str(workspace_dir),
+                    "--message",
+                    commit_message,
+                    "--format",
+                    "json",
+                ]
+                for path in commit_paths:
+                    commit_command.extend(["--path", path])
+                commit_payload, commit_result, commit_diagnostic = (
+                    run_platform_json_command(commit_command)
+                )
+                command_results.append(commit_result)
+                if commit_diagnostic is not None:
+                    diagnostics.append(commit_diagnostic)
+                commit_ok = (
+                    commit_payload is not None and commit_payload.get("ok") is True
+                )
+                commit_report = (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_review_commit_report.json"
+                )
+                if commit_ok:
+                    report_refs["commit_candidate"] = str(commit_report)
+                operation_records.append(
+                    git_service_operation_record(
+                        name="commit_candidate",
+                        status="succeeded" if commit_ok else "failed",
+                        request_artifact_kind="platform_git_service_commit_candidate_request",
+                        response_artifact_kind="platform_git_service_commit_candidate_response",
+                        report_ref=str(commit_report) if commit_ok else None,
+                        adapter_command=commit_command,
+                        diagnostics=[commit_diagnostic] if commit_diagnostic else [],
+                    )
+                )
+
+                if commit_ok:
+                    open_review_command = [
+                        "graph-repository",
+                        "open-review",
+                        "--commit-report",
+                        str(commit_report),
+                        "--worktree-dir",
+                        str(workspace_dir),
+                        "--base",
+                        base_branch,
+                        "--title",
+                        review_title,
+                        "--body",
+                        review_body,
+                        "--gh-bin",
+                        args.gh_bin,
+                        "--format",
+                        "json",
+                    ]
+                    if args.repo:
+                        open_review_command.extend(["--repo", args.repo])
+                    if args.open_review_dry_run:
+                        open_review_command.append("--dry-run")
+                    open_payload, open_result, open_diagnostic = (
+                        run_platform_json_command(open_review_command)
+                    )
+                    command_results.append(open_result)
+                    if open_diagnostic is not None:
+                        diagnostics.append(open_diagnostic)
+                    open_ok = open_payload is not None and open_payload.get("ok") is True
+                    open_report = (
+                        workspace_dir
+                        / ".platform"
+                        / "graph_repository_open_review_report.json"
+                    )
+                    if open_ok:
+                        report_refs["open_review"] = str(open_report)
+                    operation_records.append(
+                        git_service_operation_record(
+                            name="open_review",
+                            status=(
+                                "dry_run"
+                                if open_ok and args.open_review_dry_run
+                                else "succeeded"
+                                if open_ok
+                                else "failed"
+                            ),
+                            request_artifact_kind="platform_git_service_open_review_request",
+                            response_artifact_kind="platform_git_service_open_review_response",
+                            report_ref=str(open_report) if open_ok else None,
+                            adapter_command=open_review_command,
+                            diagnostics=[open_diagnostic] if open_diagnostic else [],
+                        )
+                    )
+                else:
+                    operation_records.append(
+                        git_service_operation_record(
+                            name="open_review",
+                            status="skipped_commit_failed",
+                            request_artifact_kind="platform_git_service_open_review_request",
+                            response_artifact_kind="platform_git_service_open_review_response",
+                        )
+                    )
+        else:
+            operation_records.extend(
+                [
+                    git_service_operation_record(
+                        name="commit_candidate",
+                        status="skipped_prepare_failed",
+                        request_artifact_kind="platform_git_service_commit_candidate_request",
+                        response_artifact_kind="platform_git_service_commit_candidate_response",
+                    ),
+                    git_service_operation_record(
+                        name="open_review",
+                        status="skipped_prepare_failed",
+                        request_artifact_kind="platform_git_service_open_review_request",
+                        response_artifact_kind="platform_git_service_open_review_response",
+                    ),
+                ]
+            )
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and all(
+        operation["status"] in {"succeeded", "dry_run", "skipped_dry_run"}
+        for operation in operation_records
+    )
+    output_path = Path(args.output) if args.output else (
+        workspace_dir / ".platform" / "git_service_promotion_execution_report.json"
+    )
+    report = {
+        "schema_version": 1,
+        "artifact_kind": "platform_git_service_promotion_execution_report",
+        "generated_at": utc_now_iso(),
+        "contract_ref": str(contract_path),
+        "promotion_request_ref": str(promotion_request_path),
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "open_review_dry_run": args.open_review_dry_run,
+        "candidate_id": candidate_id,
+        "candidate_ref": promotion_request.get("candidate_branch"),
+        "repository_dir": str(repository_dir),
+        "workspace_dir": str(workspace_dir),
+        "materialized_source_dir": (
+            None if materialized_source_dir is None else str(materialized_source_dir)
+        ),
+        "copied_materialized_files": copied_files,
+        "operations": operation_records,
+        "adapter_command_results": command_results,
+        "report_refs": report_refs,
+        "authority_boundary": {
+            "specspace_direct_git_write": False,
+            "canonical_spec_mutation_without_review": False,
+            "ontology_package_write": False,
+            "auto_merge": False,
+            "private_artifact_publication": False,
+        },
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "operation_count": len(operation_records),
+            "completed_operation_count": sum(
+                1
+                for operation in operation_records
+                if operation["status"] in {"succeeded", "dry_run"}
+            ),
+        },
+    }
+
+    if not args.no_write_report and (ok or output_path.parent.exists()):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "candidate_id": candidate_id,
+                        "status": "ok" if ok else "blocked",
+                        "operations": str(len(operation_records)),
+                    }
+                ],
+                [
+                    ("candidate_id", "CANDIDATE"),
+                    ("status", "STATUS"),
+                    ("operations", "OPS"),
+                ],
+            )
+        )
+    return 0 if ok else 1
+
+
 def nested_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
     value = payload.get(key)
     return value if isinstance(value, dict) else {}
@@ -4319,6 +4851,79 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     git_service_response_parser.set_defaults(func=git_service_validate_response)
+    git_service_execute_parser = git_service_subcommands.add_parser(
+        "execute-promotion",
+        help=(
+            "Orchestrate a promotion request through the local graph-repository "
+            "adapter sequence."
+        ),
+    )
+    git_service_execute_parser.add_argument(
+        "--contract",
+        required=True,
+        help="Path to a Git Service operation contract JSON artifact.",
+    )
+    git_service_execute_parser.add_argument(
+        "--promotion-request",
+        required=True,
+        help="Path to a platform_graph_repository_promotion_request artifact.",
+    )
+    git_service_execute_parser.add_argument(
+        "--repository-dir",
+        required=True,
+        help="Local Git checkout that owns the candidate worktree.",
+    )
+    git_service_execute_parser.add_argument(
+        "--workspace-dir",
+        required=True,
+        help="Target directory for the candidate Git worktree.",
+    )
+    git_service_execute_parser.add_argument(
+        "--materialized-source-dir",
+        help=(
+            "Directory containing materialized candidate files at the same "
+            "relative paths listed by the promotion request."
+        ),
+    )
+    git_service_execute_parser.add_argument(
+        "--message",
+        help="Commit message. Defaults to the promotion request review title.",
+    )
+    git_service_execute_parser.add_argument(
+        "--repo",
+        help="Optional GitHub repository passed to gh as owner/name.",
+    )
+    git_service_execute_parser.add_argument(
+        "--gh-bin",
+        default="gh",
+        help="GitHub CLI executable to use for open-review.",
+    )
+    git_service_execute_parser.add_argument(
+        "--open-review-dry-run",
+        action="store_true",
+        help="Validate and render open-review without pushing or creating a PR.",
+    )
+    git_service_execute_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate inputs and render the planned execution without adapter writes.",
+    )
+    git_service_execute_parser.add_argument(
+        "--output",
+        help="Optional path where the execution report JSON should be written.",
+    )
+    git_service_execute_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the execution report.",
+    )
+    git_service_execute_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    git_service_execute_parser.set_defaults(func=git_service_execute_promotion)
 
     graph_repository_parser = subcommands.add_parser(
         "graph-repository",

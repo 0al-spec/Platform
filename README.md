@@ -102,6 +102,12 @@ scripts/platform.py git-service validate-request \
   --request path/to/git-service-request.json
 scripts/platform.py git-service validate-response \
   --response path/to/git-service-response.json
+scripts/platform.py git-service execute-promotion \
+  --contract git-service-operation-contract.example.json \
+  --promotion-request runs/graph_repository_promotion_request.json \
+  --repository-dir ../SpecGraph \
+  --workspace-dir .platform/candidates/my-idea-v1-worktree \
+  --materialized-source-dir runs/materialized-candidates
 scripts/platform.py graph-repository plan \
   --contract graph-repository-service.example.json \
   --runs-dir ../SpecGraph/runs \
@@ -199,6 +205,15 @@ generic operation envelopes that a future hosted service or queue-backed worker
 will exchange. These envelopes are deliberately separate from the local
 `graph-repository` adapter commands so SpecSpace and orchestrators do not bind
 to local filesystem paths as the product contract.
+
+`git-service execute-promotion` consumes a
+`platform_graph_repository_promotion_request`, validates it against the Git
+Service operation contract, and orchestrates the local adapter sequence:
+`graph-repository prepare-worktree`, `graph-repository commit-worktree`, then
+`graph-repository open-review`. It writes a single
+`platform_git_service_promotion_execution_report` for SpecSpace/operator review.
+Pass `--open-review-dry-run` to validate the review handoff without pushing a
+branch or creating a pull request.
 
 `graph-repository plan` reads the required SpecGraph idea-to-spec run artifacts
 and emits a report-only execution plan for the repository service boundary. The
