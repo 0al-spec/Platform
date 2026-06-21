@@ -149,6 +149,69 @@ class PlatformCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return plan_path
 
+    def git_service_request(self) -> dict:
+        return {
+            "schema_version": 1,
+            "artifact_kind": "platform_git_service_operation_request",
+            "operation": "prepare_worktree",
+            "request_id": "req-001",
+            "correlation_id": "corr-001",
+            "idempotency_key": "prepare:idea-alpha:graph-candidate/idea-alpha",
+            "actor_ref": "specspace:user/operator",
+            "repository_ref": "git@github.com:0al-spec/SpecGraph.git",
+            "candidate_id": "idea-alpha",
+            "candidate_ref": "graph-candidate/idea-alpha",
+            "base_ref": "main",
+            "requested_at": "2026-06-21T00:00:00Z",
+            "dry_run": True,
+            "inputs": {
+                "promotion_request": "runs/graph_repository_promotion_request.json",
+                "execution_plan": "runs/graph_repository_execution_plan.json",
+            },
+            "authority_boundary": {
+                "specspace_direct_git_write": False,
+                "canonical_spec_mutation_without_review": False,
+                "ontology_package_write": False,
+                "auto_merge": False,
+                "private_artifact_publication": False,
+            },
+        }
+
+    def git_service_response(self) -> dict:
+        return {
+            "schema_version": 1,
+            "artifact_kind": "platform_git_service_operation_response",
+            "operation": "prepare_worktree",
+            "request_id": "req-001",
+            "response_id": "resp-001",
+            "correlation_id": "corr-001",
+            "idempotency_key": "prepare:idea-alpha:graph-candidate/idea-alpha",
+            "status": "dry_run",
+            "started_at": "2026-06-21T00:00:00Z",
+            "completed_at": "2026-06-21T00:00:01Z",
+            "outputs": {
+                "candidate_ref": "graph-candidate/idea-alpha",
+                "report": ".platform/graph_repository_worktree_prepare_report.json",
+            },
+            "audit_events": [
+                {
+                    "artifact_kind": "platform_git_service_audit_event",
+                    "event_id": "audit-001",
+                    "operation": "prepare_worktree",
+                    "created_at": "2026-06-21T00:00:01Z",
+                    "summary": "prepared candidate worktree in dry-run mode",
+                }
+            ],
+            "writes": {
+                "canonical_specs": False,
+                "ontology_packages": False,
+                "candidate_ref": True,
+                "review": False,
+                "read_model": False,
+                "private_artifacts": False,
+            },
+        }
+
     def run_git(self, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["git", *args],
@@ -653,6 +716,133 @@ workspaces:
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["diagnostics"], [])
         self.assertEqual(payload["summary"]["operation_count"], 6)
+
+    def test_git_service_validate_accepts_example_contract(self) -> None:
+        result = self.run_cli(
+            "git-service",
+            "validate-contract",
+            "--contract",
+            "git-service-operation-contract.example.json",
+            "--format",
+            "json",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["diagnostics"], [])
+        self.assertEqual(payload["summary"]["operation_count"], 5)
+
+    def test_git_service_validate_rejects_missing_operation(self) -> None:
+        contract = json.loads(
+            (REPO_ROOT / "git-service-operation-contract.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        contract["operations"] = [
+            operation
+            for operation in contract["operations"]
+            if operation["name"] != "publish_read_model"
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(contract, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "git-service",
+                "validate-contract",
+                "--contract",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_operation_missing", codes)
+
+    def test_git_service_validate_rejects_lock_scope_mismatch(self) -> None:
+        contract = json.loads(
+            (REPO_ROOT / "git-service-operation-contract.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        contract["operations"][0]["lock_scopes"] = ["review_ref"]
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(contract, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "git-service",
+                "validate-contract",
+                "--contract",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_lock_scope_missing", codes)
+
+    def test_git_service_validate_accepts_request_and_response(self) -> None:
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as request_handle:
+            json.dump(self.git_service_request(), request_handle)
+            request_handle.flush()
+
+            request_result = self.run_cli(
+                "git-service",
+                "validate-request",
+                "--request",
+                request_handle.name,
+                "--format",
+                "json",
+            )
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as response_handle:
+            json.dump(self.git_service_response(), response_handle)
+            response_handle.flush()
+
+            response_result = self.run_cli(
+                "git-service",
+                "validate-response",
+                "--response",
+                response_handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(request_result.returncode, 0, request_result.stderr)
+        self.assertEqual(response_result.returncode, 0, response_result.stderr)
+        request_payload = json.loads(request_result.stdout)
+        response_payload = json.loads(response_result.stdout)
+        self.assertTrue(request_payload["ok"])
+        self.assertTrue(response_payload["ok"])
+        self.assertEqual(request_payload["summary"]["operation"], "prepare_worktree")
+        self.assertEqual(response_payload["summary"]["operation"], "prepare_worktree")
+
+    def test_git_service_validate_rejects_authority_expansion_request(self) -> None:
+        request = self.git_service_request()
+        request["authority_boundary"]["auto_merge"] = True
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(request, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "git-service",
+                "validate-request",
+                "--request",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_operation_request_schema_invalid", codes)
 
     def test_graph_repository_validate_rejects_auto_merge(self) -> None:
         contract = json.loads(

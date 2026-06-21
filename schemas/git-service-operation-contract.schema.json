@@ -1,0 +1,367 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:0al:platform:schemas:git-service-operation-contract:1",
+  "title": "0AL Platform Git Service Operation Contract",
+  "description": "Production-facing operation contract for Git-backed graph repository writes.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "service_id",
+    "repository_binding",
+    "operation_envelope",
+    "ref_ownership",
+    "locking",
+    "audit",
+    "operations",
+    "authority_boundary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "artifact_kind": {
+      "type": "string",
+      "const": "platform_git_service_operation_contract"
+    },
+    "service_id": {
+      "$ref": "#/$defs/id"
+    },
+    "repository_binding": {
+      "$ref": "#/$defs/repositoryBinding"
+    },
+    "operation_envelope": {
+      "$ref": "#/$defs/operationEnvelope"
+    },
+    "ref_ownership": {
+      "$ref": "#/$defs/refOwnership"
+    },
+    "locking": {
+      "$ref": "#/$defs/locking"
+    },
+    "audit": {
+      "$ref": "#/$defs/audit"
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/operation"
+      }
+    },
+    "authority_boundary": {
+      "$ref": "#/$defs/authorityBoundary"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "operationName": {
+      "type": "string",
+      "enum": [
+        "prepare_worktree",
+        "commit_candidate",
+        "open_review",
+        "review_status",
+        "publish_read_model"
+      ]
+    },
+    "repositoryBinding": {
+      "type": "object",
+      "required": [
+        "provider",
+        "repository_ref",
+        "default_branch",
+        "candidate_branch_prefix"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "const": "git"
+        },
+        "repository_ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "default_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate_branch_prefix": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "operationEnvelope": {
+      "type": "object",
+      "required": [
+        "request_schema",
+        "response_schema",
+        "request_id_required",
+        "idempotency_key_required",
+        "actor_ref_required",
+        "correlation_id_required"
+      ],
+      "properties": {
+        "request_schema": {
+          "type": "string",
+          "const": "schemas/git-service-operation-request.schema.json"
+        },
+        "response_schema": {
+          "type": "string",
+          "const": "schemas/git-service-operation-response.schema.json"
+        },
+        "request_id_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "idempotency_key_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "actor_ref_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "correlation_id_required": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "refOwnership": {
+      "type": "object",
+      "required": [
+        "service_owns_candidate_refs",
+        "candidate_ref_prefix",
+        "protected_ref_patterns",
+        "canonical_refs_require_review"
+      ],
+      "properties": {
+        "service_owns_candidate_refs": {
+          "type": "boolean",
+          "const": true
+        },
+        "candidate_ref_prefix": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protected_ref_patterns": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "canonical_refs_require_review": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "locking": {
+      "type": "object",
+      "required": [
+        "strategy",
+        "lock_timeout_seconds",
+        "stale_lock_after_seconds",
+        "required_scopes"
+      ],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "per_candidate_ref",
+            "queue_serialized"
+          ]
+        },
+        "lock_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stale_lock_after_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "required_scopes": {
+          "type": "object",
+          "required": [
+            "prepare_worktree",
+            "commit_candidate",
+            "open_review",
+            "review_status",
+            "publish_read_model"
+          ],
+          "properties": {
+            "prepare_worktree": {
+              "$ref": "#/$defs/stringArray"
+            },
+            "commit_candidate": {
+              "$ref": "#/$defs/stringArray"
+            },
+            "open_review": {
+              "$ref": "#/$defs/stringArray"
+            },
+            "review_status": {
+              "$ref": "#/$defs/stringArray"
+            },
+            "publish_read_model": {
+              "$ref": "#/$defs/stringArray"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "audit": {
+      "type": "object",
+      "required": [
+        "artifact_kind",
+        "append_only",
+        "required_fields"
+      ],
+      "properties": {
+        "artifact_kind": {
+          "type": "string",
+          "const": "platform_git_service_audit_event"
+        },
+        "append_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "required_fields": {
+          "$ref": "#/$defs/stringArray"
+        }
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "required": [
+        "name",
+        "adapter_command",
+        "request_artifact_kind",
+        "response_artifact_kind",
+        "idempotency_scope",
+        "lock_scopes",
+        "required_inputs",
+        "writes"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/operationName"
+        },
+        "adapter_command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request_artifact_kind": {
+          "type": "string",
+          "pattern": "^platform_git_service_[a-z_]+_request$"
+        },
+        "response_artifact_kind": {
+          "type": "string",
+          "pattern": "^platform_git_service_[a-z_]+_response$"
+        },
+        "idempotency_scope": {
+          "type": "string",
+          "enum": [
+            "candidate_id",
+            "candidate_ref",
+            "review_url",
+            "publish_target"
+          ]
+        },
+        "lock_scopes": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "required_inputs": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "writes": {
+          "type": "object",
+          "required": [
+            "canonical_specs",
+            "ontology_packages",
+            "candidate_ref",
+            "review",
+            "read_model"
+          ],
+          "properties": {
+            "canonical_specs": {
+              "type": "boolean",
+              "const": false
+            },
+            "ontology_packages": {
+              "type": "boolean",
+              "const": false
+            },
+            "candidate_ref": {
+              "type": "boolean"
+            },
+            "review": {
+              "type": "boolean"
+            },
+            "read_model": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "authorityBoundary": {
+      "type": "object",
+      "required": [
+        "specspace_direct_git_write_allowed",
+        "canonical_spec_mutation_without_review_allowed",
+        "ontology_package_write_allowed",
+        "auto_merge_allowed",
+        "private_artifact_publication_allowed"
+      ],
+      "properties": {
+        "specspace_direct_git_write_allowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "canonical_spec_mutation_without_review_allowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "ontology_package_write_allowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "auto_merge_allowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "private_artifact_publication_allowed": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "stringArray": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/ref"
+      },
+      "uniqueItems": true
+    }
+  }
+}

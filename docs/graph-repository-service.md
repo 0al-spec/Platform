@@ -71,6 +71,35 @@ The service must not treat working directories as authority. Authority comes
 from validated promotion artifacts, repository policy, review state, and the
 published read-model manifest.
 
+The production-facing operation contract lives in
+`git-service-operation-contract.example.json` and is validated with:
+
+```bash
+scripts/platform.py git-service validate-contract \
+  --contract git-service-operation-contract.example.json
+```
+
+The request/response envelopes are validated separately:
+
+```bash
+scripts/platform.py git-service validate-request \
+  --request path/to/git-service-request.json
+scripts/platform.py git-service validate-response \
+  --response path/to/git-service-response.json
+```
+
+The contract requires these service-level operations:
+
+- `prepare_worktree`;
+- `commit_candidate`;
+- `open_review`;
+- `review_status`;
+- `publish_read_model`.
+
+Each operation declares an idempotency scope, required lock scopes, adapter
+command, request/response artifact kinds, and write boundary. The existing
+`graph-repository` commands remain the local MVP adapter for those operations.
+
 ## Validate
 
 ```bash

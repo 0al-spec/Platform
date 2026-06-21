@@ -96,6 +96,12 @@ scripts/platform.py workspace init \
   --root-intent "describe the product goal"
 scripts/platform.py graph-repository validate \
   --contract graph-repository-service.example.json
+scripts/platform.py git-service validate-contract \
+  --contract git-service-operation-contract.example.json
+scripts/platform.py git-service validate-request \
+  --request path/to/git-service-request.json
+scripts/platform.py git-service validate-response \
+  --response path/to/git-service-response.json
 scripts/platform.py graph-repository plan \
   --contract graph-repository-service.example.json \
   --runs-dir ../SpecGraph/runs \
@@ -176,6 +182,23 @@ expose these operations through a Git Service that owns repository binding,
 refs, credentials, isolated workspaces, audit reports, and read-model
 publication, rather than treating an arbitrary local checkout as the storage
 contract.
+
+`git-service validate-contract` checks the production-facing Git Service
+operation contract. It validates the stable request/response envelope, required
+operations, idempotency keys, ref ownership, lock scopes, audit fields, and
+authority boundary for:
+
+- `prepare_worktree`;
+- `commit_candidate`;
+- `open_review`;
+- `review_status`;
+- `publish_read_model`.
+
+`git-service validate-request` and `git-service validate-response` validate the
+generic operation envelopes that a future hosted service or queue-backed worker
+will exchange. These envelopes are deliberately separate from the local
+`graph-repository` adapter commands so SpecSpace and orchestrators do not bind
+to local filesystem paths as the product contract.
 
 `graph-repository plan` reads the required SpecGraph idea-to-spec run artifacts
 and emits a report-only execution plan for the repository service boundary. The
