@@ -1137,16 +1137,20 @@ def graph_repository_repository_diagnostics(repository_dir: Path) -> list[Diagno
 
 def run_graph_repository_command(
     command: list[str],
+    *,
+    cwd: Path | None = None,
 ) -> tuple[dict[str, Any], Diagnostic | None]:
     completed = subprocess.run(
         command,
         check=False,
         text=True,
+        cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     result = {
         "command": command,
+        "cwd": None if cwd is None else str(cwd),
         "returncode": completed.returncode,
         "stdout": completed.stdout[-2000:],
         "stderr": completed.stderr[-2000:],
@@ -1698,6 +1702,7 @@ def graph_repository_open_review(args: argparse.Namespace) -> int:
             )
 
     review_url: str | None = None
+    candidate_branch_pushed = False
     git_commands_planned = [
         ["git", "-C", str(worktree_dir), "push", "-u", "origin", str(candidate_branch)]
     ]
@@ -1720,11 +1725,15 @@ def graph_repository_open_review(args: argparse.Namespace) -> int:
     if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics) and not args.dry_run:
         push_result, diagnostic = run_graph_repository_command(git_commands_planned[0])
         command_results.append(push_result)
+        candidate_branch_pushed = push_result["returncode"] == 0
         if diagnostic is not None:
             diagnostics.append(diagnostic)
 
     if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics) and not args.dry_run:
-        gh_result, diagnostic = run_graph_repository_command(gh_command)
+        gh_result, diagnostic = run_graph_repository_command(
+            gh_command,
+            cwd=worktree_dir,
+        )
         command_results.append(gh_result)
         if diagnostic is not None:
             diagnostics.append(diagnostic)
@@ -1756,9 +1765,7 @@ def graph_repository_open_review(args: argparse.Namespace) -> int:
         "worktree_dir": str(worktree_dir),
         "canonical_mutations_allowed": False,
         "canonical_tracked_artifacts_written": False,
-        "candidate_branch_pushed": (
-            not args.dry_run and error_count == 0 and len(command_results) >= 1
-        ),
+        "candidate_branch_pushed": candidate_branch_pushed,
         "pull_requests_opened": [] if review_url is None else [review_url],
         "review_url": review_url,
         "commits_created": [],
