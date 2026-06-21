@@ -8,6 +8,13 @@ send authoring and promotion intent to a repository service that owns candidate
 workspace allocation, validation gates, branch/commit creation, review opening,
 and public-safe read-model publication.
 
+In production this boundary should be implemented as a Git Service, not as
+"run `git init` in an arbitrary local folder". The service owns repository
+binding, credentials, isolated worktrees, refs, commits, review requests,
+concurrency control, audit reports, and read-model publication. Local CLI
+commands are the MVP adapter for the same authority model, not the long-term
+storage model.
+
 ## Current Slice
 
 This repository currently defines the contract shape, example artifact, and
@@ -45,6 +52,24 @@ The first implementation can be a local CLI/service wrapper around Git
 worktrees and `make publish-bundle`. Hosted production can later replace the
 storage backend with a managed Git provider or queue-backed worker without
 changing the UI authority model.
+
+## Git Service Responsibilities
+
+The Git Service is the durable versioning and review subsystem for graph
+changes. It must provide stable operations for:
+
+- repository binding and default-branch discovery;
+- candidate workspace allocation with isolated worktrees or equivalent storage;
+- branch and ref naming under repository policy;
+- explicit-path staging and candidate commits;
+- review creation and review-status polling;
+- merge-status observation without automatic acceptance in the MVP;
+- public-safe read-model publication after a merged review;
+- audit reports for every operation that crosses the write boundary.
+
+The service must not treat working directories as authority. Authority comes
+from validated promotion artifacts, repository policy, review state, and the
+published read-model manifest.
 
 ## Validate
 
