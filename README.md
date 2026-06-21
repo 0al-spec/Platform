@@ -94,6 +94,8 @@ scripts/platform.py workspace init \
   --path "${ORG_ROOT}/MyProduct" \
   --display-name "My Product" \
   --root-intent "describe the product goal"
+scripts/platform.py graph-repository validate \
+  --contract graph-repository-service.example.json
 scripts/platform.py deploy render --dry-run
 scripts/platform.py deploy up
 scripts/platform.py deploy status
@@ -124,6 +126,12 @@ failures exit with status `2`.
 report. Set `SPECGRAPH_HOME` to point at the SpecGraph checkout, or place
 SpecGraph as a sibling of Platform under `ORG_ROOT`. Pass `--dry-run` to preview
 the command and the catalog entry without invoking SpecGraph.
+
+`graph-repository validate` checks the MVP Git-backed Graph Repository Service
+contract. The contract fixes the production write boundary for candidate
+workspaces, validation gates, branch/commit/review operations, and public-safe
+read-model publication without granting SpecSpace direct canonical write
+authority.
 
 Install local Python tooling with:
 

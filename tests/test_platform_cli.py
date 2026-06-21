@@ -349,6 +349,47 @@ workspaces:
         self.assertIn("org_root_unresolved", codes)
         self.assertIn("workspace_path_unresolved", codes)
 
+    def test_graph_repository_validate_accepts_example_contract(self) -> None:
+        result = self.run_cli(
+            "graph-repository",
+            "validate",
+            "--contract",
+            "graph-repository-service.example.json",
+            "--format",
+            "json",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["diagnostics"], [])
+        self.assertEqual(payload["summary"]["operation_count"], 6)
+
+    def test_graph_repository_validate_rejects_auto_merge(self) -> None:
+        contract = json.loads(
+            (REPO_ROOT / "graph-repository-service.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        contract["promotion_policy"]["auto_merge_allowed"] = True
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(contract, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "graph-repository",
+                "validate",
+                "--contract",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_auto_merge_not_allowed", codes)
+
 
 if __name__ == "__main__":
     unittest.main()

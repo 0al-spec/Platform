@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:0al:platform:schemas:graph-repository-service-contract:1",
+  "title": "0AL Platform Graph Repository Service Contract",
+  "description": "Readonly contract for the Git-backed graph repository service boundary used by SpecSpace and SpecGraph.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "service_id",
+    "repository_binding",
+    "candidate_workspace",
+    "validation_gates",
+    "supported_operations",
+    "promotion_policy",
+    "publish_read_model",
+    "authority_boundary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "artifact_kind": {
+      "type": "string",
+      "const": "platform_graph_repository_service_contract"
+    },
+    "service_id": {
+      "$ref": "#/$defs/id"
+    },
+    "repository_binding": {
+      "$ref": "#/$defs/repositoryBinding"
+    },
+    "candidate_workspace": {
+      "$ref": "#/$defs/candidateWorkspace"
+    },
+    "validation_gates": {
+      "$ref": "#/$defs/validationGates"
+    },
+    "supported_operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/operation"
+      }
+    },
+    "promotion_policy": {
+      "$ref": "#/$defs/promotionPolicy"
+    },
+    "publish_read_model": {
+      "$ref": "#/$defs/publishReadModel"
+    },
+    "authority_boundary": {
+      "$ref": "#/$defs/authorityBoundary"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "repositoryBinding": {
+      "type": "object",
+      "required": [
+        "workspace_project_id",
+        "canonical_store",
+        "default_branch",
+        "candidate_branch_prefix"
+      ],
+      "properties": {
+        "workspace_project_id": {
+          "$ref": "#/$defs/id"
+        },
+        "canonical_store": {
+          "type": "object",
+          "required": [
+            "provider",
+            "repository_ref"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "const": "git"
+            },
+            "repository_ref": {
+              "$ref": "#/$defs/ref"
+            }
+          },
+          "additionalProperties": false
+        },
+        "default_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate_branch_prefix": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "candidateWorkspace": {
+      "type": "object",
+      "required": [
+        "allocation_mode",
+        "writes_canonical_checkout",
+        "retention_policy"
+      ],
+      "properties": {
+        "allocation_mode": {
+          "type": "string",
+          "enum": [
+            "local_worktree",
+            "managed_worker"
+          ]
+        },
+        "writes_canonical_checkout": {
+          "type": "boolean",
+          "const": false
+        },
+        "retention_policy": {
+          "type": "string",
+          "enum": [
+            "delete_after_publish",
+            "retain_until_review_closed"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "validationGates": {
+      "type": "object",
+      "required": [
+        "required_before_branch",
+        "required_before_commit",
+        "required_before_publish"
+      ],
+      "properties": {
+        "required_before_branch": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "required_before_commit": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "required_before_publish": {
+          "$ref": "#/$defs/stringArray"
+        }
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "required": [
+        "name",
+        "authority",
+        "writes_canonical_store"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "create_candidate_workspace",
+            "validate_candidate_graph",
+            "prepare_branch",
+            "create_commit",
+            "open_review",
+            "publish_read_model"
+          ]
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "read",
+            "candidate_write",
+            "git_write",
+            "publish"
+          ]
+        },
+        "writes_canonical_store": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "promotionPolicy": {
+      "type": "object",
+      "required": [
+        "mode",
+        "auto_merge_allowed",
+        "review_required"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "pull_request",
+            "controlled_auto_merge"
+          ]
+        },
+        "auto_merge_allowed": {
+          "type": "boolean"
+        },
+        "review_required": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "publishReadModel": {
+      "type": "object",
+      "required": [
+        "artifact_bundle",
+        "public_safe_only",
+        "manifest_required"
+      ],
+      "properties": {
+        "artifact_bundle": {
+          "$ref": "#/$defs/ref"
+        },
+        "public_safe_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "manifest_required": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "authorityBoundary": {
+      "type": "object",
+      "required": [
+        "graph_repository_service_is_authority",
+        "may_mutate_canonical_specs_without_review",
+        "may_write_ontology_package",
+        "may_accept_candidate_without_gate",
+        "may_merge_without_policy",
+        "may_publish_private_artifacts"
+      ],
+      "properties": {
+        "graph_repository_service_is_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "may_mutate_canonical_specs_without_review": {
+          "type": "boolean",
+          "const": false
+        },
+        "may_write_ontology_package": {
+          "type": "boolean",
+          "const": false
+        },
+        "may_accept_candidate_without_gate": {
+          "type": "boolean",
+          "const": false
+        },
+        "may_merge_without_policy": {
+          "type": "boolean",
+          "const": false
+        },
+        "may_publish_private_artifacts": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ref"
+      },
+      "uniqueItems": true
+    }
+  }
+}

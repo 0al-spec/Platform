@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "platform_graph_repository_service_contract",
+  "service_id": "specgraph-local-graph-repository",
+  "repository_binding": {
+    "workspace_project_id": "specgraph-core",
+    "canonical_store": {
+      "provider": "git",
+      "repository_ref": "git@github.com:0al-spec/SpecGraph.git"
+    },
+    "default_branch": "main",
+    "candidate_branch_prefix": "graph-candidate/"
+  },
+  "candidate_workspace": {
+    "allocation_mode": "local_worktree",
+    "writes_canonical_checkout": false,
+    "retention_policy": "retain_until_review_closed"
+  },
+  "validation_gates": {
+    "required_before_branch": [
+      "idea_event_storming_intake",
+      "candidate_spec_graph",
+      "pre_sib_coherence_report"
+    ],
+    "required_before_commit": [
+      "candidate_repair_loop_report",
+      "ontology_workbench",
+      "proposal_tracking_gate"
+    ],
+    "required_before_publish": [
+      "publish_bundle_safety_gate",
+      "artifact_manifest"
+    ]
+  },
+  "supported_operations": [
+    {
+      "name": "create_candidate_workspace",
+      "authority": "candidate_write",
+      "writes_canonical_store": false
+    },
+    {
+      "name": "validate_candidate_graph",
+      "authority": "read",
+      "writes_canonical_store": false
+    },
+    {
+      "name": "prepare_branch",
+      "authority": "git_write",
+      "writes_canonical_store": false
+    },
+    {
+      "name": "create_commit",
+      "authority": "git_write",
+      "writes_canonical_store": true
+    },
+    {
+      "name": "open_review",
+      "authority": "git_write",
+      "writes_canonical_store": false
+    },
+    {
+      "name": "publish_read_model",
+      "authority": "publish",
+      "writes_canonical_store": false
+    }
+  ],
+  "promotion_policy": {
+    "mode": "pull_request",
+    "auto_merge_allowed": false,
+    "review_required": true
+  },
+  "publish_read_model": {
+    "artifact_bundle": "dist/specgraph-public/artifact_manifest.json",
+    "public_safe_only": true,
+    "manifest_required": true
+  },
+  "authority_boundary": {
+    "graph_repository_service_is_authority": false,
+    "may_mutate_canonical_specs_without_review": false,
+    "may_write_ontology_package": false,
+    "may_accept_candidate_without_gate": false,
+    "may_merge_without_policy": false,
+    "may_publish_private_artifacts": false
+  }
+}
