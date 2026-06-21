@@ -114,6 +114,12 @@ scripts/platform.py graph-repository commit-worktree \
   --worktree-dir .platform/candidates/my-idea-v1-worktree \
   --path specs/nodes/SG-SPEC-CANDIDATE.yaml \
   --message "Add candidate spec graph"
+scripts/platform.py graph-repository open-review \
+  --commit-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_review_commit_report.json \
+  --worktree-dir .platform/candidates/my-idea-v1-worktree \
+  --base main \
+  --title "Add candidate spec graph" \
+  --body "Review candidate spec graph produced from the idea-to-spec flow."
 scripts/platform.py deploy render --dry-run
 scripts/platform.py deploy up
 scripts/platform.py deploy status
@@ -169,6 +175,10 @@ models.
 `graph-repository commit-worktree` creates a candidate-branch commit from
 explicit relative paths. It does not open reviews, merge, accept specs into the
 canonical branch, write Ontology packages, or publish read models.
+
+`graph-repository open-review` pushes the candidate branch and opens a pull
+request. It still does not merge, accept candidate specs into the canonical
+branch, write Ontology packages, or publish read models.
 
 Install local Python tooling with:
 

@@ -153,3 +153,27 @@ a candidate-branch commit and writes
 
 This still does not open a pull request, merge, accept candidate specs into the
 canonical branch, write Ontology packages, or publish read models.
+
+## Open Review
+
+Push the candidate branch and open a pull request after a successful review
+commit:
+
+```bash
+scripts/platform.py graph-repository open-review \
+  --commit-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_review_commit_report.json \
+  --worktree-dir .platform/candidates/my-idea-v1-worktree \
+  --base main \
+  --title "Add candidate spec graph" \
+  --body "Review candidate spec graph produced from the idea-to-spec flow."
+```
+
+`open-review` verifies that the worktree is still on the candidate branch and
+that `HEAD` matches the commit recorded by `commit-worktree`. It then executes:
+
+- `git push -u origin <candidate_branch>`;
+- `gh pr create ...`.
+
+The command writes `.platform/graph_repository_open_review_report.json` with
+the review URL. It still does not merge, accept candidate specs into the
+canonical branch, write Ontology packages, or publish read models.
