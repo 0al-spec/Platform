@@ -390,6 +390,62 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("graph_repository_auto_merge_not_allowed", codes)
 
+    def test_graph_repository_validate_rejects_non_commit_canonical_write(
+        self,
+    ) -> None:
+        contract = json.loads(
+            (REPO_ROOT / "graph-repository-service.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        contract["supported_operations"][0]["writes_canonical_store"] = True
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(contract, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "graph-repository",
+                "validate",
+                "--contract",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "graph_repository_operation_canonical_write_mismatch",
+            codes,
+        )
+
+    def test_graph_repository_validate_rejects_empty_validation_gate(self) -> None:
+        contract = json.loads(
+            (REPO_ROOT / "graph-repository-service.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        contract["validation_gates"]["required_before_branch"] = []
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(contract, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "graph-repository",
+                "validate",
+                "--contract",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_contract_schema_invalid", codes)
+        self.assertIn("graph_repository_validation_gate_empty", codes)
+
 
 if __name__ == "__main__":
     unittest.main()

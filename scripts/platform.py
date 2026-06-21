@@ -408,6 +408,51 @@ def graph_repository_contract_semantic_diagnostics(
                     message=f"missing required operations: {', '.join(missing)}",
                 )
             )
+        expected_canonical_writes = {
+            "create_candidate_workspace": False,
+            "validate_candidate_graph": False,
+            "prepare_branch": False,
+            "create_commit": True,
+            "open_review": False,
+            "publish_read_model": False,
+        }
+        for index, item in enumerate(supported_operations):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str) or name not in expected_canonical_writes:
+                continue
+            expected = expected_canonical_writes[name]
+            if item.get("writes_canonical_store") != expected:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_operation_canonical_write_mismatch",
+                        subject=f"supported_operations[{index}].writes_canonical_store",
+                        message=(
+                            f"operation `{name}` must set writes_canonical_store "
+                            f"to {str(expected).lower()}"
+                        ),
+                    )
+                )
+
+    validation_gates = contract.get("validation_gates")
+    if isinstance(validation_gates, dict):
+        for key in (
+            "required_before_branch",
+            "required_before_commit",
+            "required_before_publish",
+        ):
+            value = validation_gates.get(key)
+            if isinstance(value, list) and not value:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_validation_gate_empty",
+                        subject=f"validation_gates.{key}",
+                        message="validation gate lists must not be empty",
+                    )
+                )
 
     authority_boundary = contract.get("authority_boundary")
     if isinstance(authority_boundary, dict):
