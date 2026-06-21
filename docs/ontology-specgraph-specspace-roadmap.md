@@ -78,6 +78,10 @@ As of 2026-06-21:
 - agent-passport PR `#6` is merged: `x-behaviorPolicies` is documented as an
   experimental `x-*` extension that remains report-only unless a consumer
   defines explicit enforcement semantics.
+- The next product direction is an autonomous idea-to-spec workflow: SpecSpace
+  should help a user clarify a product idea through an event-storming-like
+  intake, then let SpecGraph build a complete candidate specification graph
+  under pre-SIB/coherence metrics before any canonical write.
 
 The product intent is to reduce hallucinated terms, misunderstood domain
 language, wrong aliases, wrong relation directions, and hidden missing concepts
@@ -120,6 +124,56 @@ can distinguish:
 - a data update from a structural ontology change;
 - a missing concept from a missing layer/applicability claim;
 - a stable decision from a model that is invalidated by changed assumptions.
+
+## Autonomous Idea-To-Spec Direction
+
+The next user-facing milestone is not code generation. The product target is a
+fast, visual, metric-controlled path from a raw user idea to a coherent
+SpecGraph candidate:
+
+```text
+user idea
+  -> event-storming intake
+  -> ontology/domain/context frame
+  -> candidate spec graph
+  -> pre-SIB and consistency checks
+  -> autonomous repair loop
+  -> reviewable graph version
+  -> optional canonical PR/merge
+```
+
+The human may remain in the loop at the beginning to clarify domain boundaries,
+actors, events, commands, policies, and language. After that, the system should
+be able to draft and repair the graph without requiring a human for each node.
+The authority boundary remains unchanged: generated content is candidate state
+until validation and repository governance promote it.
+
+## Graph Versioning And Production Storage Direction
+
+Git remains the preferred canonical version substrate for the graph because it
+already provides history, diff, branch review, rollback, signatures/digests, and
+auditable publication points. Production SpecSpace should not work as a direct
+UI over an arbitrary local folder with `git init`.
+
+The production shape should be a managed graph repository boundary:
+
+```text
+SpecSpace UI
+  -> Graph Repository Service
+  -> Git-backed canonical store
+  -> validated specs/runs/proposals
+  -> published read model / artifact bundle
+```
+
+This separates the read path from the write path:
+
+- SpecSpace reads public-safe static artifacts, indexed read models, and
+  version metadata quickly.
+- Writes go through candidate workspaces, validation gates, commits, branches,
+  reviews, and controlled merge/publish actions.
+- No browser workflow should silently mutate `specs/nodes/*.yaml`, write
+  ontology packages, or advance canonical graph history without a repository
+  service and validation result.
 
 ## Roadmap
 
@@ -284,9 +338,52 @@ Defer these until the review loop above is stable:
 - SpecSpace mutation UI;
 - automatic ontology package writes from SpecGraph supervisor output.
 
+### 9. Autonomous Idea-To-Spec Loop
+
+Status: next product-facing planning line after the SpecAuthor prompt-side
+stack.
+
+Add a bounded authoring loop that can create a full candidate graph from a raw
+idea without human review on every node:
+
+- event-storming intake artifact for actors, events, commands, policies,
+  external systems, constraints, risks, and vocabulary questions;
+- ontology/domain/context frame construction using project-local ontology
+  packages and compiler artifacts;
+- candidate spec graph contract with explicit non-canonical authority;
+- pre-SIB/coherence metrics for completeness, contradictions, orphan nodes,
+  ontology coverage, unsupported strong claims, unresolved refs, and
+  implementation-readiness signals;
+- autonomous repair loop that can revise candidate graph state until metrics
+  reach configured thresholds;
+- SpecSpace workspace that shows the candidate graph, metric deltas, repair
+  history, and remaining blockers.
+
+### 10. Git-Backed Graph Repository Service
+
+Status: required before production write UX; can start as a CLI/service
+contract before a full hosted backend.
+
+Define a repository service over Git instead of letting SpecSpace mutate a local
+checkout directly. The service should own:
+
+- workspace creation and repository binding;
+- candidate workspace allocation;
+- validation and pre-SIB gate execution;
+- branch/commit creation;
+- PR/review or controlled auto-merge policy;
+- publication of read models and artifact bundles;
+- version metadata exposed to SpecSpace.
+
+The first implementation can be simple: a local service or CLI that materializes
+only candidate branches and publishes a read-only artifact bundle. Production
+can later replace the local storage backend with a managed Git provider,
+workspace manager, object storage, or queue-backed worker pool without changing
+the UI authority model.
+
 ## Preferred Immediate Slice
 
-The immediate cross-repo stack is now:
+The previous immediate stack has landed:
 
 ```text
 SpecGraph 0146 -> SpecGraph 0147 -> SpecSpace invocation lane -> SpecGraph 0148 -> agent-passport x-behaviorPolicies docs
@@ -304,13 +401,17 @@ SpecGraph/SpecSpace applicability dashboards should treat as authoritative.
 It no longer blocks the current SpecAuthor prompt-side/Passport work, but it
 does block the stronger applicability import and review slices.
 
-After this stack merges, the next valuable implementation choices are:
+The next valuable implementation choices are:
 
-- connect real SpecAuthor execution/wrapper output to the deterministic
-  authoring-flow builder;
-- backfill selected legacy specs into review-only invocation/claim records;
-- continue compiler-backed applicability profile import if Ontology emits
-  stronger applicability data.
+1. SpecGraph: event-storming intake and candidate graph contracts for the
+   idea-to-spec loop.
+2. SpecGraph: pre-SIB/coherence metrics and autonomous candidate repair reports.
+3. SpecSpace: idea-to-spec workspace over candidate graph, metrics, and repair
+   history.
+4. SpecGraph/Platform: Git-backed Graph Repository Service contract for
+   branch/commit/publish boundaries.
+5. Ontology/SpecGraph: continue compiler-backed applicability profile import
+   when ONT-040 emits stronger applicability data.
 
 ## Operating Notes
 
