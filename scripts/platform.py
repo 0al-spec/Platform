@@ -1995,6 +1995,14 @@ def graph_repository_review_status(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
+def graph_repository_path_is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
 def graph_repository_publish_preflight_diagnostics(
     review_status_report: dict[str, Any],
     *,
@@ -2003,6 +2011,14 @@ def graph_repository_publish_preflight_diagnostics(
     manifest_name: str,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
+    manifest_path = Path(manifest_name)
+    manifest_name_invalid = (
+        not manifest_name
+        or manifest_path.is_absolute()
+        or any(part == ".." for part in manifest_path.parts)
+    )
+    resolved_bundle_dir = bundle_dir.resolve()
+    resolved_manifest_path = (bundle_dir / manifest_path).resolve()
     if review_status_report.get("artifact_kind") != (
         "platform_graph_repository_review_status_report"
     ):
@@ -2050,6 +2066,18 @@ def graph_repository_publish_preflight_diagnostics(
                 message="review status report must not write canonical tracked artifacts",
             )
         )
+    if manifest_name_invalid or not graph_repository_path_is_within(
+        resolved_manifest_path,
+        resolved_bundle_dir,
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_read_model_manifest_name_invalid",
+                subject=manifest_name,
+                message="manifest name must be a relative path inside the bundle",
+            )
+        )
     if not bundle_dir.is_dir():
         diagnostics.append(
             Diagnostic(
@@ -2059,27 +2087,31 @@ def graph_repository_publish_preflight_diagnostics(
                 message="read-model bundle directory must exist",
             )
         )
-    elif not (bundle_dir / manifest_name).is_file():
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="graph_repository_read_model_manifest_missing",
-                subject=manifest_name,
-                message="read-model bundle manifest is required",
-            )
-        )
-    else:
-        try:
-            load_json_mapping(bundle_dir / manifest_name, label="read-model manifest")
-        except PlatformError as exc:
+    elif not manifest_name_invalid:
+        if not (bundle_dir / manifest_path).is_file():
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
-                    code="graph_repository_read_model_manifest_invalid",
+                    code="graph_repository_read_model_manifest_missing",
                     subject=manifest_name,
-                    message=str(exc),
+                    message="read-model bundle manifest is required",
                 )
             )
+        else:
+            try:
+                load_json_mapping(
+                    bundle_dir / manifest_path,
+                    label="read-model manifest",
+                )
+            except PlatformError as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_read_model_manifest_invalid",
+                        subject=manifest_name,
+                        message=str(exc),
+                    )
+                )
     if output_dir.exists():
         diagnostics.append(
             Diagnostic(

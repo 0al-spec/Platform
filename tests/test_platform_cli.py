@@ -1581,6 +1581,54 @@ workspaces:
         self.assertEqual(payload["read_models_published"], [])
         self.assertFalse(output_dir.exists())
 
+    def test_graph_repository_publish_read_model_rejects_escaped_manifest_name(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            _workspace_dir, review_status_report = (
+                self.merged_graph_repository_review_status(tmp_root)
+            )
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            external_manifest = tmp_root / "external_manifest.json"
+            external_manifest.write_text(
+                json.dumps({"artifact_kind": "external_manifest"}),
+                encoding="utf-8",
+            )
+
+            for index, manifest_name in enumerate(
+                ["../external_manifest.json", str(external_manifest)]
+            ):
+                with self.subTest(manifest_name=manifest_name):
+                    output_dir = tmp_root / f"published-read-model-{index}"
+                    result = self.run_cli(
+                        "graph-repository",
+                        "publish-read-model",
+                        "--review-status-report",
+                        str(review_status_report),
+                        "--bundle-dir",
+                        str(bundle_dir),
+                        "--output-dir",
+                        str(output_dir),
+                        "--manifest-name",
+                        manifest_name,
+                        "--format",
+                        "json",
+                    )
+
+                    self.assertEqual(result.returncode, 1)
+                    payload = json.loads(result.stdout)
+                    codes = {
+                        diagnostic["code"] for diagnostic in payload["diagnostics"]
+                    }
+                    self.assertIn(
+                        "graph_repository_read_model_manifest_name_invalid",
+                        codes,
+                    )
+                    self.assertFalse(payload["ok"])
+                    self.assertEqual(payload["read_models_published"], [])
+                    self.assertFalse(output_dir.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
