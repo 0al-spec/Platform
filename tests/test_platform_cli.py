@@ -1374,6 +1374,47 @@ workspaces:
         self.assertEqual(payload["merges_performed"], [])
         self.assertEqual(payload["read_models_published"], [])
 
+    def test_graph_repository_review_status_marks_merged_state_without_timestamp(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir, open_review_report = self.open_graph_repository_review(
+                tmp_root
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "MERGED",
+                    "isDraft": False,
+                    "mergedAt": None,
+                    "mergeCommit": None,
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "review-status",
+                "--open-review-report",
+                str(open_review_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["review_state"], "merged")
+        self.assertTrue(payload["summary"]["review_merged"])
+
 
 if __name__ == "__main__":
     unittest.main()

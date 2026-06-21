@@ -1860,13 +1860,14 @@ def graph_repository_review_status_preflight_diagnostics(
 
 
 def graph_repository_review_state(pr_payload: dict[str, Any]) -> str:
-    if pr_payload.get("mergedAt"):
+    state = pr_payload.get("state")
+    if pr_payload.get("mergedAt") or state == "MERGED":
         return "merged"
-    if pr_payload.get("state") == "CLOSED":
+    if state == "CLOSED":
         return "closed"
     if pr_payload.get("isDraft") is True:
         return "draft"
-    if pr_payload.get("state") == "OPEN":
+    if state == "OPEN":
         return "open"
     return "unknown"
 
