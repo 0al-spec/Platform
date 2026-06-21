@@ -149,6 +149,30 @@ class PlatformCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return plan_path
 
+    def build_graph_repository_promotion_request(self, tmp_root: Path) -> Path:
+        plan_path = self.build_graph_repository_execution_plan(tmp_root)
+        output = tmp_root / "graph_repository_promotion_request.json"
+        result = self.run_cli(
+            "graph-repository",
+            "promotion-request",
+            "--plan",
+            str(plan_path),
+            "--candidate-id",
+            "idea-alpha",
+            "--path",
+            "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+            "--title",
+            "Add candidate spec graph",
+            "--body",
+            "Review materialized candidate graph from the idea-to-spec flow.",
+            "--output",
+            str(output),
+            "--format",
+            "json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return output
+
     def git_service_request(self) -> dict:
         return {
             "schema_version": 1,
@@ -843,6 +867,163 @@ workspaces:
         payload = json.loads(result.stdout)
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("git_service_operation_request_schema_invalid", codes)
+
+    def test_git_service_execute_promotion_dry_run_plans_operations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request = self.build_graph_repository_promotion_request(tmp_root)
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+            output = tmp_root / "git_service_promotion_execution_report.json"
+
+            result = self.run_cli(
+                "git-service",
+                "execute-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--promotion-request",
+                str(promotion_request),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(workspace_dir),
+                "--dry-run",
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_git_service_promotion_execution_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(payload["summary"]["operation_count"], 3)
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(statuses["prepare_worktree"], "dry_run")
+            self.assertEqual(statuses["commit_candidate"], "skipped_dry_run")
+            self.assertEqual(statuses["open_review"], "skipped_dry_run")
+            self.assertFalse(workspace_dir.exists())
+            self.assertTrue(output.is_file())
+
+    def test_git_service_execute_promotion_runs_local_adapter_sequence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request = self.build_graph_repository_promotion_request(tmp_root)
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            materialized_source = tmp_root / "materialized"
+            spec_path = materialized_source / "specs" / "nodes" / "SG-SPEC-CANDIDATE.yaml"
+            spec_path.parent.mkdir(parents=True)
+            spec_path.write_text(
+                "id: SG-SPEC-CANDIDATE\nsummary: Candidate spec\n",
+                encoding="utf-8",
+            )
+            workspace_dir = tmp_root / "candidate-worktree"
+
+            result = self.run_cli(
+                "git-service",
+                "execute-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--promotion-request",
+                str(promotion_request),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(workspace_dir),
+                "--materialized-source-dir",
+                str(materialized_source),
+                "--open-review-dry-run",
+                "--repo",
+                "0al-spec/SpecGraph",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertFalse(payload["dry_run"])
+            self.assertTrue(payload["open_review_dry_run"])
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(statuses["prepare_worktree"], "succeeded")
+            self.assertEqual(statuses["commit_candidate"], "succeeded")
+            self.assertEqual(statuses["open_review"], "dry_run")
+            self.assertEqual(len(payload["copied_materialized_files"]), 1)
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "git_service_promotion_execution_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_worktree_prepare_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_review_commit_report.json"
+                ).is_file()
+            )
+            self.assertTrue((workspace_dir / "specs/nodes/SG-SPEC-CANDIDATE.yaml").is_file())
+            subject = self.run_git(
+                workspace_dir,
+                "log",
+                "-1",
+                "--pretty=%s",
+            ).stdout.strip()
+            self.assertEqual(subject, "Add candidate spec graph")
+
+    def test_git_service_execute_promotion_rejects_not_ok_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request_path = self.build_graph_repository_promotion_request(
+                tmp_root
+            )
+            promotion_request = json.loads(
+                promotion_request_path.read_text(encoding="utf-8")
+            )
+            promotion_request["ok"] = False
+            promotion_request_path.write_text(
+                json.dumps(promotion_request),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "git-service",
+                "execute-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--promotion-request",
+                str(promotion_request_path),
+                "--repository-dir",
+                str(tmp_root / "missing"),
+                "--workspace-dir",
+                str(tmp_root / "candidate-worktree"),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_promotion_request_not_ok", codes)
 
     def test_graph_repository_validate_rejects_auto_merge(self) -> None:
         contract = json.loads(
