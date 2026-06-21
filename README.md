@@ -171,6 +171,12 @@ workspaces, validation gates, branch/commit/review operations, and public-safe
 read-model publication without granting SpecSpace direct canonical write
 authority.
 
+The local commands are the MVP adapter for that boundary. Production should
+expose these operations through a Git Service that owns repository binding,
+refs, credentials, isolated workspaces, audit reports, and read-model
+publication, rather than treating an arbitrary local checkout as the storage
+contract.
+
 `graph-repository plan` reads the required SpecGraph idea-to-spec run artifacts
 and emits a report-only execution plan for the repository service boundary. The
 planner verifies that the inputs remain review-only and does not run Git, open

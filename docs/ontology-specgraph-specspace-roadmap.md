@@ -359,13 +359,16 @@ idea without human review on every node:
   graph state until metrics reach configured thresholds;
 - landed SpecSpace workspace that shows the candidate graph, metric deltas,
   repair history, and remaining blockers;
-- next handoff: Platform promotion request artifact before any branch, commit,
-  or PR executor step.
+- landed SpecGraph promotion gate artifact and SpecSpace read-only promotion
+  gate lane;
+- next handoff: Git Service backed repository execution before any production
+  write UX.
 
 ### 10. Git-Backed Graph Repository Service
 
-Status: required before production write UX; can start as a CLI/service
-contract before a full hosted backend.
+Status: active next infrastructure layer before production write UX. The local
+CLI executor is an MVP adapter; production should expose the same operations
+through a Git Service rather than relying on an arbitrary local checkout.
 
 Define a repository service over Git instead of letting SpecSpace mutate a local
 checkout directly. The service should own:
@@ -375,6 +378,7 @@ checkout directly. The service should own:
 - validation and pre-SIB gate execution;
 - branch/commit creation;
 - PR/review or controlled auto-merge policy;
+- ref ownership, concurrency control, credentials, and audit reports;
 - publication of read models and artifact bundles;
 - version metadata exposed to SpecSpace.
 
@@ -383,6 +387,11 @@ only candidate branches and publishes a read-only artifact bundle. Production
 can later replace the local storage backend with a managed Git provider,
 workspace manager, object storage, or queue-backed worker pool without changing
 the UI authority model.
+
+The Git Service must be treated as the durable graph versioning subsystem:
+SpecSpace sends intent, SpecGraph supplies gated candidate artifacts, and the
+service alone performs repository writes under policy. A local `.git` directory
+may be an implementation detail of the MVP, but not the product contract.
 
 ## Preferred Immediate Slice
 
@@ -406,15 +415,16 @@ does block the stronger applicability import and review slices.
 
 The next valuable implementation choices are:
 
-1. Platform: promotion request handoff artifact from ready candidate graph to
-   controlled review flow.
-2. SpecGraph: materialized candidate spec artifact that can populate promotion
-   request paths without hand-authored YAML.
-3. Platform: executor orchestration that consumes a promotion request and calls
+1. Platform: promote the local graph repository executor contract into a Git
+   Service boundary with explicit repository binding, ref ownership,
+   concurrency/audit reports, and queue-ready operation records.
+2. Platform: executor orchestration that consumes a promotion request and calls
    `prepare-worktree`, `commit-worktree`, and `open-review` under the existing
-   authority gates.
-4. SpecSpace: controlled promotion UI over the promotion request and executor
-   reports.
+   authority gates through that service boundary.
+3. SpecSpace: controlled promotion UI over the promotion request and Git
+   Service executor reports.
+4. SpecGraph: publish promotion-gate and materialization artifacts in the public
+   bundle with stable manifest names for the Git Service handoff.
 5. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 
