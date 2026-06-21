@@ -100,6 +100,10 @@ scripts/platform.py graph-repository plan \
   --contract graph-repository-service.example.json \
   --runs-dir ../SpecGraph/runs \
   --output runs/graph_repository_execution_plan.json
+scripts/platform.py graph-repository prepare-local \
+  --plan runs/graph_repository_execution_plan.json \
+  --candidate-id my-idea-v1 \
+  --workspace-dir .platform/candidates/my-idea-v1
 scripts/platform.py deploy render --dry-run
 scripts/platform.py deploy up
 scripts/platform.py deploy status
@@ -141,6 +145,11 @@ authority.
 and emits a report-only execution plan for the repository service boundary. The
 planner verifies that the inputs remain review-only and does not run Git, open
 reviews, publish read models, or mutate canonical SpecGraph specs.
+
+`graph-repository prepare-local` validates a ready execution plan and writes a
+local candidate workspace manifest/report. It calculates the candidate branch
+and planned Git commands, but still does not execute Git, open pull requests, or
+promote candidate specs.
 
 Install local Python tooling with:
 

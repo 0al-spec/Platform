@@ -851,6 +851,234 @@ def graph_repository_plan(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
+def graph_repository_prepare_plan_diagnostics(
+    plan: dict[str, Any],
+    *,
+    candidate_id: str,
+    workspace_dir: Path,
+    dry_run: bool,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if plan.get("artifact_kind") != "platform_graph_repository_execution_plan":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_plan_kind_mismatch",
+                subject="artifact_kind",
+                message="expected platform_graph_repository_execution_plan",
+            )
+        )
+    if plan.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_plan_not_ok",
+                subject="ok",
+                message="execution plan must be ok before local preparation",
+            )
+        )
+    if plan.get("ready_for_branch") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_plan_not_ready",
+                subject="ready_for_branch",
+                message="execution plan is not ready for branch preparation",
+            )
+        )
+    if plan.get("canonical_mutations_allowed") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_plan_authority_expanded",
+                subject="canonical_mutations_allowed",
+                message="plan must not allow canonical mutations",
+            )
+        )
+    if plan.get("tracked_artifacts_written") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_plan_authority_expanded",
+                subject="tracked_artifacts_written",
+                message="plan must not have written tracked artifacts",
+            )
+        )
+    for key, value in sorted(nested_mapping(plan, "authority_boundary").items()):
+        if value is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_plan_authority_expanded",
+                    subject=f"authority_boundary.{key}",
+                    message="report-only plan authority boundary must remain false",
+                )
+            )
+
+    prepare_branch = None
+    operations = plan.get("operations")
+    if isinstance(operations, list):
+        for operation in operations:
+            if isinstance(operation, dict) and operation.get("name") == "prepare_branch":
+                prepare_branch = operation
+                break
+    if not isinstance(prepare_branch, dict) or prepare_branch.get("status") != "ready":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_prepare_branch_not_ready",
+                subject="operations.prepare_branch.status",
+                message="prepare_branch operation must be ready",
+            )
+        )
+
+    if not PROJECT_ID_RE.fullmatch(candidate_id):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_candidate_id_invalid",
+                subject="candidate_id",
+                message=(
+                    "candidate id must start with a lowercase letter or digit and "
+                    "contain only lowercase letters, digits, '.', '_' or '-'"
+                ),
+            )
+        )
+
+    if not dry_run:
+        if workspace_dir.exists() and not workspace_dir.is_dir():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_workspace_not_directory",
+                    subject="workspace_dir",
+                    message="workspace path exists but is not a directory",
+                )
+            )
+        elif workspace_dir.exists() and any(workspace_dir.iterdir()):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_workspace_not_empty",
+                    subject="workspace_dir",
+                    message="workspace directory must be empty for local preparation",
+                )
+            )
+    return diagnostics
+
+
+def graph_repository_candidate_branch(contract: dict[str, Any], candidate_id: str) -> str:
+    repository_binding = nested_mapping(contract, "repository_binding")
+    prefix = repository_binding.get("candidate_branch_prefix")
+    if not isinstance(prefix, str) or not prefix:
+        prefix = "graph-candidate/"
+    return f"{prefix}{candidate_id}"
+
+
+def graph_repository_prepare_local(args: argparse.Namespace) -> int:
+    plan_path = Path(args.plan)
+    workspace_dir = Path(args.workspace_dir)
+    candidate_id = args.candidate_id
+    plan = load_json_mapping(plan_path, label="graph repository execution plan")
+    contract_ref = plan.get("contract_ref")
+    contract_path = Path(contract_ref) if isinstance(contract_ref, str) else None
+    contract = (
+        load_json_mapping(contract_path, label="graph repository contract")
+        if contract_path is not None and contract_path.is_file()
+        else {}
+    )
+    branch_name = graph_repository_candidate_branch(contract, candidate_id)
+    diagnostics = graph_repository_prepare_plan_diagnostics(
+        plan,
+        candidate_id=candidate_id,
+        workspace_dir=workspace_dir,
+        dry_run=args.dry_run,
+    )
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    local_files = [
+        str(workspace_dir / "candidate_workspace_manifest.json"),
+        str(workspace_dir / "graph_repository_local_prepare_report.json"),
+    ]
+    repository_binding = nested_mapping(contract, "repository_binding")
+    default_branch = repository_binding.get("default_branch")
+    if not isinstance(default_branch, str) or not default_branch:
+        default_branch = "main"
+
+    report = {
+        "schema_version": 1,
+        "artifact_kind": "platform_graph_repository_local_prepare_report",
+        "plan_ref": str(plan_path),
+        "ok": error_count == 0,
+        "dry_run": args.dry_run,
+        "candidate_id": candidate_id,
+        "candidate_branch": branch_name,
+        "workspace_dir": str(workspace_dir),
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "git_commands_executed": [],
+        "pull_requests_opened": [],
+        "local_files_written": [] if args.dry_run or error_count else local_files,
+        "planned_git_commands": [
+            f"git fetch origin {default_branch}",
+            f"git worktree add {workspace_dir} -b {branch_name} origin/{default_branch}",
+        ],
+        "source_artifacts": plan.get("source_artifacts", []),
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "will_write_local_workspace": not args.dry_run and error_count == 0,
+        },
+    }
+
+    if error_count == 0 and not args.dry_run:
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "schema_version": 1,
+            "artifact_kind": "platform_graph_repository_candidate_workspace_manifest",
+            "candidate_id": candidate_id,
+            "candidate_branch": branch_name,
+            "plan_ref": str(plan_path),
+            "source_artifacts": plan.get("source_artifacts", []),
+            "authority_boundary": {
+                "git_commands_executed": False,
+                "pull_requests_opened": False,
+                "canonical_specs_mutated": False,
+                "ontology_packages_written": False,
+            },
+        }
+        (workspace_dir / "candidate_workspace_manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        (workspace_dir / "graph_repository_local_prepare_report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "candidate_id": candidate_id,
+                        "branch": branch_name,
+                        "workspace": str(workspace_dir),
+                    }
+                ],
+                [
+                    ("candidate_id", "CANDIDATE"),
+                    ("branch", "BRANCH"),
+                    ("workspace", "WORKSPACE"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
 def expected_profile(kind: Any) -> str | None:
     if kind == "core_repository":
         return "self_hosted_bootstrap"
@@ -2459,6 +2687,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     graph_repository_plan_parser.set_defaults(func=graph_repository_plan)
+    graph_repository_prepare_parser = graph_repository_subcommands.add_parser(
+        "prepare-local",
+        help="Prepare a local candidate workspace from a ready execution plan.",
+    )
+    graph_repository_prepare_parser.add_argument(
+        "--plan",
+        required=True,
+        help="Path to a graph repository execution plan JSON artifact.",
+    )
+    graph_repository_prepare_parser.add_argument(
+        "--candidate-id",
+        required=True,
+        help="Stable candidate id used to derive the candidate branch name.",
+    )
+    graph_repository_prepare_parser.add_argument(
+        "--workspace-dir",
+        required=True,
+        help="Empty directory where local candidate workspace metadata will be written.",
+    )
+    graph_repository_prepare_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the local preparation report without writing files.",
+    )
+    graph_repository_prepare_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    graph_repository_prepare_parser.set_defaults(func=graph_repository_prepare_local)
 
     deploy_parser = subcommands.add_parser(
         "deploy",
