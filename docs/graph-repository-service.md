@@ -132,3 +132,24 @@ It still does not create commits, open pull requests, merge branches, accept
 candidate specs, write Ontology packages, or publish read models. The generated
 worktree receives a local `.platform/graph_repository_worktree_prepare_report.json`
 report with the executed commands and authority boundary.
+
+## Commit Worktree
+
+Create a review commit from explicitly materialized candidate paths:
+
+```bash
+scripts/platform.py graph-repository commit-worktree \
+  --prepare-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_worktree_prepare_report.json \
+  --worktree-dir .platform/candidates/my-idea-v1-worktree \
+  --path specs/nodes/SG-SPEC-CANDIDATE.yaml \
+  --message "Add candidate spec graph"
+```
+
+`commit-worktree` stages only paths passed through `--path`. Paths must be
+relative to the worktree and must not escape it. The command verifies that the
+worktree is on the candidate branch recorded by `prepare-worktree`, then creates
+a candidate-branch commit and writes
+`.platform/graph_repository_review_commit_report.json`.
+
+This still does not open a pull request, merge, accept candidate specs into the
+canonical branch, write Ontology packages, or publish read models.

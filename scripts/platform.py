@@ -1292,6 +1292,282 @@ def graph_repository_prepare_worktree(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
+def graph_repository_relative_paths_diagnostics(paths: list[str]) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if not paths:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_commit_paths_missing",
+                subject="path",
+                message="at least one explicit relative path is required",
+            )
+        )
+    for index, raw_path in enumerate(paths):
+        path = Path(raw_path)
+        if path.is_absolute() or ".." in path.parts:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_commit_path_outside_worktree",
+                    subject=f"path[{index}]",
+                    message="commit paths must be relative and stay inside the worktree",
+                )
+            )
+    return diagnostics
+
+
+def graph_repository_commit_preflight_diagnostics(
+    prepare_report: dict[str, Any],
+    *,
+    worktree_dir: Path,
+    paths: list[str],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if prepare_report.get("artifact_kind") != (
+        "platform_graph_repository_worktree_prepare_report"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_prepare_report_kind_mismatch",
+                subject="artifact_kind",
+                message="expected platform_graph_repository_worktree_prepare_report",
+            )
+        )
+    if prepare_report.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_prepare_report_not_ok",
+                subject="ok",
+                message="worktree prepare report must be ok before commit",
+            )
+        )
+    if not worktree_dir.is_dir() or not (worktree_dir / ".git").exists():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_worktree_missing",
+                subject="worktree_dir",
+                message="worktree directory must be an existing Git worktree",
+            )
+        )
+    for diagnostic in graph_repository_relative_paths_diagnostics(paths):
+        diagnostics.append(diagnostic)
+    for index, raw_path in enumerate(paths):
+        if (worktree_dir / raw_path).exists():
+            continue
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_commit_path_missing",
+                subject=f"path[{index}]",
+                message="commit path must exist inside the worktree",
+            )
+        )
+    return diagnostics
+
+
+def git_stdout(command: list[str]) -> tuple[str | None, Diagnostic | None]:
+    completed = subprocess.run(
+        command,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode == 0:
+        return completed.stdout.strip(), None
+    return None, Diagnostic(
+        level="ERROR",
+        code="graph_repository_git_command_failed",
+        subject=command[0],
+        message=(
+            f"command failed with exit code {completed.returncode}: "
+            f"{' '.join(command)}"
+        ),
+    )
+
+
+def graph_repository_commit_worktree(args: argparse.Namespace) -> int:
+    prepare_report_path = Path(args.prepare_report)
+    worktree_dir = Path(args.worktree_dir)
+    paths = list(args.path or [])
+    prepare_report = load_json_mapping(
+        prepare_report_path,
+        label="graph repository worktree prepare report",
+    )
+    diagnostics = graph_repository_commit_preflight_diagnostics(
+        prepare_report,
+        worktree_dir=worktree_dir,
+        paths=paths,
+    )
+    command_results: list[dict[str, Any]] = []
+    candidate_branch = prepare_report.get("candidate_branch")
+
+    preflight_error_count = sum(
+        1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+    )
+    current_branch: str | None = None
+    commit_sha: str | None = None
+    if preflight_error_count == 0:
+        current_branch, diagnostic = git_stdout(
+            ["git", "-C", str(worktree_dir), "rev-parse", "--abbrev-ref", "HEAD"]
+        )
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+        elif current_branch != candidate_branch:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_worktree_branch_mismatch",
+                    subject="worktree_dir",
+                    message=(
+                        f"expected branch `{candidate_branch}` but found "
+                        f"`{current_branch}`"
+                    ),
+                )
+            )
+
+    if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics):
+        add_command = ["git", "-C", str(worktree_dir), "add", "--", *paths]
+        add_result, diagnostic = run_graph_repository_command(add_command)
+        command_results.append(add_result)
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+
+    if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics):
+        diff_completed = subprocess.run(
+            ["git", "-C", str(worktree_dir), "diff", "--cached", "--quiet"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        command_results.append(
+            {
+                "command": [
+                    "git",
+                    "-C",
+                    str(worktree_dir),
+                    "diff",
+                    "--cached",
+                    "--quiet",
+                ],
+                "returncode": diff_completed.returncode,
+                "stdout": diff_completed.stdout[-2000:],
+                "stderr": diff_completed.stderr[-2000:],
+            }
+        )
+        if diff_completed.returncode == 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_no_staged_changes",
+                    subject="path",
+                    message="explicit paths produced no staged changes",
+                )
+            )
+        elif diff_completed.returncode != 1:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_git_command_failed",
+                    subject="git.diff",
+                    message="failed to inspect staged changes before commit",
+                )
+            )
+
+    if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics):
+        commit_command = [
+            "git",
+            "-C",
+            str(worktree_dir),
+            "-c",
+            f"user.name={args.author_name}",
+            "-c",
+            f"user.email={args.author_email}",
+            "commit",
+            "-m",
+            args.message,
+        ]
+        commit_result, diagnostic = run_graph_repository_command(commit_command)
+        command_results.append(commit_result)
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+        else:
+            commit_sha, diagnostic = git_stdout(
+                ["git", "-C", str(worktree_dir), "rev-parse", "HEAD"]
+            )
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    report_path = (
+        worktree_dir
+        / ".platform"
+        / "graph_repository_review_commit_report.json"
+    )
+    local_files_written: list[str] = []
+    if error_count == 0:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        local_files_written.append(str(report_path))
+
+    report = {
+        "schema_version": 1,
+        "artifact_kind": "platform_graph_repository_review_commit_report",
+        "prepare_report_ref": str(prepare_report_path),
+        "ok": error_count == 0,
+        "candidate_branch": candidate_branch,
+        "current_branch": current_branch,
+        "worktree_dir": str(worktree_dir),
+        "committed_paths": paths if error_count == 0 else [],
+        "commit_sha": commit_sha,
+        "canonical_mutations_allowed": False,
+        "canonical_tracked_artifacts_written": False,
+        "candidate_tracked_artifacts_written": error_count == 0,
+        "pull_requests_opened": [],
+        "merges_performed": [],
+        "git_commands_executed": command_results,
+        "local_files_written": local_files_written,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "commit_created": commit_sha is not None and error_count == 0,
+        },
+    }
+
+    if error_count == 0:
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "branch": str(candidate_branch),
+                        "commit": str(commit_sha),
+                        "paths": str(len(paths)),
+                    }
+                ],
+                [
+                    ("branch", "BRANCH"),
+                    ("commit", "COMMIT"),
+                    ("paths", "PATHS"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
 def expected_profile(kind: Any) -> str | None:
     if kind == "core_repository":
         return "self_hosted_bootstrap"
@@ -2969,6 +3245,48 @@ def build_parser() -> argparse.ArgumentParser:
     graph_repository_worktree_parser.set_defaults(
         func=graph_repository_prepare_worktree
     )
+    graph_repository_commit_parser = graph_repository_subcommands.add_parser(
+        "commit-worktree",
+        help="Create a candidate-branch commit from explicit worktree paths.",
+    )
+    graph_repository_commit_parser.add_argument(
+        "--prepare-report",
+        required=True,
+        help="Path to a graph repository worktree prepare report.",
+    )
+    graph_repository_commit_parser.add_argument(
+        "--worktree-dir",
+        required=True,
+        help="Git worktree containing materialized candidate changes.",
+    )
+    graph_repository_commit_parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        help="Relative worktree path to stage. May be provided multiple times.",
+    )
+    graph_repository_commit_parser.add_argument(
+        "--message",
+        required=True,
+        help="Commit message for the candidate branch review commit.",
+    )
+    graph_repository_commit_parser.add_argument(
+        "--author-name",
+        default="Platform Graph Repository",
+        help="Git author name for the candidate branch review commit.",
+    )
+    graph_repository_commit_parser.add_argument(
+        "--author-email",
+        default="platform@example.invalid",
+        help="Git author email for the candidate branch review commit.",
+    )
+    graph_repository_commit_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    graph_repository_commit_parser.set_defaults(func=graph_repository_commit_worktree)
 
     deploy_parser = subcommands.add_parser(
         "deploy",
