@@ -120,6 +120,9 @@ scripts/platform.py graph-repository open-review \
   --base main \
   --title "Add candidate spec graph" \
   --body "Review candidate spec graph produced from the idea-to-spec flow."
+scripts/platform.py graph-repository review-status \
+  --open-review-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_open_review_report.json \
+  --worktree-dir .platform/candidates/my-idea-v1-worktree
 scripts/platform.py deploy render --dry-run
 scripts/platform.py deploy up
 scripts/platform.py deploy status
@@ -179,6 +182,10 @@ canonical branch, write Ontology packages, or publish read models.
 `graph-repository open-review` pushes the candidate branch and opens a pull
 request. It still does not merge, accept candidate specs into the canonical
 branch, write Ontology packages, or publish read models.
+
+`graph-repository review-status` reads pull request state through `gh pr view`
+and writes a local status report. It is read-only with respect to the graph
+lifecycle and does not publish read models.
 
 Install local Python tooling with:
 

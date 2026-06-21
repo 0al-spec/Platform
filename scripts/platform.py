@@ -1811,6 +1811,190 @@ def graph_repository_open_review(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
+def graph_repository_review_status_preflight_diagnostics(
+    open_review_report: dict[str, Any],
+    *,
+    worktree_dir: Path,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if open_review_report.get("artifact_kind") != (
+        "platform_graph_repository_open_review_report"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_open_review_report_kind_mismatch",
+                subject="artifact_kind",
+                message="expected platform_graph_repository_open_review_report",
+            )
+        )
+    if open_review_report.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_open_review_report_not_ok",
+                subject="ok",
+                message="open review report must be ok before status inspection",
+            )
+        )
+    review_url = open_review_report.get("review_url")
+    if not isinstance(review_url, str) or not review_url:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_review_url_missing",
+                subject="review_url",
+                message="open review report must include review URL",
+            )
+        )
+    if not worktree_dir.is_dir():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_worktree_missing",
+                subject="worktree_dir",
+                message="worktree directory must exist for status report output",
+            )
+        )
+    return diagnostics
+
+
+def graph_repository_review_state(pr_payload: dict[str, Any]) -> str:
+    state = pr_payload.get("state")
+    if pr_payload.get("mergedAt") or state == "MERGED":
+        return "merged"
+    if state == "CLOSED":
+        return "closed"
+    if pr_payload.get("isDraft") is True:
+        return "draft"
+    if state == "OPEN":
+        return "open"
+    return "unknown"
+
+
+def graph_repository_review_status(args: argparse.Namespace) -> int:
+    open_review_report_path = Path(args.open_review_report)
+    worktree_dir = Path(args.worktree_dir)
+    open_review_report = load_json_mapping(
+        open_review_report_path,
+        label="graph repository open review report",
+    )
+    diagnostics = graph_repository_review_status_preflight_diagnostics(
+        open_review_report,
+        worktree_dir=worktree_dir,
+    )
+    review_url = open_review_report.get("review_url")
+    gh_command = [
+        args.gh_bin,
+        "pr",
+        "view",
+        str(review_url),
+        "--json",
+        (
+            "number,url,state,isDraft,mergedAt,mergeCommit,"
+            "headRefName,baseRefName,reviewDecision"
+        ),
+    ]
+    if args.repo:
+        gh_command.extend(["--repo", args.repo])
+
+    command_results: list[dict[str, Any]] = []
+    pr_payload: dict[str, Any] = {}
+    review_state = "unknown"
+    if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics):
+        gh_result, diagnostic = run_graph_repository_command(gh_command)
+        command_results.append(gh_result)
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+        else:
+            try:
+                parsed = json.loads(gh_result["stdout"])
+            except json.JSONDecodeError as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_review_status_unparseable",
+                        subject="gh.pr.view",
+                        message=f"cannot parse gh pr view JSON output: {exc}",
+                    )
+                )
+            else:
+                if isinstance(parsed, dict):
+                    pr_payload = parsed
+                    review_state = graph_repository_review_state(pr_payload)
+                else:
+                    diagnostics.append(
+                        Diagnostic(
+                            level="ERROR",
+                            code="graph_repository_review_status_wrong_type",
+                            subject="gh.pr.view",
+                            message="gh pr view output must be a JSON object",
+                        )
+                    )
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    report_path = (
+        worktree_dir
+        / ".platform"
+        / "graph_repository_review_status_report.json"
+    )
+    local_files_written: list[str] = []
+    if error_count == 0:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        local_files_written.append(str(report_path))
+
+    report = {
+        "schema_version": 1,
+        "artifact_kind": "platform_graph_repository_review_status_report",
+        "open_review_report_ref": str(open_review_report_path),
+        "ok": error_count == 0,
+        "review_url": review_url,
+        "review_state": review_state,
+        "review_decision": pr_payload.get("reviewDecision"),
+        "pull_request": pr_payload,
+        "canonical_mutations_allowed": False,
+        "canonical_tracked_artifacts_written": False,
+        "merges_performed": [],
+        "read_models_published": [],
+        "commands_executed": command_results,
+        "local_files_written": local_files_written,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "review_merged": review_state == "merged",
+        },
+    }
+
+    if error_count == 0:
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "review": str(review_url),
+                        "state": review_state,
+                        "decision": str(pr_payload.get("reviewDecision")),
+                    }
+                ],
+                [
+                    ("review", "REVIEW"),
+                    ("state", "STATE"),
+                    ("decision", "DECISION"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
 def expected_profile(kind: Any) -> str | None:
     if kind == "core_repository":
         return "self_hosted_bootstrap"
@@ -3580,6 +3764,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     graph_repository_review_parser.set_defaults(func=graph_repository_open_review)
+    graph_repository_status_parser = graph_repository_subcommands.add_parser(
+        "review-status",
+        help="Inspect pull request status from an open review report.",
+    )
+    graph_repository_status_parser.add_argument(
+        "--open-review-report",
+        required=True,
+        help="Path to a graph repository open review report.",
+    )
+    graph_repository_status_parser.add_argument(
+        "--worktree-dir",
+        required=True,
+        help="Worktree directory where the status report should be written.",
+    )
+    graph_repository_status_parser.add_argument(
+        "--repo",
+        help="Optional GitHub repository passed to gh as owner/name.",
+    )
+    graph_repository_status_parser.add_argument(
+        "--gh-bin",
+        default="gh",
+        help="GitHub CLI executable to use.",
+    )
+    graph_repository_status_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    graph_repository_status_parser.set_defaults(func=graph_repository_review_status)
 
     deploy_parser = subcommands.add_parser(
         "deploy",
