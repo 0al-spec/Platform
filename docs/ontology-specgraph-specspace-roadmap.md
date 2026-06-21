@@ -340,24 +340,27 @@ Defer these until the review loop above is stable:
 
 ### 9. Autonomous Idea-To-Spec Loop
 
-Status: next product-facing planning line after the SpecAuthor prompt-side
-stack.
+Status: active product-facing line after the SpecAuthor prompt-side stack.
 
 Add a bounded authoring loop that can create a full candidate graph from a raw
 idea without human review on every node:
 
-- event-storming intake artifact for actors, events, commands, policies,
+- landed SpecGraph artifact: event-storming intake for actors, events, commands,
+  policies,
   external systems, constraints, risks, and vocabulary questions;
 - ontology/domain/context frame construction using project-local ontology
   packages and compiler artifacts;
-- candidate spec graph contract with explicit non-canonical authority;
-- pre-SIB/coherence metrics for completeness, contradictions, orphan nodes,
-  ontology coverage, unsupported strong claims, unresolved refs, and
-  implementation-readiness signals;
-- autonomous repair loop that can revise candidate graph state until metrics
-  reach configured thresholds;
-- SpecSpace workspace that shows the candidate graph, metric deltas, repair
-  history, and remaining blockers.
+- landed SpecGraph artifact: candidate spec graph contract with explicit
+  non-canonical authority;
+- landed SpecGraph artifact: pre-SIB/coherence metrics for completeness,
+  contradictions, orphan nodes, ontology coverage, unsupported strong claims,
+  unresolved refs, and implementation-readiness signals;
+- landed SpecGraph artifact: autonomous repair loop that can revise candidate
+  graph state until metrics reach configured thresholds;
+- landed SpecSpace workspace that shows the candidate graph, metric deltas,
+  repair history, and remaining blockers;
+- next handoff: Platform promotion request artifact before any branch, commit,
+  or PR executor step.
 
 ### 10. Git-Backed Graph Repository Service
 
@@ -403,13 +406,15 @@ does block the stronger applicability import and review slices.
 
 The next valuable implementation choices are:
 
-1. SpecGraph: event-storming intake and candidate graph contracts for the
-   idea-to-spec loop.
-2. SpecGraph: pre-SIB/coherence metrics and autonomous candidate repair reports.
-3. SpecSpace: idea-to-spec workspace over candidate graph, metrics, and repair
-   history.
-4. SpecGraph/Platform: Git-backed Graph Repository Service contract for
-   branch/commit/publish boundaries.
+1. Platform: promotion request handoff artifact from ready candidate graph to
+   controlled review flow.
+2. SpecGraph: materialized candidate spec artifact that can populate promotion
+   request paths without hand-authored YAML.
+3. Platform: executor orchestration that consumes a promotion request and calls
+   `prepare-worktree`, `commit-worktree`, and `open-review` under the existing
+   authority gates.
+4. SpecSpace: controlled promotion UI over the promotion request and executor
+   reports.
 5. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 

@@ -104,6 +104,13 @@ scripts/platform.py graph-repository prepare-local \
   --plan runs/graph_repository_execution_plan.json \
   --candidate-id my-idea-v1 \
   --workspace-dir .platform/candidates/my-idea-v1
+scripts/platform.py graph-repository promotion-request \
+  --plan runs/graph_repository_execution_plan.json \
+  --candidate-id my-idea-v1 \
+  --path specs/nodes/SG-SPEC-CANDIDATE.yaml \
+  --title "Add candidate spec graph" \
+  --body "Review candidate spec graph produced from the idea-to-spec flow." \
+  --output runs/graph_repository_promotion_request.json
 scripts/platform.py graph-repository prepare-worktree \
   --plan runs/graph_repository_execution_plan.json \
   --repository-dir ../SpecGraph \
@@ -173,6 +180,11 @@ reviews, publish read models, or mutate canonical SpecGraph specs.
 local candidate workspace manifest/report. It calculates the candidate branch
 and planned Git commands, but still does not execute Git, open pull requests, or
 promote candidate specs.
+
+`graph-repository promotion-request` creates a report-only handoff artifact for
+the future review promotion. It validates the ready plan, candidate id,
+materialized candidate paths, and review metadata without executing Git,
+creating commits, opening pull requests, or accepting candidate specs.
 
 `graph-repository prepare-worktree` is the first controlled executor step. It
 creates a local Git worktree and candidate branch from a ready execution plan,
