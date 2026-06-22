@@ -28,6 +28,7 @@ DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE = (
 DEFAULT_LOCAL_ENV = REPO_ROOT / ".env"
 SPECGRAPH_SUPERVISOR_REL = Path("tools") / "supervisor.py"
 PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+PRODUCT_WORKSPACE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 INIT_TIMEOUT_SECONDS = 120
 DEFAULT_TIMEWEB_HYPERPROMPT_WORK_DIR = "/tmp"
 DEFAULT_TIMEWEB_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS = "60"
@@ -4663,17 +4664,43 @@ def timeweb_hyperprompt_runtime_from_args(args: argparse.Namespace) -> TimewebHy
 
 
 def product_workspace_artifact_base_urls_from_args(args: argparse.Namespace) -> dict[str, str]:
-    url = (
-        str(args.product_workspace_artifact_base_url).strip()
-        if getattr(args, "product_workspace_artifact_base_url", None)
-        else ""
-    )
+    raw_values = getattr(args, "product_workspace_artifact_base_url", None)
+    values: list[str] = []
+    if isinstance(raw_values, list):
+        values = [str(value).strip() for value in raw_values if str(value).strip()]
+    elif raw_values:
+        values = [str(raw_values).strip()]
     legacy_url = (
         str(args.team_decision_log_artifact_base_url).strip()
         if getattr(args, "team_decision_log_artifact_base_url", None)
         else ""
     )
-    return {"team-decision-log": url or legacy_url or str(args.artifact_base_url)}
+    if not values and legacy_url:
+        values = [legacy_url]
+    if not values:
+        values = [str(args.artifact_base_url)]
+
+    bindings: dict[str, str] = {}
+    for value in values:
+        workspace_id, url = (
+            value.split("=", 1)
+            if "=" in value
+            else ("team-decision-log", value)
+        )
+        workspace_id = workspace_id.strip().lower().replace("_", "-")
+        url = url.strip()
+        if not PRODUCT_WORKSPACE_ID_RE.fullmatch(workspace_id):
+            raise PlatformError(
+                "Product workspace artifact base URL binding must use a safe "
+                f"workspace id, got {workspace_id!r}"
+            )
+        if not url:
+            raise PlatformError(
+                "Product workspace artifact base URL binding must include a URL "
+                f"for {workspace_id!r}"
+            )
+        bindings[workspace_id] = url
+    return bindings
 
 
 def render_timeweb_hyperprompt_environment(runtime: TimewebHyperpromptRuntime) -> str:
@@ -5985,12 +6012,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     timeweb_render_parser.add_argument(
         "--product-workspace-artifact-base-url",
-        default=os.environ.get("SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL", ""),
+        action="append",
+        default=(
+            [os.environ["SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL"]]
+            if os.environ.get("SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL")
+            else None
+        ),
         help=(
-            "Static artifact base URL for the active product workspace. "
-            "Defaults to --artifact-base-url. Rendered as a generic "
-            "team-decision-log=URL binding for SpecSpace until the workspace "
-            "catalog carries multiple deployed product workspaces."
+            "Static artifact base URL for a product workspace. Use "
+            "WORKSPACE_ID=URL; a bare URL is kept as a compatibility shorthand "
+            "for team-decision-log. May be repeated."
         ),
     )
     timeweb_render_parser.add_argument(
@@ -6040,10 +6071,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     timeweb_validate_parser.add_argument(
         "--product-workspace-artifact-base-url",
-        default=os.environ.get("TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL", ""),
+        action="append",
+        default=(
+            [os.environ["TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL"]]
+            if os.environ.get("TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL")
+            else None
+        ),
         help=(
-            "Required static artifact base URL for the active product workspace. "
-            "Defaults to --artifact-base-url."
+            "Required static artifact base URL for a product workspace. Use "
+            "WORKSPACE_ID=URL; a bare URL is kept as a compatibility shorthand "
+            "for team-decision-log. May be repeated."
         ),
     )
     timeweb_validate_parser.add_argument(

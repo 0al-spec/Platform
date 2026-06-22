@@ -316,7 +316,7 @@ class PlatformDeployTests(unittest.TestCase):
             self.assertEqual(manifest["hyperprompt_work_dir"], "/tmp")
             self.assertEqual(manifest["hyperprompt_compile_timeout_seconds"], "60")
 
-    def test_timeweb_render_can_set_product_workspace_artifact_base_url(self) -> None:
+    def test_timeweb_render_can_set_product_workspace_artifact_base_urls(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"
             render = self.run_cli(
@@ -331,7 +331,9 @@ class PlatformDeployTests(unittest.TestCase):
                 "--artifact-base-url",
                 "https://specgraph.tech",
                 "--product-workspace-artifact-base-url",
-                "https://artifacts.example/team-decision-log",
+                "analytics=https://artifacts.example/analytics",
+                "--product-workspace-artifact-base-url",
+                "support-triage-log=https://artifacts.example/support-triage-log",
             )
             result = self.run_cli(
                 "deploy",
@@ -339,7 +341,9 @@ class PlatformDeployTests(unittest.TestCase):
                 "--path",
                 str(output_dir),
                 "--product-workspace-artifact-base-url",
-                "https://artifacts.example/team-decision-log",
+                "analytics=https://artifacts.example/analytics",
+                "--product-workspace-artifact-base-url",
+                "support-triage-log=https://artifacts.example/support-triage-log",
                 "--format",
                 "json",
             )
@@ -354,12 +358,20 @@ class PlatformDeployTests(unittest.TestCase):
             )
             self.assertIn(
                 '      - --product-workspace-artifact-base-url\n'
-                '      - "team-decision-log=https://artifacts.example/team-decision-log"',
+                '      - "analytics=https://artifacts.example/analytics"',
+                compose,
+            )
+            self.assertIn(
+                '      - --product-workspace-artifact-base-url\n'
+                '      - "support-triage-log=https://artifacts.example/support-triage-log"',
                 compose,
             )
             self.assertEqual(
                 manifest["product_workspace_artifact_base_urls"],
-                {"team-decision-log": "https://artifacts.example/team-decision-log"},
+                {
+                    "analytics": "https://artifacts.example/analytics",
+                    "support-triage-log": "https://artifacts.example/support-triage-log",
+                },
             )
             self.assertTrue(json.loads(result.stdout)["valid"])
 
