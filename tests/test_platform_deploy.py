@@ -305,11 +305,63 @@ class PlatformDeployTests(unittest.TestCase):
                 'SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT: "20"',
                 compose,
             )
+            self.assertIn("--team-decision-log-artifact-base-url", compose)
             self.assertEqual(manifest["artifact_kind"], "platform_timeweb_deploy_manifest")
             self.assertEqual(manifest["release_commit"], "abc123")
+            self.assertEqual(
+                manifest["team_decision_log_artifact_base_url"],
+                "https://specgraph.tech",
+            )
             self.assertTrue(manifest["hyperprompt_http_compile_enabled"])
             self.assertEqual(manifest["hyperprompt_work_dir"], "/tmp")
             self.assertEqual(manifest["hyperprompt_compile_timeout_seconds"], "60")
+
+    def test_timeweb_render_can_set_team_decision_log_artifact_base_url(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--artifact-base-url",
+                "https://specgraph.tech",
+                "--team-decision-log-artifact-base-url",
+                "https://artifacts.example/team-decision-log",
+            )
+            result = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--team-decision-log-artifact-base-url",
+                "https://artifacts.example/team-decision-log",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(render.returncode, 0, render.stderr)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            compose = (output_dir / "docker-compose.yml").read_text(encoding="utf-8")
+            manifest = json.loads(
+                (output_dir / "platform-timeweb-deploy.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertIn(
+                '      - --team-decision-log-artifact-base-url\n'
+                '      - "https://artifacts.example/team-decision-log"',
+                compose,
+            )
+            self.assertEqual(
+                manifest["team_decision_log_artifact_base_url"],
+                "https://artifacts.example/team-decision-log",
+            )
+            self.assertTrue(json.loads(result.stdout)["valid"])
 
     def test_timeweb_render_rejects_mutable_image_ref(self) -> None:
         with tempfile.TemporaryDirectory() as root:

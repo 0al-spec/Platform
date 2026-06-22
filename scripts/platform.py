@@ -4662,6 +4662,10 @@ def timeweb_hyperprompt_runtime_from_args(args: argparse.Namespace) -> TimewebHy
     )
 
 
+def team_decision_log_artifact_base_url_from_args(args: argparse.Namespace) -> str:
+    return str(args.team_decision_log_artifact_base_url or args.artifact_base_url)
+
+
 def render_timeweb_hyperprompt_environment(runtime: TimewebHyperpromptRuntime) -> str:
     lines = [
         f"      SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED: "
@@ -4685,6 +4689,7 @@ def render_timeweb_compose(
     api_image_ref: str,
     ui_image_ref: str,
     artifact_base_url: str,
+    team_decision_log_artifact_base_url: str,
     specpm_registry_url: str,
     release_commit: str,
     hyperprompt_runtime: TimewebHyperpromptRuntime,
@@ -4716,6 +4721,8 @@ def render_timeweb_compose(
         "      - /data/dialogs\n"
         "      - --artifact-base-url\n"
         f"      - \"{artifact_base_url}\"\n"
+        "      - --team-decision-log-artifact-base-url\n"
+        f"      - \"{team_decision_log_artifact_base_url}\"\n"
         "      - --specpm-registry-url\n"
         f"      - \"{specpm_registry_url}\"\n"
         "    ports:\n"
@@ -4740,6 +4747,9 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         "%Y-%m-%dT%H:%M:%SZ"
     )
     release_commit = args.release_commit or "unknown"
+    team_decision_log_artifact_base_url = (
+        team_decision_log_artifact_base_url_from_args(args)
+    )
     compose_file = output_dir / "docker-compose.yml"
     readme = output_dir / "README.md"
     manifest = output_dir / "platform-timeweb-deploy.json"
@@ -4749,6 +4759,7 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
             api_image_ref=image_refs.specspace_api_image_ref,
             ui_image_ref=image_refs.specspace_ui_image_ref,
             artifact_base_url=args.artifact_base_url,
+            team_decision_log_artifact_base_url=team_decision_log_artifact_base_url,
             specpm_registry_url=args.specpm_registry_url,
             release_commit=release_commit,
             hyperprompt_runtime=hyperprompt_runtime,
@@ -4767,6 +4778,8 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         f"- UI image: `{image_refs.specspace_ui_image_ref}`\n"
         f"- Image lock: `{image_refs.image_lock or '(not used)'}`\n"
         f"- SpecGraph artifact source: `{args.artifact_base_url}`\n"
+        f"- Team Decision Log artifact source: "
+        f"`{team_decision_log_artifact_base_url}`\n"
         f"- SpecPM registry source: `{args.specpm_registry_url}`\n"
         f"- HTTP Hyperprompt compile: "
         f"`{'enabled' if hyperprompt_runtime.http_compile_enabled else 'disabled'}`\n"
@@ -4792,6 +4805,9 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                 "specspace_api_image_ref": image_refs.specspace_api_image_ref,
                 "specspace_ui_image_ref": image_refs.specspace_ui_image_ref,
                 "artifact_base_url": args.artifact_base_url,
+                "team_decision_log_artifact_base_url": (
+                    team_decision_log_artifact_base_url
+                ),
                 "hyperprompt_http_compile_enabled": (
                     hyperprompt_runtime.http_compile_enabled
                 ),
@@ -4904,6 +4920,7 @@ def validate_timeweb_manifest_tree(
     root: Path,
     *,
     artifact_base_url: str,
+    team_decision_log_artifact_base_url: str,
     specpm_registry_url: str,
     hyperprompt_runtime: TimewebHyperpromptRuntime,
 ) -> list[str]:
@@ -4956,6 +4973,21 @@ def validate_timeweb_manifest_tree(
         errors.append(
             f"{target_file} specspace-api command must point at artifact base URL "
             f"{artifact_base_url}, got {actual_artifact_base_url}"
+        )
+    actual_team_decision_log_artifact_base_url = command_value_after(
+        api_command,
+        "--team-decision-log-artifact-base-url",
+    )
+    if actual_team_decision_log_artifact_base_url is None:
+        errors.append(
+            f"{target_file} must configure --team-decision-log-artifact-base-url "
+            "on specspace-api"
+        )
+    elif actual_team_decision_log_artifact_base_url != team_decision_log_artifact_base_url:
+        errors.append(
+            f"{target_file} specspace-api command must point at Team Decision Log "
+            f"artifact base URL {team_decision_log_artifact_base_url}, got "
+            f"{actual_team_decision_log_artifact_base_url}"
         )
     actual_specpm_registry_url = command_value_after(api_command, "--specpm-registry-url")
     if actual_specpm_registry_url is None:
@@ -5015,6 +5047,9 @@ def deploy_timeweb_render(args: argparse.Namespace) -> int:
     errors = validate_timeweb_manifest_tree(
         manifest.output_dir,
         artifact_base_url=args.artifact_base_url,
+        team_decision_log_artifact_base_url=(
+            team_decision_log_artifact_base_url_from_args(args)
+        ),
         specpm_registry_url=args.specpm_registry_url,
         hyperprompt_runtime=hyperprompt_runtime,
     )
@@ -5043,6 +5078,9 @@ def deploy_timeweb_validate(args: argparse.Namespace) -> int:
     errors = validate_timeweb_manifest_tree(
         root,
         artifact_base_url=args.artifact_base_url,
+        team_decision_log_artifact_base_url=(
+            team_decision_log_artifact_base_url_from_args(args)
+        ),
         specpm_registry_url=args.specpm_registry_url,
         hyperprompt_runtime=hyperprompt_runtime,
     )
@@ -5920,6 +5958,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Static SpecGraph artifact base URL.",
     )
     timeweb_render_parser.add_argument(
+        "--team-decision-log-artifact-base-url",
+        default=os.environ.get("SPECSPACE_TEAM_DECISION_LOG_ARTIFACT_BASE_URL", ""),
+        help=(
+            "Static artifact base URL for the Team Decision Log product workspace. "
+            "Defaults to --artifact-base-url."
+        ),
+    )
+    timeweb_render_parser.add_argument(
         "--specpm-registry-url",
         default=os.environ.get("SPECSPACE_SPECPM_REGISTRY_URL", "https://specpm.dev"),
         help="Readonly SpecPM registry URL.",
@@ -5956,6 +6002,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--artifact-base-url",
         default=os.environ.get("TIMEWEB_REQUIRED_ARTIFACT_BASE_URL", "https://specgraph.tech"),
         help="Required static SpecGraph artifact base URL.",
+    )
+    timeweb_validate_parser.add_argument(
+        "--team-decision-log-artifact-base-url",
+        default=os.environ.get("TIMEWEB_REQUIRED_TEAM_DECISION_LOG_ARTIFACT_BASE_URL", ""),
+        help=(
+            "Required static artifact base URL for the Team Decision Log product "
+            "workspace. Defaults to --artifact-base-url."
+        ),
     )
     timeweb_validate_parser.add_argument(
         "--specpm-registry-url",

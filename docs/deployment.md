@@ -59,6 +59,19 @@ promotion only to `product_spec_workspace` repository roles. The
 `/team_decision_log` spelling may be supported as an alias, but
 `/team-decision-log` is the canonical route.
 
+The Timeweb deployment can keep the root SpecGraph showcase on the default
+artifact base URL while pointing the Team Decision Log product workspace at a
+separate public-safe artifact bundle:
+
+```text
+SPECSPACE_ARTIFACT_BASE_URL=https://specgraph.tech
+SPECSPACE_TEAM_DECISION_LOG_ARTIFACT_BASE_URL=https://artifacts.example/team-decision-log
+```
+
+If `SPECSPACE_TEAM_DECISION_LOG_ARTIFACT_BASE_URL` is omitted, Platform renders
+the Team Decision Log route with the same artifact base URL as the root
+SpecGraph workspace.
+
 ## Local Compose Entry Point
 
 The working plan for this phase is maintained in

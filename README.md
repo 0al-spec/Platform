@@ -296,6 +296,10 @@ manifest without storing Timeweb secrets or rebuilding service images.
 The Timeweb renderer also enables SpecSpace HTTP-provider Hyperprompt compile
 with a `/tmp` scratch workspace and bounded runtime limits; use
 `--disable-hyperprompt-http-compile` for a manifest-level rollback.
+Use `--team-decision-log-artifact-base-url` or
+`SPECSPACE_TEAM_DECISION_LOG_ARTIFACT_BASE_URL` when the product workspace
+should read a separate public-safe artifact bundle from the root SpecGraph
+showcase.
 The GitHub Actions workflow `Timeweb Publish` is the production Timeweb deploy
 publisher. SpecSpace CI produces the service image lock and triggers this
 workflow; Platform renders, validates, and publishes the `timeweb-deploy` branch
