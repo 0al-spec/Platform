@@ -247,6 +247,33 @@ The Platform deployment target should therefore distinguish:
 - private or local operator surfaces;
 - registry/index assets.
 
+## Product vs Bootstrap Profiles
+
+Platform separates the client-facing product workbench from SpecGraph
+self-evolution through tracked deployment profile contracts:
+
+- `deployment-profile.product-idea-to-spec.example.json` exposes the
+  idea-to-spec workspace, ontology workspace, pre-SIB metrics, and controlled
+  promotion review. Its Git Service mode is `controlled_promotion`, but only for
+  `workflow_lane: product_idea_to_spec` and
+  `target_repository_role: product_spec_workspace`.
+- `deployment-profile.specgraph-bootstrap-internal.example.json` exposes
+  bootstrap, supervisor self-evolution, proposal runtime, and local operator
+  diagnostics. Its Git Service mode is `dry_run_only`, so it cannot create
+  review commits or pull requests through `git-service execute-promotion`.
+
+Validate either profile before wiring it into a deployment:
+
+```bash
+scripts/platform.py deployment-profile validate \
+  --profile deployment-profile.product-idea-to-spec.example.json
+scripts/platform.py deployment-profile validate \
+  --profile deployment-profile.specgraph-bootstrap-internal.example.json
+```
+
+This keeps the product deployment from indexing or executing bootstrap flows,
+while still preserving the internal bootstrap profile for maintainers.
+
 ## Production Notes
 
 Do not run the SpecSpace web frontend in production through a Vite development

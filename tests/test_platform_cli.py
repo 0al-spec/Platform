@@ -757,6 +757,61 @@ workspaces:
         self.assertEqual(payload["diagnostics"], [])
         self.assertEqual(payload["summary"]["operation_count"], 5)
 
+    def test_deployment_profile_validate_accepts_example_profiles(self) -> None:
+        for profile, mode in (
+            (
+                "deployment-profile.product-idea-to-spec.example.json",
+                "controlled_promotion",
+            ),
+            (
+                "deployment-profile.specgraph-bootstrap-internal.example.json",
+                "dry_run_only",
+            ),
+        ):
+            result = self.run_cli(
+                "deployment-profile",
+                "validate",
+                "--profile",
+                profile,
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["diagnostics"], [])
+            self.assertEqual(payload["summary"]["git_service_mode"], mode)
+
+    def test_deployment_profile_validate_rejects_product_bootstrap_leak(
+        self,
+    ) -> None:
+        profile = json.loads(
+            (
+                REPO_ROOT / "deployment-profile.product-idea-to-spec.example.json"
+            ).read_text(encoding="utf-8")
+        )
+        profile["hides"].remove("specgraph_bootstrap")
+        profile["authority_boundary"]["exposes_bootstrap_surfaces"] = True
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(profile, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "deployment-profile",
+                "validate",
+                "--profile",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("deployment_profile_product_surface_leaks_bootstrap", codes)
+        self.assertIn("deployment_profile_product_exposes_bootstrap", codes)
+
     def test_git_service_validate_rejects_missing_operation(self) -> None:
         contract = json.loads(
             (REPO_ROOT / "git-service-operation-contract.example.json").read_text(
@@ -901,6 +956,11 @@ workspaces:
                 "platform_git_service_promotion_execution_report",
             )
             self.assertTrue(payload["ok"])
+            self.assertEqual(payload["workflow_lane"], "product_idea_to_spec")
+            self.assertEqual(
+                payload["deployment_profile"]["profile_id"],
+                "product_idea_to_spec_workbench",
+            )
             self.assertTrue(payload["dry_run"])
             self.assertEqual(payload["summary"]["operation_count"], 3)
             statuses = {
@@ -1024,6 +1084,90 @@ workspaces:
         payload = json.loads(result.stdout)
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("git_service_promotion_request_not_ok", codes)
+
+    def test_git_service_execute_promotion_rejects_bootstrap_target_under_product_profile(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request_path = self.build_graph_repository_promotion_request(
+                tmp_root
+            )
+            promotion_request = json.loads(
+                promotion_request_path.read_text(encoding="utf-8")
+            )
+            promotion_request["workflow_lane"] = "specgraph_bootstrap"
+            promotion_request["target_repository_role"] = "specgraph_bootstrap"
+            promotion_request["authority_profile"] = "maintainer_bootstrap_controlled"
+            promotion_request_path.write_text(
+                json.dumps(promotion_request),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "git-service",
+                "execute-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--promotion-request",
+                str(promotion_request_path),
+                "--repository-dir",
+                str(tmp_root / "missing"),
+                "--workspace-dir",
+                str(tmp_root / "candidate-worktree"),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("deployment_profile_workflow_lane_denied", codes)
+        self.assertIn("deployment_profile_target_repository_role_denied", codes)
+        self.assertIn("deployment_profile_authority_profile_denied", codes)
+
+    def test_git_service_execute_promotion_rejects_bootstrap_internal_write(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request_path = self.build_graph_repository_promotion_request(
+                tmp_root
+            )
+            promotion_request = json.loads(
+                promotion_request_path.read_text(encoding="utf-8")
+            )
+            promotion_request["workflow_lane"] = "specgraph_bootstrap"
+            promotion_request["deployment_profile_id"] = "specgraph_bootstrap_internal"
+            promotion_request["target_repository_role"] = "specgraph_bootstrap"
+            promotion_request["authority_profile"] = "maintainer_bootstrap_controlled"
+            promotion_request_path.write_text(
+                json.dumps(promotion_request),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "git-service",
+                "execute-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--promotion-request",
+                str(promotion_request_path),
+                "--deployment-profile",
+                "deployment-profile.specgraph-bootstrap-internal.example.json",
+                "--repository-dir",
+                str(tmp_root / "missing"),
+                "--workspace-dir",
+                str(tmp_root / "candidate-worktree"),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("deployment_profile_git_service_dry_run_only", codes)
 
     def test_graph_repository_validate_rejects_auto_merge(self) -> None:
         contract = json.loads(
@@ -1374,6 +1518,13 @@ workspaces:
                 "platform_graph_repository_promotion_request",
             )
             self.assertTrue(payload["ok"])
+            self.assertEqual(payload["workflow_lane"], "product_idea_to_spec")
+            self.assertEqual(
+                payload["deployment_profile_id"],
+                "product_idea_to_spec_workbench",
+            )
+            self.assertEqual(payload["target_repository_role"], "product_spec_workspace")
+            self.assertEqual(payload["authority_profile"], "workspace_owner_controlled")
             self.assertEqual(payload["candidate_branch"], "graph-candidate/idea-alpha")
             self.assertEqual(
                 payload["commit_paths"],

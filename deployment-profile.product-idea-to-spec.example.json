@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "platform_deployment_profile",
+  "profile_id": "product_idea_to_spec_workbench",
+  "display_name": "Product Idea-To-Spec Workbench",
+  "description": "Client-facing deployment profile for building a product specification from user intent without exposing SpecGraph bootstrap/self-evolution surfaces.",
+  "workflow_lane": "product_idea_to_spec",
+  "deployment_surface": "product_idea_to_spec_workbench",
+  "authority_profile": "workspace_owner_controlled",
+  "exposes": [
+    "idea_to_spec_workspace",
+    "ontology_workspace",
+    "pre_sib_metrics",
+    "controlled_promotion_review"
+  ],
+  "hides": [
+    "specgraph_bootstrap",
+    "supervisor_self_evolution",
+    "local_operator_diagnostics",
+    "canonical_specgraph_mutation_flows"
+  ],
+  "git_service": {
+    "mode": "controlled_promotion",
+    "allowed_workflow_lanes": [
+      "product_idea_to_spec"
+    ],
+    "denied_workflow_lanes": [
+      "specgraph_bootstrap"
+    ],
+    "allowed_target_repository_roles": [
+      "product_spec_workspace"
+    ],
+    "denied_target_repository_roles": [
+      "specgraph_bootstrap"
+    ],
+    "allowed_authority_profiles": [
+      "workspace_owner_controlled"
+    ],
+    "denied_authority_profiles": [
+      "maintainer_bootstrap_controlled",
+      "self_evolution"
+    ],
+    "required_promotion_request_fields": [
+      "workflow_lane",
+      "deployment_profile_id",
+      "target_repository_role",
+      "authority_profile"
+    ]
+  },
+  "authority_boundary": {
+    "exposes_bootstrap_surfaces": false,
+    "permits_self_evolution": false,
+    "permits_git_service_write": true,
+    "permits_auto_merge": false,
+    "publishes_private_artifacts": false
+  }
+}

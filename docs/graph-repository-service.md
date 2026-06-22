@@ -106,13 +106,28 @@ runs the local adapter sequence under the Git Service boundary:
 ```bash
 scripts/platform.py git-service execute-promotion \
   --contract git-service-operation-contract.example.json \
+  --deployment-profile deployment-profile.product-idea-to-spec.example.json \
   --promotion-request runs/graph_repository_promotion_request.json \
   --repository-dir ../SpecGraph \
   --workspace-dir .platform/candidates/my-idea-v1-worktree \
   --materialized-source-dir runs/materialized-candidates
 ```
 
-`execute-promotion` calls:
+`execute-promotion` first validates the promotion request against the active
+deployment profile. The default profile is
+`deployment-profile.product-idea-to-spec.example.json`; it requires:
+
+- `workflow_lane: product_idea_to_spec`;
+- `deployment_profile_id: product_idea_to_spec_workbench`;
+- `target_repository_role: product_spec_workspace`;
+- `authority_profile: workspace_owner_controlled`.
+
+The internal bootstrap profile
+`deployment-profile.specgraph-bootstrap-internal.example.json` exists for
+maintainer work, but its Git Service mode is `dry_run_only`. That keeps
+SpecGraph self-evolution and product idea-to-spec promotion as separate lanes.
+
+After the profile gate passes, `execute-promotion` calls:
 
 1. `graph-repository prepare-worktree`;
 2. `graph-repository commit-worktree`;
@@ -211,7 +226,10 @@ The generated `platform_graph_repository_promotion_request` remains report-only:
 it does not execute Git commands, create commits, open pull requests, merge
 branches, publish read models, accept specs, or write Ontology packages. It is
 the stable boundary a future SpecSpace promotion UI can inspect before handing
-control to `prepare-worktree`, `commit-worktree`, and `open-review`.
+control to `prepare-worktree`, `commit-worktree`, and `open-review`. It also
+declares the workflow lane, deployment profile id, target repository role, and
+authority profile so Git Service can reject bootstrap/internal requests in a
+product deployment.
 
 ## Prepare Worktree
 
