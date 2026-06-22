@@ -812,6 +812,36 @@ workspaces:
         self.assertIn("deployment_profile_product_surface_leaks_bootstrap", codes)
         self.assertIn("deployment_profile_product_exposes_bootstrap", codes)
 
+    def test_deployment_profile_validate_rejects_extra_product_repository_role(
+        self,
+    ) -> None:
+        profile = json.loads(
+            (
+                REPO_ROOT / "deployment-profile.product-idea-to-spec.example.json"
+            ).read_text(encoding="utf-8")
+        )
+        profile["git_service"]["allowed_target_repository_roles"].append(
+            "specgraph_bootstrap"
+        )
+        profile["git_service"]["denied_target_repository_roles"] = []
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(profile, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "deployment-profile",
+                "validate",
+                "--profile",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("deployment_profile_product_repository_role_expanded", codes)
+
     def test_git_service_validate_rejects_missing_operation(self) -> None:
         contract = json.loads(
             (REPO_ROOT / "git-service-operation-contract.example.json").read_text(
