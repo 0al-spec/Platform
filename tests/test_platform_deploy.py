@@ -363,6 +363,35 @@ class PlatformDeployTests(unittest.TestCase):
             )
             self.assertTrue(json.loads(result.stdout)["valid"])
 
+    def test_timeweb_publish_threads_team_decision_log_artifact_base_url(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "timeweb-publish.yml"
+        ).read_text(encoding="utf-8")
+        publish_script = (
+            REPO_ROOT / "scripts" / "publish-timeweb-deploy-branch.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("team_decision_log_artifact_base_url:", workflow)
+        self.assertIn(
+            "--team-decision-log-artifact-base-url "
+            '"${{ inputs.team_decision_log_artifact_base_url || inputs.artifact_base_url }}"',
+            workflow,
+        )
+        self.assertIn(
+            "TIMEWEB_REQUIRED_TEAM_DECISION_LOG_ARTIFACT_BASE_URL: "
+            "${{ inputs.team_decision_log_artifact_base_url || inputs.artifact_base_url }}",
+            workflow,
+        )
+        self.assertIn(
+            'team_decision_log_artifact_base_url="'
+            '${TIMEWEB_REQUIRED_TEAM_DECISION_LOG_ARTIFACT_BASE_URL:-$artifact_base_url}"',
+            publish_script,
+        )
+        self.assertEqual(
+            publish_script.count("--team-decision-log-artifact-base-url"),
+            2,
+        )
+
     def test_timeweb_render_rejects_mutable_image_ref(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             result = self.run_cli(

@@ -244,6 +244,9 @@ Platform exposes the publisher as a GitHub Actions workflow:
 - workflow: `Timeweb Publish`;
 - input: `service_image_lock_json`, containing a
   `platform_service_image_lock` JSON object;
+- input: `artifact_base_url`, the root SpecGraph showcase artifact base URL;
+- input: `team_decision_log_artifact_base_url`, optional product workspace
+  artifact base URL, falling back to `artifact_base_url` when empty;
 - input: `publish_deploy_branch`, default `false`;
 - output artifact: `platform-timeweb-deploy`;
 - branch publish: enabled when `publish_deploy_branch=true`.

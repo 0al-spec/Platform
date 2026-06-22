@@ -30,6 +30,10 @@ on:
         required: true
         default: https://specgraph.tech
         type: string
+      team_decision_log_artifact_base_url:
+        description: Static Team Decision Log product workspace artifact base URL. Defaults to artifact_base_url when empty.
+        required: false
+        type: string
       specpm_registry_url:
         description: Readonly SpecPM registry URL.
         required: true
@@ -78,6 +82,7 @@ jobs:
           --output-dir dist/platform-timeweb-deploy
           --image-lock dist/platform-service-images.json
           --artifact-base-url "${{ inputs.artifact_base_url }}"
+          --team-decision-log-artifact-base-url "${{ inputs.team_decision_log_artifact_base_url || inputs.artifact_base_url }}"
           --specpm-registry-url "${{ inputs.specpm_registry_url }}"
           --release-commit "${RELEASE_COMMIT}"
           --release-created-at "${RELEASE_CREATED_AT}"
@@ -88,6 +93,7 @@ jobs:
           python3 scripts/platform.py deploy timeweb-validate
           --path dist/platform-timeweb-deploy
           --artifact-base-url "${{ inputs.artifact_base_url }}"
+          --team-decision-log-artifact-base-url "${{ inputs.team_decision_log_artifact_base_url || inputs.artifact_base_url }}"
           --specpm-registry-url "${{ inputs.specpm_registry_url }}"
 
       - name: Validate Timeweb Compose config
@@ -111,4 +117,7 @@ jobs:
         env:
           PLATFORM_TIMEWEB_DEPLOY_BRANCH: ${{ inputs.deploy_branch }}
           PLATFORM_RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
+          TIMEWEB_REQUIRED_ARTIFACT_BASE_URL: ${{ inputs.artifact_base_url }}
+          TIMEWEB_REQUIRED_TEAM_DECISION_LOG_ARTIFACT_BASE_URL: ${{ inputs.team_decision_log_artifact_base_url || inputs.artifact_base_url }}
+          TIMEWEB_REQUIRED_SPECPM_REGISTRY_URL: ${{ inputs.specpm_registry_url }}
         run: scripts/publish-timeweb-deploy-branch.sh dist/platform-timeweb-deploy
