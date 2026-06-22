@@ -34,6 +34,31 @@ Docker Compose is the first implementation target for this profile. The
 operator should not manually assemble service ports, routes, image tags, and
 volumes from memory.
 
+## Public Workspace Routing
+
+The first product-facing deployment should keep a single public SpecSpace site
+while routing users to distinct workspaces:
+
+```text
+specgraph.space/
+  -> SpecGraph bootstrap/showcase workspace
+
+specgraph.space/team-decision-log
+  -> Team Decision Log product_idea_to_spec pilot workspace
+```
+
+This is still one SpecSpace deployment, not a separate Team Decision Log
+application. The root route demonstrates SpecGraph and its bootstrap
+capabilities; the Team Decision Log route demonstrates a user product moving
+from idea to candidate specification graph.
+
+The route layer should resolve a workspace registry/catalog entry and an
+artifact manifest for the active workspace. Product routes must use deployment
+profiles that hide bootstrap/self-evolution surfaces and allow Git Service
+promotion only to `product_spec_workspace` repository roles. The
+`/team_decision_log` spelling may be supported as an alias, but
+`/team-decision-log` is the canonical route.
+
 ## Local Compose Entry Point
 
 The working plan for this phase is maintained in

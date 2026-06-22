@@ -34,6 +34,22 @@ workspaces:
       registry_id: local-private
       import_policy: review_first
 
+  - project_id: team-decision-log
+    display_name: Team Decision Log
+    kind: product_workspace
+    status: active
+    path: "${ORG_ROOT}/TeamDecisionLog"
+    governance_profile: product_workspace
+    specgraph_config: specgraph.project.yaml
+    provider:
+      type: local_filesystem
+      specs_root: specs
+      runs_root: runs
+      proposals_root: docs/proposals
+    registry:
+      registry_id: local-private
+      import_policy: review_first
+
 registries:
   - registry_id: local-private
     kind: specpm_private_registry

@@ -89,9 +89,27 @@ Top-level registry definitions use:
 - Keep tracked examples portable; do not commit machine-specific absolute paths.
 - Keep secrets, credentials, private keys, and tokens out of catalog files.
 - Use `product_workspace` for external/client-facing product workspaces.
+- Use a distinct product workspace entry for the Team Decision Log pilot rather
+  than treating it as part of the SpecGraph bootstrap workspace.
 - Keep SpecPM imports `review_first`; the catalog must not imply automatic
   materialization into canonical specs.
 - Do not duplicate SpecGraph-owned initialization semantics in Platform.
+
+## Public Workspace Routes
+
+The catalog can inform SpecSpace workspace selection, but it is not itself the
+runtime router. The intended public shape for the first product pilot is:
+
+| Route | Workspace | Kind | Governance |
+| --- | --- | --- | --- |
+| `/` | `specgraph-core` | `core_repository` | `self_hosted_bootstrap` |
+| `/team-decision-log` | `team-decision-log` | `product_workspace` | `product_workspace` |
+
+The product route should resolve to a separate artifact manifest and
+`product_spec_workspace` repository role. It must not expose SpecGraph
+bootstrap/self-evolution surfaces as product-domain workbench state. A
+`/team_decision_log` alias is acceptable for compatibility, but the canonical
+route should use hyphens.
 
 ## Validation
 
