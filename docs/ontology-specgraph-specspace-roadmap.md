@@ -413,19 +413,33 @@ SpecGraph/SpecSpace applicability dashboards should treat as authoritative.
 It no longer blocks the current SpecAuthor prompt-side/Passport work, but it
 does block the stronger applicability import and review slices.
 
-The next valuable implementation choices are:
+Completed Git Service foundation:
 
-1. Platform: promote the local graph repository executor contract into a Git
+1. Platform promoted the local graph repository executor contract into a Git
    Service boundary with explicit repository binding, ref ownership,
    concurrency/audit reports, and queue-ready operation records.
-2. Platform: executor orchestration that consumes a promotion request and calls
-   `prepare-worktree`, `commit-worktree`, and `open-review` under the existing
-   authority gates through that service boundary.
-3. SpecSpace: controlled promotion UI over the promotion request and Git
+2. Platform added executor orchestration that consumes a promotion request and
+   calls `prepare-worktree`, `commit-worktree`, and `open-review` under the
+   existing authority gates through that service boundary.
+3. SpecSpace added a controlled promotion UI over the promotion request and Git
    Service executor reports.
-4. SpecGraph: publish promotion-gate and materialization artifacts in the public
-   bundle with stable manifest names for the Git Service handoff.
-5. Ontology/SpecGraph: continue compiler-backed applicability profile import
+4. SpecGraph publishes promotion-gate and materialization artifacts in the
+   public bundle with stable manifest names for the Git Service handoff.
+5. Platform now separates deployment lanes with tracked deployment profiles:
+   `product_idea_to_spec_workbench` allows controlled promotion only for product
+   spec workspaces, while `specgraph_bootstrap_internal` keeps Git Service
+   writes in dry-run-only mode.
+
+The next valuable implementation choices are:
+
+1. SpecGraph: connect a real active idea-to-spec candidate source so the public
+   handoff artifacts can move from `no_active_candidate` placeholders to real
+   candidate materialization and promotion gate data.
+2. SpecSpace: make the product deployment index only the product idea-to-spec
+   workbench surfaces and hide bootstrap/self-evolution lanes.
+3. Platform: move the Git Service boundary from local adapter orchestration
+   toward a hosted or queue-backed service implementation.
+4. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 
 ## Operating Notes

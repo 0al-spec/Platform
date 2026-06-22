@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:0al:platform:schemas:deployment-profile:1",
+  "title": "0AL Platform Deployment Profile",
+  "description": "Deployment surface and authority profile contract for separating bootstrap/internal and product idea-to-spec operation.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "profile_id",
+    "display_name",
+    "workflow_lane",
+    "deployment_surface",
+    "authority_profile",
+    "exposes",
+    "hides",
+    "git_service",
+    "authority_boundary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "artifact_kind": {
+      "type": "string",
+      "const": "platform_deployment_profile"
+    },
+    "profile_id": {
+      "$ref": "#/$defs/id"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "workflow_lane": {
+      "$ref": "#/$defs/workflowLane"
+    },
+    "deployment_surface": {
+      "$ref": "#/$defs/id"
+    },
+    "authority_profile": {
+      "$ref": "#/$defs/authorityProfile"
+    },
+    "exposes": {
+      "$ref": "#/$defs/idArray"
+    },
+    "hides": {
+      "$ref": "#/$defs/idArray"
+    },
+    "git_service": {
+      "$ref": "#/$defs/gitService"
+    },
+    "authority_boundary": {
+      "$ref": "#/$defs/authorityBoundary"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "workflowLane": {
+      "type": "string",
+      "enum": [
+        "product_idea_to_spec",
+        "specgraph_bootstrap"
+      ]
+    },
+    "authorityProfile": {
+      "type": "string",
+      "enum": [
+        "workspace_owner_controlled",
+        "maintainer_bootstrap_controlled",
+        "self_evolution"
+      ]
+    },
+    "idArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/id"
+      },
+      "uniqueItems": true
+    },
+    "gitService": {
+      "type": "object",
+      "required": [
+        "mode",
+        "allowed_workflow_lanes",
+        "denied_workflow_lanes",
+        "allowed_target_repository_roles",
+        "denied_target_repository_roles",
+        "allowed_authority_profiles",
+        "denied_authority_profiles",
+        "required_promotion_request_fields"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "dry_run_only",
+            "controlled_promotion"
+          ]
+        },
+        "allowed_workflow_lanes": {
+          "$ref": "#/$defs/idArray"
+        },
+        "denied_workflow_lanes": {
+          "$ref": "#/$defs/idArray"
+        },
+        "allowed_target_repository_roles": {
+          "$ref": "#/$defs/idArray"
+        },
+        "denied_target_repository_roles": {
+          "$ref": "#/$defs/idArray"
+        },
+        "allowed_authority_profiles": {
+          "$ref": "#/$defs/idArray"
+        },
+        "denied_authority_profiles": {
+          "$ref": "#/$defs/idArray"
+        },
+        "required_promotion_request_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "workflow_lane",
+              "deployment_profile_id",
+              "target_repository_role",
+              "authority_profile"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 4
+        }
+      },
+      "additionalProperties": false
+    },
+    "authorityBoundary": {
+      "type": "object",
+      "required": [
+        "exposes_bootstrap_surfaces",
+        "permits_self_evolution",
+        "permits_git_service_write",
+        "permits_auto_merge",
+        "publishes_private_artifacts"
+      ],
+      "properties": {
+        "exposes_bootstrap_surfaces": {
+          "type": "boolean"
+        },
+        "permits_self_evolution": {
+          "type": "boolean"
+        },
+        "permits_git_service_write": {
+          "type": "boolean"
+        },
+        "permits_auto_merge": {
+          "type": "boolean",
+          "const": false
+        },
+        "publishes_private_artifacts": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

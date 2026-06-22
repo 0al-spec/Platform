@@ -22,6 +22,9 @@ DEFAULT_EXAMPLE_CATALOG = REPO_ROOT / "workspaces.example.yaml"
 DEFAULT_LOCAL_COMPOSE = REPO_ROOT / "docker-compose.local.yml"
 DEFAULT_EXAMPLE_COMPOSE = REPO_ROOT / "docker-compose.example.yml"
 DEFAULT_PRODUCTION_WEB_COMPOSE = REPO_ROOT / "docker-compose.production-web.example.yml"
+DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE = (
+    REPO_ROOT / "deployment-profile.product-idea-to-spec.example.json"
+)
 DEFAULT_LOCAL_ENV = REPO_ROOT / ".env"
 SPECGRAPH_SUPERVISOR_REL = Path("tools") / "supervisor.py"
 PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -601,6 +604,344 @@ def validate_git_service_operation_response_schema(
     )
 
 
+def validate_deployment_profile_schema(profile: dict[str, Any]) -> list[Diagnostic]:
+    return validate_json_schema(
+        profile,
+        schema_path=REPO_ROOT / "schemas" / "deployment-profile.schema.json",
+        code="deployment_profile_schema_invalid",
+    )
+
+
+def deployment_profile_list(profile: dict[str, Any], section: str, key: str) -> list[str]:
+    container = profile.get(section)
+    if not isinstance(container, dict):
+        return []
+    return [item for item in container.get(key, []) if isinstance(item, str)]
+
+
+def deployment_profile_semantic_diagnostics(
+    profile: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    profile_id = str(profile.get("profile_id") or "")
+    workflow_lane = str(profile.get("workflow_lane") or "")
+    authority_profile = str(profile.get("authority_profile") or "")
+    git_service = nested_mapping(profile, "git_service")
+    authority_boundary = nested_mapping(profile, "authority_boundary")
+    mode = str(git_service.get("mode") or "")
+
+    if mode == "controlled_promotion" and authority_boundary.get(
+        "permits_git_service_write"
+    ) is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_git_service_write_boundary_mismatch",
+                subject="authority_boundary.permits_git_service_write",
+                message=(
+                    "controlled_promotion profiles must explicitly permit Git "
+                    "Service writes"
+                ),
+            )
+        )
+    if mode in {"disabled", "dry_run_only"} and authority_boundary.get(
+        "permits_git_service_write"
+    ) is True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_git_service_write_boundary_mismatch",
+                subject="authority_boundary.permits_git_service_write",
+                message="non-write Git Service profiles must not permit Git Service writes",
+            )
+        )
+
+    allowed_lanes = deployment_profile_list(
+        profile, "git_service", "allowed_workflow_lanes"
+    )
+    denied_lanes = deployment_profile_list(
+        profile, "git_service", "denied_workflow_lanes"
+    )
+    if workflow_lane and allowed_lanes and workflow_lane not in allowed_lanes:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_workflow_lane_not_allowed",
+                subject="git_service.allowed_workflow_lanes",
+                message="profile workflow_lane must be allowed by its Git Service policy",
+            )
+        )
+    if workflow_lane and workflow_lane in denied_lanes:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_workflow_lane_denied",
+                subject="git_service.denied_workflow_lanes",
+                message="profile workflow_lane must not be denied by its Git Service policy",
+            )
+        )
+
+    allowed_authorities = deployment_profile_list(
+        profile, "git_service", "allowed_authority_profiles"
+    )
+    denied_authorities = deployment_profile_list(
+        profile, "git_service", "denied_authority_profiles"
+    )
+    if (
+        authority_profile
+        and allowed_authorities
+        and authority_profile not in allowed_authorities
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_authority_profile_not_allowed",
+                subject="git_service.allowed_authority_profiles",
+                message=(
+                    "profile authority_profile must be allowed by its Git "
+                    "Service policy"
+                ),
+            )
+        )
+    if authority_profile and authority_profile in denied_authorities:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_authority_profile_denied",
+                subject="git_service.denied_authority_profiles",
+                message=(
+                    "profile authority_profile must not be denied by its Git "
+                    "Service policy"
+                ),
+            )
+        )
+
+    exposes = {item for item in profile.get("exposes", []) if isinstance(item, str)}
+    hides = {item for item in profile.get("hides", []) if isinstance(item, str)}
+    if profile_id == "product_idea_to_spec_workbench":
+        required_hides = {
+            "specgraph_bootstrap",
+            "supervisor_self_evolution",
+            "local_operator_diagnostics",
+        }
+        missing_hides = sorted(required_hides - hides)
+        if missing_hides:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="deployment_profile_product_surface_leaks_bootstrap",
+                    subject="hides",
+                    message=(
+                        "product idea-to-spec profile must hide bootstrap surfaces: "
+                        + ", ".join(missing_hides)
+                    ),
+                )
+            )
+        if authority_boundary.get("exposes_bootstrap_surfaces") is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="deployment_profile_product_exposes_bootstrap",
+                    subject="authority_boundary.exposes_bootstrap_surfaces",
+                    message="product idea-to-spec profile must not expose bootstrap surfaces",
+                )
+            )
+        if "product_spec_workspace" not in deployment_profile_list(
+            profile, "git_service", "allowed_target_repository_roles"
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="deployment_profile_product_repository_role_missing",
+                    subject="git_service.allowed_target_repository_roles",
+                    message=(
+                        "product idea-to-spec profile must allow only product "
+                        "spec workspace promotion targets"
+                    ),
+                )
+            )
+    if profile_id == "specgraph_bootstrap_internal":
+        if mode == "controlled_promotion":
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="deployment_profile_bootstrap_git_service_write_enabled",
+                    subject="git_service.mode",
+                    message=(
+                        "bootstrap internal profile must not enable Git Service "
+                        "controlled promotion writes"
+                    ),
+                )
+            )
+        if "specgraph_bootstrap" not in exposes:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="deployment_profile_bootstrap_surface_missing",
+                    subject="exposes",
+                    message="bootstrap internal profile must expose specgraph_bootstrap",
+                )
+            )
+    return diagnostics
+
+
+def deployment_profile_validate(args: argparse.Namespace) -> int:
+    profile_path = Path(args.profile)
+    profile = load_json_mapping(profile_path, label="deployment profile")
+    diagnostics = [
+        *validate_deployment_profile_schema(profile),
+        *deployment_profile_semantic_diagnostics(profile),
+    ]
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    payload = {
+        "profile": str(profile_path),
+        "ok": error_count == 0,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "profile_id": profile.get("profile_id"),
+            "workflow_lane": profile.get("workflow_lane"),
+            "git_service_mode": nested_mapping(profile, "git_service").get("mode"),
+        },
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print("OK: deployment profile is valid")
+    return 0 if error_count == 0 else 1
+
+
+def request_field_text(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    return value if isinstance(value, str) else ""
+
+
+def git_service_deployment_profile_diagnostics(
+    *,
+    profile: dict[str, Any],
+    promotion_request: dict[str, Any],
+    dry_run: bool,
+) -> list[Diagnostic]:
+    diagnostics = [
+        *validate_deployment_profile_schema(profile),
+        *deployment_profile_semantic_diagnostics(profile),
+    ]
+    git_service = nested_mapping(profile, "git_service")
+    mode = str(git_service.get("mode") or "")
+    profile_id = str(profile.get("profile_id") or "")
+    request_profile_id = request_field_text(promotion_request, "deployment_profile_id")
+    if request_profile_id != profile_id:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_request_profile_mismatch",
+                subject="promotion_request.deployment_profile_id",
+                message=(
+                    "promotion request deployment_profile_id must match the "
+                    "active deployment profile"
+                ),
+            )
+        )
+
+    if mode == "disabled":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_git_service_disabled",
+                subject="deployment_profile.git_service.mode",
+                message="Git Service is disabled for this deployment profile",
+            )
+        )
+    elif mode == "dry_run_only" and not dry_run:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_git_service_dry_run_only",
+                subject="deployment_profile.git_service.mode",
+                message=(
+                    "this deployment profile allows Git Service dry-run planning "
+                    "only"
+                ),
+            )
+        )
+    elif mode != "controlled_promotion" and not (mode == "dry_run_only" and dry_run):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="deployment_profile_git_service_mode_unsupported",
+                subject="deployment_profile.git_service.mode",
+                message="unsupported Git Service deployment profile mode",
+            )
+        )
+
+    required_fields = [
+        item
+        for item in git_service.get("required_promotion_request_fields", [])
+        if isinstance(item, str)
+    ]
+    for field in required_fields:
+        if not request_field_text(promotion_request, field):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="deployment_profile_promotion_request_field_missing",
+                    subject=f"promotion_request.{field}",
+                    message="promotion request is missing a deployment profile field",
+                )
+            )
+
+    field_specs = [
+        (
+            "workflow_lane",
+            "allowed_workflow_lanes",
+            "denied_workflow_lanes",
+            "deployment_profile_workflow_lane_not_allowed",
+            "deployment_profile_workflow_lane_denied",
+        ),
+        (
+            "target_repository_role",
+            "allowed_target_repository_roles",
+            "denied_target_repository_roles",
+            "deployment_profile_target_repository_role_not_allowed",
+            "deployment_profile_target_repository_role_denied",
+        ),
+        (
+            "authority_profile",
+            "allowed_authority_profiles",
+            "denied_authority_profiles",
+            "deployment_profile_authority_profile_not_allowed",
+            "deployment_profile_authority_profile_denied",
+        ),
+    ]
+    for field, allowed_key, denied_key, not_allowed_code, denied_code in field_specs:
+        value = request_field_text(promotion_request, field)
+        if not value:
+            continue
+        allowed = deployment_profile_list(profile, "git_service", allowed_key)
+        denied = deployment_profile_list(profile, "git_service", denied_key)
+        if allowed and value not in allowed:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code=not_allowed_code,
+                    subject=f"promotion_request.{field}",
+                    message=f"{field} is not allowed by the deployment profile",
+                )
+            )
+        if value in denied:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code=denied_code,
+                    subject=f"promotion_request.{field}",
+                    message=f"{field} is denied by the deployment profile",
+                )
+            )
+    return diagnostics
+
+
 def git_service_operation_contract_semantic_diagnostics(
     contract: dict[str, Any],
 ) -> list[Diagnostic]:
@@ -1047,9 +1388,21 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
         promotion_request_path,
         label="graph repository promotion request",
     )
+    deployment_profile_path = Path(args.deployment_profile)
+    deployment_profile = load_json_mapping(
+        deployment_profile_path,
+        label="deployment profile",
+    )
     diagnostics = git_service_promotion_request_diagnostics(
         contract=contract,
         promotion_request=promotion_request,
+    )
+    diagnostics.extend(
+        git_service_deployment_profile_diagnostics(
+            profile=deployment_profile,
+            promotion_request=promotion_request,
+            dry_run=args.dry_run,
+        )
     )
     plan_path = resolve_artifact_path(
         promotion_request.get("plan_ref"),
@@ -1300,10 +1653,19 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
         "artifact_kind": "platform_git_service_promotion_execution_report",
         "generated_at": utc_now_iso(),
         "contract_ref": str(contract_path),
+        "deployment_profile_ref": str(deployment_profile_path),
         "promotion_request_ref": str(promotion_request_path),
         "ok": ok,
         "dry_run": args.dry_run,
         "open_review_dry_run": args.open_review_dry_run,
+        "workflow_lane": promotion_request.get("workflow_lane"),
+        "deployment_profile": {
+            "profile_id": deployment_profile.get("profile_id"),
+            "workflow_lane": deployment_profile.get("workflow_lane"),
+            "git_service_mode": nested_mapping(deployment_profile, "git_service").get(
+                "mode"
+            ),
+        },
         "candidate_id": candidate_id,
         "candidate_ref": promotion_request.get("candidate_branch"),
         "repository_dir": str(repository_dir),
@@ -2065,6 +2427,10 @@ def graph_repository_promotion_request(args: argparse.Namespace) -> int:
         "plan_ref": str(plan_path),
         "ok": error_count == 0,
         "dry_run": args.dry_run,
+        "workflow_lane": args.workflow_lane,
+        "deployment_profile_id": args.deployment_profile_id,
+        "target_repository_role": args.target_repository_role,
+        "authority_profile": args.authority_profile,
         "candidate_id": candidate_id,
         "candidate_branch": branch_name,
         "commit_paths": paths if error_count == 0 else [],
@@ -4795,6 +5161,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init_parser.set_defaults(func=workspace_init)
 
+    deployment_profile_parser = subcommands.add_parser(
+        "deployment-profile",
+        help="Validate deployment profile authority boundaries.",
+    )
+    deployment_profile_subcommands = deployment_profile_parser.add_subparsers(
+        dest="deployment_profile_command",
+        required=True,
+    )
+    deployment_profile_validate_parser = deployment_profile_subcommands.add_parser(
+        "validate",
+        help="Validate a Platform deployment profile JSON artifact.",
+    )
+    deployment_profile_validate_parser.add_argument(
+        "--profile",
+        required=True,
+        help="Path to a platform_deployment_profile JSON artifact.",
+    )
+    deployment_profile_validate_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    deployment_profile_validate_parser.set_defaults(func=deployment_profile_validate)
+
     git_service_parser = subcommands.add_parser(
         "git-service",
         help="Validate Git Service operation contracts and envelopes.",
@@ -4867,6 +5258,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--promotion-request",
         required=True,
         help="Path to a platform_graph_repository_promotion_request artifact.",
+    )
+    git_service_execute_parser.add_argument(
+        "--deployment-profile",
+        default=str(DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE),
+        help=(
+            "Path to a platform_deployment_profile artifact. Defaults to the "
+            "product idea-to-spec workbench profile."
+        ),
     )
     git_service_execute_parser.add_argument(
         "--repository-dir",
@@ -5021,6 +5420,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--candidate-id",
         required=True,
         help="Stable candidate id used to derive the candidate branch name.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--workflow-lane",
+        default="product_idea_to_spec",
+        choices=["product_idea_to_spec", "specgraph_bootstrap"],
+        help="Workflow lane represented by this promotion request.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--deployment-profile-id",
+        default="product_idea_to_spec_workbench",
+        help="Deployment profile id expected to authorize this request.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--target-repository-role",
+        default="product_spec_workspace",
+        choices=["product_spec_workspace", "specgraph_bootstrap"],
+        help="Repository role targeted by this promotion request.",
+    )
+    graph_repository_promotion_parser.add_argument(
+        "--authority-profile",
+        default="workspace_owner_controlled",
+        choices=[
+            "workspace_owner_controlled",
+            "maintainer_bootstrap_controlled",
+            "self_evolution",
+        ],
+        help="Authority profile expected to authorize this request.",
     )
     graph_repository_promotion_parser.add_argument(
         "--path",

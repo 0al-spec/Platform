@@ -94,6 +94,10 @@ scripts/platform.py workspace init \
   --path "${ORG_ROOT}/MyProduct" \
   --display-name "My Product" \
   --root-intent "describe the product goal"
+scripts/platform.py deployment-profile validate \
+  --profile deployment-profile.product-idea-to-spec.example.json
+scripts/platform.py deployment-profile validate \
+  --profile deployment-profile.specgraph-bootstrap-internal.example.json
 scripts/platform.py graph-repository validate \
   --contract graph-repository-service.example.json
 scripts/platform.py git-service validate-contract \
@@ -104,6 +108,7 @@ scripts/platform.py git-service validate-response \
   --response path/to/git-service-response.json
 scripts/platform.py git-service execute-promotion \
   --contract git-service-operation-contract.example.json \
+  --deployment-profile deployment-profile.product-idea-to-spec.example.json \
   --promotion-request runs/graph_repository_promotion_request.json \
   --repository-dir ../SpecGraph \
   --workspace-dir .platform/candidates/my-idea-v1-worktree \
@@ -206,11 +211,20 @@ will exchange. These envelopes are deliberately separate from the local
 `graph-repository` adapter commands so SpecSpace and orchestrators do not bind
 to local filesystem paths as the product contract.
 
+`deployment-profile validate` checks the deployment authority boundary that
+keeps client-facing product work separate from SpecGraph bootstrapping. The
+tracked `deployment-profile.product-idea-to-spec.example.json` profile exposes
+the product idea-to-spec workbench and permits controlled Git Service promotion
+only for `target_repository_role: product_spec_workspace`. The tracked
+`deployment-profile.specgraph-bootstrap-internal.example.json` profile exposes
+bootstrap/self-evolution surfaces but leaves Git Service writes in
+`dry_run_only` mode.
+
 `git-service execute-promotion` consumes a
 `platform_graph_repository_promotion_request`, validates it against the Git
-Service operation contract, and orchestrates the local adapter sequence:
-`graph-repository prepare-worktree`, `graph-repository commit-worktree`, then
-`graph-repository open-review`. It writes a single
+Service operation contract and the active deployment profile, then orchestrates
+the local adapter sequence: `graph-repository prepare-worktree`,
+`graph-repository commit-worktree`, then `graph-repository open-review`. It writes a single
 `platform_git_service_promotion_execution_report` for SpecSpace/operator review.
 Pass `--open-review-dry-run` to validate the review handoff without pushing a
 branch or creating a pull request.
