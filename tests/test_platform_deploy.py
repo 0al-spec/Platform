@@ -305,18 +305,18 @@ class PlatformDeployTests(unittest.TestCase):
                 'SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT: "20"',
                 compose,
             )
-            self.assertIn("--team-decision-log-artifact-base-url", compose)
+            self.assertIn("--product-workspace-artifact-base-url", compose)
             self.assertEqual(manifest["artifact_kind"], "platform_timeweb_deploy_manifest")
             self.assertEqual(manifest["release_commit"], "abc123")
             self.assertEqual(
-                manifest["team_decision_log_artifact_base_url"],
-                "https://specgraph.tech",
+                manifest["product_workspace_artifact_base_urls"],
+                {"team-decision-log": "https://specgraph.tech"},
             )
             self.assertTrue(manifest["hyperprompt_http_compile_enabled"])
             self.assertEqual(manifest["hyperprompt_work_dir"], "/tmp")
             self.assertEqual(manifest["hyperprompt_compile_timeout_seconds"], "60")
 
-    def test_timeweb_render_can_set_team_decision_log_artifact_base_url(self) -> None:
+    def test_timeweb_render_can_set_product_workspace_artifact_base_url(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"
             render = self.run_cli(
@@ -330,7 +330,7 @@ class PlatformDeployTests(unittest.TestCase):
                 UI_IMAGE,
                 "--artifact-base-url",
                 "https://specgraph.tech",
-                "--team-decision-log-artifact-base-url",
+                "--product-workspace-artifact-base-url",
                 "https://artifacts.example/team-decision-log",
             )
             result = self.run_cli(
@@ -338,7 +338,7 @@ class PlatformDeployTests(unittest.TestCase):
                 "timeweb-validate",
                 "--path",
                 str(output_dir),
-                "--team-decision-log-artifact-base-url",
+                "--product-workspace-artifact-base-url",
                 "https://artifacts.example/team-decision-log",
                 "--format",
                 "json",
@@ -353,17 +353,17 @@ class PlatformDeployTests(unittest.TestCase):
                 )
             )
             self.assertIn(
-                '      - --team-decision-log-artifact-base-url\n'
-                '      - "https://artifacts.example/team-decision-log"',
+                '      - --product-workspace-artifact-base-url\n'
+                '      - "team-decision-log=https://artifacts.example/team-decision-log"',
                 compose,
             )
             self.assertEqual(
-                manifest["team_decision_log_artifact_base_url"],
-                "https://artifacts.example/team-decision-log",
+                manifest["product_workspace_artifact_base_urls"],
+                {"team-decision-log": "https://artifacts.example/team-decision-log"},
             )
             self.assertTrue(json.loads(result.stdout)["valid"])
 
-    def test_timeweb_publish_threads_team_decision_log_artifact_base_url(self) -> None:
+    def test_timeweb_publish_threads_product_workspace_artifact_base_url(self) -> None:
         workflow = (
             REPO_ROOT / ".github" / "workflows" / "timeweb-publish.yml"
         ).read_text(encoding="utf-8")
@@ -371,24 +371,24 @@ class PlatformDeployTests(unittest.TestCase):
             REPO_ROOT / "scripts" / "publish-timeweb-deploy-branch.sh"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("team_decision_log_artifact_base_url:", workflow)
+        self.assertIn("product_workspace_artifact_base_url:", workflow)
         self.assertIn(
-            "--team-decision-log-artifact-base-url "
-            '"${{ inputs.team_decision_log_artifact_base_url || inputs.artifact_base_url }}"',
+            "--product-workspace-artifact-base-url "
+            '"${{ inputs.product_workspace_artifact_base_url || inputs.artifact_base_url }}"',
             workflow,
         )
         self.assertIn(
-            "TIMEWEB_REQUIRED_TEAM_DECISION_LOG_ARTIFACT_BASE_URL: "
-            "${{ inputs.team_decision_log_artifact_base_url || inputs.artifact_base_url }}",
+            "TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL: "
+            "${{ inputs.product_workspace_artifact_base_url || inputs.artifact_base_url }}",
             workflow,
         )
         self.assertIn(
-            'team_decision_log_artifact_base_url="'
-            '${TIMEWEB_REQUIRED_TEAM_DECISION_LOG_ARTIFACT_BASE_URL:-$artifact_base_url}"',
+            'product_workspace_artifact_base_url="'
+            '${TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL:-',
             publish_script,
         )
         self.assertEqual(
-            publish_script.count("--team-decision-log-artifact-base-url"),
+            publish_script.count("--product-workspace-artifact-base-url"),
             2,
         )
 

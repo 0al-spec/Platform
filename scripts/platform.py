@@ -4662,8 +4662,18 @@ def timeweb_hyperprompt_runtime_from_args(args: argparse.Namespace) -> TimewebHy
     )
 
 
-def team_decision_log_artifact_base_url_from_args(args: argparse.Namespace) -> str:
-    return str(args.team_decision_log_artifact_base_url or args.artifact_base_url)
+def product_workspace_artifact_base_urls_from_args(args: argparse.Namespace) -> dict[str, str]:
+    url = (
+        str(args.product_workspace_artifact_base_url).strip()
+        if getattr(args, "product_workspace_artifact_base_url", None)
+        else ""
+    )
+    legacy_url = (
+        str(args.team_decision_log_artifact_base_url).strip()
+        if getattr(args, "team_decision_log_artifact_base_url", None)
+        else ""
+    )
+    return {"team-decision-log": url or legacy_url or str(args.artifact_base_url)}
 
 
 def render_timeweb_hyperprompt_environment(runtime: TimewebHyperpromptRuntime) -> str:
@@ -4689,11 +4699,18 @@ def render_timeweb_compose(
     api_image_ref: str,
     ui_image_ref: str,
     artifact_base_url: str,
-    team_decision_log_artifact_base_url: str,
+    product_workspace_artifact_base_urls: dict[str, str],
     specpm_registry_url: str,
     release_commit: str,
     hyperprompt_runtime: TimewebHyperpromptRuntime,
 ) -> str:
+    product_workspace_args = "".join(
+        "      - --product-workspace-artifact-base-url\n"
+        f"      - \"{workspace_id}={artifact_base_url}\"\n"
+        for workspace_id, artifact_base_url in sorted(
+            product_workspace_artifact_base_urls.items()
+        )
+    )
     return (
         "name: specspace\n\n"
         "services:\n"
@@ -4721,8 +4738,7 @@ def render_timeweb_compose(
         "      - /data/dialogs\n"
         "      - --artifact-base-url\n"
         f"      - \"{artifact_base_url}\"\n"
-        "      - --team-decision-log-artifact-base-url\n"
-        f"      - \"{team_decision_log_artifact_base_url}\"\n"
+        f"{product_workspace_args}"
         "      - --specpm-registry-url\n"
         f"      - \"{specpm_registry_url}\"\n"
         "    ports:\n"
@@ -4747,9 +4763,7 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         "%Y-%m-%dT%H:%M:%SZ"
     )
     release_commit = args.release_commit or "unknown"
-    team_decision_log_artifact_base_url = (
-        team_decision_log_artifact_base_url_from_args(args)
-    )
+    product_workspace_artifact_base_urls = product_workspace_artifact_base_urls_from_args(args)
     compose_file = output_dir / "docker-compose.yml"
     readme = output_dir / "README.md"
     manifest = output_dir / "platform-timeweb-deploy.json"
@@ -4759,7 +4773,7 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
             api_image_ref=image_refs.specspace_api_image_ref,
             ui_image_ref=image_refs.specspace_ui_image_ref,
             artifact_base_url=args.artifact_base_url,
-            team_decision_log_artifact_base_url=team_decision_log_artifact_base_url,
+            product_workspace_artifact_base_urls=product_workspace_artifact_base_urls,
             specpm_registry_url=args.specpm_registry_url,
             release_commit=release_commit,
             hyperprompt_runtime=hyperprompt_runtime,
@@ -4778,8 +4792,8 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         f"- UI image: `{image_refs.specspace_ui_image_ref}`\n"
         f"- Image lock: `{image_refs.image_lock or '(not used)'}`\n"
         f"- SpecGraph artifact source: `{args.artifact_base_url}`\n"
-        f"- Team Decision Log artifact source: "
-        f"`{team_decision_log_artifact_base_url}`\n"
+        f"- Product workspace artifact sources: "
+        f"`{json.dumps(product_workspace_artifact_base_urls, sort_keys=True)}`\n"
         f"- SpecPM registry source: `{args.specpm_registry_url}`\n"
         f"- HTTP Hyperprompt compile: "
         f"`{'enabled' if hyperprompt_runtime.http_compile_enabled else 'disabled'}`\n"
@@ -4805,9 +4819,7 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                 "specspace_api_image_ref": image_refs.specspace_api_image_ref,
                 "specspace_ui_image_ref": image_refs.specspace_ui_image_ref,
                 "artifact_base_url": args.artifact_base_url,
-                "team_decision_log_artifact_base_url": (
-                    team_decision_log_artifact_base_url
-                ),
+                "product_workspace_artifact_base_urls": product_workspace_artifact_base_urls,
                 "hyperprompt_http_compile_enabled": (
                     hyperprompt_runtime.http_compile_enabled
                 ),
@@ -4908,6 +4920,14 @@ def command_value_after(command: list[str], flag: str) -> str | None:
     return command[index + 1]
 
 
+def command_values_after(command: list[str], flag: str) -> list[str]:
+    values: list[str] = []
+    for index, value in enumerate(command):
+        if value == flag and index + 1 < len(command):
+            values.append(command[index + 1])
+    return values
+
+
 def image_for_service(blocks: dict[str, list[str]], service_name: str) -> str | None:
     for line in blocks.get(service_name, []):
         match = re.match(r"^    image:\s*(.+?)\s*$", line)
@@ -4920,7 +4940,7 @@ def validate_timeweb_manifest_tree(
     root: Path,
     *,
     artifact_base_url: str,
-    team_decision_log_artifact_base_url: str,
+    product_workspace_artifact_base_urls: dict[str, str],
     specpm_registry_url: str,
     hyperprompt_runtime: TimewebHyperpromptRuntime,
 ) -> list[str]:
@@ -4974,20 +4994,30 @@ def validate_timeweb_manifest_tree(
             f"{target_file} specspace-api command must point at artifact base URL "
             f"{artifact_base_url}, got {actual_artifact_base_url}"
         )
-    actual_team_decision_log_artifact_base_url = command_value_after(
+    actual_product_workspace_args = command_values_after(
         api_command,
-        "--team-decision-log-artifact-base-url",
+        "--product-workspace-artifact-base-url",
     )
-    if actual_team_decision_log_artifact_base_url is None:
+    actual_product_workspace_urls: dict[str, str] = {}
+    for entry in actual_product_workspace_args:
+        if "=" not in entry:
+            errors.append(
+                f"{target_file} product workspace artifact URL binding must use "
+                f"WORKSPACE_ID=URL, got {entry!r}"
+            )
+            continue
+        workspace_id, url = entry.split("=", 1)
+        actual_product_workspace_urls[workspace_id] = url
+    if not actual_product_workspace_urls:
         errors.append(
-            f"{target_file} must configure --team-decision-log-artifact-base-url "
+            f"{target_file} must configure --product-workspace-artifact-base-url "
             "on specspace-api"
         )
-    elif actual_team_decision_log_artifact_base_url != team_decision_log_artifact_base_url:
+    elif actual_product_workspace_urls != product_workspace_artifact_base_urls:
         errors.append(
-            f"{target_file} specspace-api command must point at Team Decision Log "
-            f"artifact base URL {team_decision_log_artifact_base_url}, got "
-            f"{actual_team_decision_log_artifact_base_url}"
+            f"{target_file} specspace-api command must point at product workspace "
+            f"artifact base URLs {product_workspace_artifact_base_urls}, got "
+            f"{actual_product_workspace_urls}"
         )
     actual_specpm_registry_url = command_value_after(api_command, "--specpm-registry-url")
     if actual_specpm_registry_url is None:
@@ -5047,9 +5077,7 @@ def deploy_timeweb_render(args: argparse.Namespace) -> int:
     errors = validate_timeweb_manifest_tree(
         manifest.output_dir,
         artifact_base_url=args.artifact_base_url,
-        team_decision_log_artifact_base_url=(
-            team_decision_log_artifact_base_url_from_args(args)
-        ),
+        product_workspace_artifact_base_urls=product_workspace_artifact_base_urls_from_args(args),
         specpm_registry_url=args.specpm_registry_url,
         hyperprompt_runtime=hyperprompt_runtime,
     )
@@ -5078,9 +5106,7 @@ def deploy_timeweb_validate(args: argparse.Namespace) -> int:
     errors = validate_timeweb_manifest_tree(
         root,
         artifact_base_url=args.artifact_base_url,
-        team_decision_log_artifact_base_url=(
-            team_decision_log_artifact_base_url_from_args(args)
-        ),
+        product_workspace_artifact_base_urls=product_workspace_artifact_base_urls_from_args(args),
         specpm_registry_url=args.specpm_registry_url,
         hyperprompt_runtime=hyperprompt_runtime,
     )
@@ -5958,11 +5984,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Static SpecGraph artifact base URL.",
     )
     timeweb_render_parser.add_argument(
+        "--product-workspace-artifact-base-url",
+        default=os.environ.get("SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL", ""),
+        help=(
+            "Static artifact base URL for the active product workspace. "
+            "Defaults to --artifact-base-url. Rendered as a generic "
+            "team-decision-log=URL binding for SpecSpace until the workspace "
+            "catalog carries multiple deployed product workspaces."
+        ),
+    )
+    timeweb_render_parser.add_argument(
         "--team-decision-log-artifact-base-url",
         default=os.environ.get("SPECSPACE_TEAM_DECISION_LOG_ARTIFACT_BASE_URL", ""),
         help=(
-            "Static artifact base URL for the Team Decision Log product workspace. "
-            "Defaults to --artifact-base-url."
+            "Deprecated compatibility alias for --product-workspace-artifact-base-url."
         ),
     )
     timeweb_render_parser.add_argument(
@@ -6004,11 +6039,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Required static SpecGraph artifact base URL.",
     )
     timeweb_validate_parser.add_argument(
+        "--product-workspace-artifact-base-url",
+        default=os.environ.get("TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL", ""),
+        help=(
+            "Required static artifact base URL for the active product workspace. "
+            "Defaults to --artifact-base-url."
+        ),
+    )
+    timeweb_validate_parser.add_argument(
         "--team-decision-log-artifact-base-url",
         default=os.environ.get("TIMEWEB_REQUIRED_TEAM_DECISION_LOG_ARTIFACT_BASE_URL", ""),
         help=(
-            "Required static artifact base URL for the Team Decision Log product "
-            "workspace. Defaults to --artifact-base-url."
+            "Deprecated compatibility alias for --product-workspace-artifact-base-url."
         ),
     )
     timeweb_validate_parser.add_argument(
