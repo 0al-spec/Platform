@@ -148,6 +148,31 @@ be able to draft and repair the graph without requiring a human for each node.
 The authority boundary remains unchanged: generated content is candidate state
 until validation and repository governance promote it.
 
+The first real product pilot should be `Team Decision Log`. It is intentionally
+small but not a mock: teams record decisions, considered options, rationale,
+evidence, owners, review triggers, and supersession/conflict relations. This
+domain gives the idea-to-spec loop enough structure to exercise event-storming
+intake, ontology extraction, candidate graph repair, pre-SIB metrics, and
+promotion gates without mixing in SpecGraph bootstrap/self-evolution concerns.
+
+The desired public deployment shape is one SpecSpace deployment with distinct
+workspace routes:
+
+```text
+specgraph.space/
+  -> SpecGraph bootstrap/showcase workspace
+
+specgraph.space/team-decision-log
+  -> Team Decision Log product_idea_to_spec pilot workspace
+```
+
+`/team_decision_log` may exist as a compatibility alias, but
+`/team-decision-log` is the canonical public route. Each route should resolve to
+its own workspace metadata and artifact manifest. The Team Decision Log route
+must not expose supervisor self-evolution, bootstrap proposal machinery, local
+operator diagnostics, or canonical SpecGraph mutation flows as product-domain
+surfaces.
+
 ## Graph Versioning And Production Storage Direction
 
 Git remains the preferred canonical version substrate for the graph because it
@@ -364,6 +389,17 @@ idea without human review on every node:
 - next handoff: Git Service backed repository execution before any production
   write UX.
 
+The next implementation target for this line is the Team Decision Log pilot:
+
+- declare an active candidate source rather than publishing
+  `no_active_candidate` placeholders;
+- publish public-safe candidate artifacts under a product workspace manifest;
+- keep raw prompt text, private operator notes, and local paths out of public
+  bundles;
+- make promotion requests target only `product_spec_workspace` repositories;
+- preserve `specgraph.space/` as the SpecGraph showcase while using
+  `specgraph.space/team-decision-log` for the product pilot.
+
 ### 10. Git-Backed Graph Repository Service
 
 Status: active next infrastructure layer before production write UX. The local
@@ -432,11 +468,13 @@ Completed Git Service foundation:
 
 The next valuable implementation choices are:
 
-1. SpecGraph: connect a real active idea-to-spec candidate source so the public
-   handoff artifacts can move from `no_active_candidate` placeholders to real
-   candidate materialization and promotion gate data.
-2. SpecSpace: make the product deployment index only the product idea-to-spec
-   workbench surfaces and hide bootstrap/self-evolution lanes.
+1. SpecGraph: connect Team Decision Log as the first real active idea-to-spec
+   candidate source so the public handoff artifacts can move from
+   `no_active_candidate` placeholders to real candidate materialization and
+   promotion gate data.
+2. SpecSpace: add workspace-route selection so `specgraph.space/` opens the
+   SpecGraph showcase and `specgraph.space/team-decision-log` opens the product
+   idea-to-spec workbench without bootstrap/self-evolution lanes.
 3. Platform: move the Git Service boundary from local adapter orchestration
    toward a hosted or queue-backed service implementation.
 4. Ontology/SpecGraph: continue compiler-backed applicability profile import
