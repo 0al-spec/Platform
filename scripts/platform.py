@@ -746,17 +746,26 @@ def deployment_profile_semantic_diagnostics(
                     message="product idea-to-spec profile must not expose bootstrap surfaces",
                 )
             )
-        if "product_spec_workspace" not in deployment_profile_list(
-            profile, "git_service", "allowed_target_repository_roles"
-        ):
+        allowed_roles = set(
+            deployment_profile_list(
+                profile, "git_service", "allowed_target_repository_roles"
+            )
+        )
+        expected_allowed_roles = {"product_spec_workspace"}
+        if allowed_roles != expected_allowed_roles:
+            code = (
+                "deployment_profile_product_repository_role_missing"
+                if "product_spec_workspace" not in allowed_roles
+                else "deployment_profile_product_repository_role_expanded"
+            )
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
-                    code="deployment_profile_product_repository_role_missing",
+                    code=code,
                     subject="git_service.allowed_target_repository_roles",
                     message=(
-                        "product idea-to-spec profile must allow only product "
-                        "spec workspace promotion targets"
+                        "product idea-to-spec profile must allow exactly "
+                        "product_spec_workspace promotion targets"
                     ),
                 )
             )
