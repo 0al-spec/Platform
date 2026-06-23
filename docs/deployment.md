@@ -60,17 +60,19 @@ promotion only to `product_spec_workspace` repository roles. The
 `/team-decision-log` is the canonical route.
 
 The Timeweb deployment can keep the root SpecGraph showcase on the default
-artifact base URL while pointing the Team Decision Log product workspace at a
-separate public-safe artifact bundle:
+artifact base URL while pointing the active product workspace at a separate
+public-safe artifact bundle:
 
 ```text
 SPECSPACE_ARTIFACT_BASE_URL=https://specgraph.tech
-SPECSPACE_TEAM_DECISION_LOG_ARTIFACT_BASE_URL=https://artifacts.example/team-decision-log
+SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL=https://artifacts.example/team-decision-log
 ```
 
-If `SPECSPACE_TEAM_DECISION_LOG_ARTIFACT_BASE_URL` is omitted, Platform renders
-the Team Decision Log route with the same artifact base URL as the root
-SpecGraph workspace.
+If `SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL` is omitted, Platform renders
+the active product workspace route with the same artifact base URL as the root
+SpecGraph workspace. SpecSpace still consumes it through a product workspace
+provider, so the route reads `runs/candidate_spec_graph.json` instead of
+bootstrap `specs/nodes/*.yaml`.
 
 ## Local Compose Entry Point
 
@@ -245,7 +247,7 @@ Platform exposes the publisher as a GitHub Actions workflow:
 - input: `service_image_lock_json`, containing a
   `platform_service_image_lock` JSON object;
 - input: `artifact_base_url`, the root SpecGraph showcase artifact base URL;
-- input: `team_decision_log_artifact_base_url`, optional product workspace
+- input: `product_workspace_artifact_base_url`, optional product workspace
   artifact base URL, falling back to `artifact_base_url` when empty;
 - input: `publish_deploy_branch`, default `false`;
 - output artifact: `platform-timeweb-deploy`;
