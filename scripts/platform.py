@@ -1282,6 +1282,137 @@ def git_service_promotion_request_diagnostics(
     return diagnostics
 
 
+def git_service_candidate_approval_diagnostics(
+    *,
+    approval_decision: dict[str, Any],
+    promotion_request: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if approval_decision.get("artifact_kind") != "candidate_approval_decision":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_candidate_approval_kind_mismatch",
+                subject="approval_decision.artifact_kind",
+                message="expected candidate_approval_decision",
+            )
+        )
+    if approval_decision.get("contract_ref") != (
+        "specgraph.idea-to-spec.candidate-approval-decision.v0.1"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_candidate_approval_contract_mismatch",
+                subject="approval_decision.contract_ref",
+                message="expected candidate approval decision contract v0.1",
+            )
+        )
+    for field in (
+        "canonical_mutations_allowed",
+        "ontology_writes_allowed",
+        "tracked_artifacts_written",
+    ):
+        if approval_decision.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_candidate_approval_authority_expanded",
+                    subject=f"approval_decision.{field}",
+                    message=f"{field} must be false before Git Service execution",
+                )
+            )
+    for key, value in sorted(
+        nested_mapping(approval_decision, "authority_boundary").items()
+    ):
+        if value is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_candidate_approval_authority_expanded",
+                    subject=f"approval_decision.authority_boundary.{key}",
+                    message="candidate approval must not execute write actions itself",
+                )
+            )
+
+    decision = nested_mapping(approval_decision, "decision")
+    if decision.get("state") != "approved":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_candidate_approval_not_approved",
+                subject="approval_decision.decision.state",
+                message="Git Service execution requires an explicit approved decision",
+            )
+        )
+    readiness = nested_mapping(approval_decision, "readiness")
+    if readiness.get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_candidate_approval_not_ready",
+                subject="approval_decision.readiness.ready",
+                message="candidate approval decision must be ready before Git Service execution",
+            )
+        )
+
+    candidate = nested_mapping(approval_decision, "candidate")
+    if candidate.get("candidate_id") != promotion_request.get("candidate_id"):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_candidate_approval_candidate_mismatch",
+                subject="approval_decision.candidate.candidate_id",
+                message="candidate approval must reference the promotion request candidate",
+            )
+        )
+    workspace = nested_mapping(approval_decision, "workspace")
+    if workspace.get("mode") != promotion_request.get("workflow_lane"):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_candidate_approval_workflow_mismatch",
+                subject="approval_decision.workspace.mode",
+                message="candidate approval workflow lane must match the promotion request",
+            )
+        )
+    if workspace.get("repository_role") != promotion_request.get(
+        "target_repository_role"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_candidate_approval_repository_role_mismatch",
+                subject="approval_decision.workspace.repository_role",
+                message=(
+                    "candidate approval repository role must match the promotion request"
+                ),
+            )
+        )
+
+    approved_paths = nested_mapping(approval_decision, "promotion_request").get("paths")
+    request_paths = promotion_request.get("commit_paths")
+    if not isinstance(approved_paths, list) or not approved_paths:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_candidate_approval_paths_missing",
+                subject="approval_decision.promotion_request.paths",
+                message="candidate approval must include approved promotion paths",
+            )
+        )
+    elif approved_paths != request_paths:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_candidate_approval_paths_mismatch",
+                subject="approval_decision.promotion_request.paths",
+                message="candidate approval paths must match promotion request commit paths",
+            )
+        )
+    return diagnostics
+
+
 def run_platform_json_command(command: list[str]) -> tuple[dict[str, Any] | None, dict[str, Any], Diagnostic | None]:
     completed = subprocess.run(
         [sys.executable, str(Path(__file__).resolve()), *command],
@@ -1386,6 +1517,7 @@ def git_service_copy_materialized_paths(
 def git_service_execute_promotion(args: argparse.Namespace) -> int:
     contract_path = Path(args.contract)
     promotion_request_path = Path(args.promotion_request)
+    approval_decision_path = Path(args.approval_decision)
     repository_dir = Path(args.repository_dir).resolve()
     workspace_dir = Path(args.workspace_dir).resolve()
     materialized_source_dir = (
@@ -1398,6 +1530,10 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
         promotion_request_path,
         label="graph repository promotion request",
     )
+    approval_decision = load_json_mapping(
+        approval_decision_path,
+        label="candidate approval decision",
+    )
     deployment_profile_path = Path(args.deployment_profile)
     deployment_profile = load_json_mapping(
         deployment_profile_path,
@@ -1406,6 +1542,12 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
     diagnostics = git_service_promotion_request_diagnostics(
         contract=contract,
         promotion_request=promotion_request,
+    )
+    diagnostics.extend(
+        git_service_candidate_approval_diagnostics(
+            approval_decision=approval_decision,
+            promotion_request=promotion_request,
+        )
     )
     diagnostics.extend(
         git_service_deployment_profile_diagnostics(
@@ -1665,6 +1807,7 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
         "contract_ref": str(contract_path),
         "deployment_profile_ref": str(deployment_profile_path),
         "promotion_request_ref": str(promotion_request_path),
+        "approval_decision_ref": str(approval_decision_path),
         "ok": ok,
         "dry_run": args.dry_run,
         "open_review_dry_run": args.open_review_dry_run,
@@ -1677,6 +1820,17 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
             ),
         },
         "candidate_id": candidate_id,
+        "approval_decision": {
+            "decision_state": nested_mapping(approval_decision, "decision").get(
+                "state"
+            ),
+            "review_state": nested_mapping(approval_decision, "readiness").get(
+                "review_state"
+            ),
+            "operator_ref": nested_mapping(approval_decision, "decision").get(
+                "operator_ref"
+            ),
+        },
         "candidate_ref": promotion_request.get("candidate_branch"),
         "repository_dir": str(repository_dir),
         "workspace_dir": str(workspace_dir),
@@ -5612,6 +5766,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--promotion-request",
         required=True,
         help="Path to a platform_graph_repository_promotion_request artifact.",
+    )
+    git_service_execute_parser.add_argument(
+        "--approval-decision",
+        required=True,
+        help=(
+            "Path to a candidate_approval_decision artifact. Git Service "
+            "execution requires an approved, ready decision."
+        ),
     )
     git_service_execute_parser.add_argument(
         "--deployment-profile",
