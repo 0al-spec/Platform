@@ -110,6 +110,7 @@ scripts/platform.py git-service execute-promotion \
   --contract git-service-operation-contract.example.json \
   --deployment-profile deployment-profile.product-idea-to-spec.example.json \
   --promotion-request runs/graph_repository_promotion_request.json \
+  --approval-decision runs/candidate_approval_decision.json \
   --repository-dir ../SpecGraph \
   --workspace-dir .platform/candidates/my-idea-v1-worktree \
   --materialized-source-dir runs/materialized-candidates
@@ -209,7 +210,9 @@ authority boundary for:
 generic operation envelopes that a future hosted service or queue-backed worker
 will exchange. These envelopes are deliberately separate from the local
 `graph-repository` adapter commands so SpecSpace and orchestrators do not bind
-to local filesystem paths as the product contract.
+to local filesystem paths as the product contract. A `prepare_worktree` request
+must include `candidate_approval_decision` in `inputs`; envelope validation only
+checks the ref shape, while `execute-promotion` validates the decision content.
 
 `deployment-profile validate` checks the deployment authority boundary that
 keeps client-facing product work separate from SpecGraph bootstrapping. The
@@ -221,7 +224,8 @@ bootstrap/self-evolution surfaces but leaves Git Service writes in
 `dry_run_only` mode.
 
 `git-service execute-promotion` consumes a
-`platform_graph_repository_promotion_request`, validates it against the Git
+`platform_graph_repository_promotion_request` and a ready
+`candidate_approval_decision`. It validates both artifacts against the Git
 Service operation contract and the active deployment profile, then orchestrates
 the local adapter sequence: `graph-repository prepare-worktree`,
 `graph-repository commit-worktree`, then `graph-repository open-review`. It writes a single

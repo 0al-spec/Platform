@@ -174,6 +174,84 @@ class PlatformCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return output
 
+    def write_candidate_approval_decision(
+        self,
+        tmp_root: Path,
+        *,
+        candidate_id: str = "idea-alpha",
+        workflow_lane: str = "product_idea_to_spec",
+        target_repository_role: str = "product_spec_workspace",
+        decision_state: str = "approved",
+        ready: bool = True,
+        paths: list[str] | None = None,
+    ) -> Path:
+        approval_path = tmp_root / "candidate_approval_decision.json"
+        promotion_paths = paths or ["specs/nodes/SG-SPEC-CANDIDATE.yaml"]
+        approval_path.write_text(
+            json.dumps(
+                {
+                    "artifact_kind": "candidate_approval_decision",
+                    "schema_version": 1,
+                    "contract_ref": (
+                        "specgraph.idea-to-spec.candidate-approval-decision.v0.1"
+                    ),
+                    "canonical_mutations_allowed": False,
+                    "ontology_writes_allowed": False,
+                    "tracked_artifacts_written": False,
+                    "workspace": {
+                        "workspace_id": candidate_id,
+                        "mode": workflow_lane,
+                        "repository_role": target_repository_role,
+                        "public_route": f"/{candidate_id}",
+                    },
+                    "candidate": {
+                        "candidate_id": candidate_id,
+                        "display_name": "Idea Alpha",
+                        "active_candidate_ref": (
+                            "runs/active_idea_to_spec_candidate.json"
+                        ),
+                        "promotion_gate_ref": (
+                            "runs/idea_to_spec_promotion_gate.json"
+                        ),
+                    },
+                    "decision": {
+                        "requested_state": decision_state,
+                        "state": decision_state,
+                        "operator_ref": "operator://workspace-owner",
+                        "reason": "Approve review-ready candidate promotion.",
+                        "conditions": [],
+                    },
+                    "readiness": {
+                        "ready": ready,
+                        "review_state": "candidate_approval_ready"
+                        if ready
+                        else "candidate_approval_blocked",
+                        "blocked_by": [] if ready else ["decision_not_approved"],
+                    },
+                    "promotion_request": {
+                        "platform_artifact_kind": (
+                            "platform_graph_repository_promotion_request"
+                        ),
+                        "paths": promotion_paths,
+                        "requires_git_service_execution": True,
+                    },
+                    "authority_boundary": {
+                        "may_execute_prompt_agent": False,
+                        "may_mutate_candidate_source_artifacts": False,
+                        "may_mutate_canonical_specs": False,
+                        "may_write_ontology_package": False,
+                        "may_write_ontology_lockfile": False,
+                        "may_mark_candidate_graph_accepted": False,
+                        "may_create_branch_or_commit": False,
+                        "may_open_pull_request": False,
+                        "may_publish_read_model": False,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return approval_path
+
     def git_service_request(self) -> dict:
         return {
             "schema_version": 1,
@@ -192,6 +270,7 @@ class PlatformCliTests(unittest.TestCase):
             "inputs": {
                 "promotion_request": "runs/graph_repository_promotion_request.json",
                 "execution_plan": "runs/graph_repository_execution_plan.json",
+                "candidate_approval_decision": "runs/candidate_approval_decision.json",
             },
             "authority_boundary": {
                 "specspace_direct_git_write": False,
@@ -897,6 +976,35 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("git_service_lock_scope_missing", codes)
 
+    def test_git_service_validate_rejects_missing_approval_contract_input(
+        self,
+    ) -> None:
+        contract = json.loads(
+            (REPO_ROOT / "git-service-operation-contract.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        contract["operations"][0]["required_inputs"].remove(
+            "candidate_approval_decision"
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(contract, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "git-service",
+                "validate-contract",
+                "--contract",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_required_input_missing", codes)
+
     def test_git_service_validate_accepts_request_and_response(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".json") as request_handle:
             json.dump(self.git_service_request(), request_handle)
@@ -954,10 +1062,34 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("git_service_operation_request_schema_invalid", codes)
 
+    def test_git_service_validate_rejects_missing_approval_request_input(
+        self,
+    ) -> None:
+        request = self.git_service_request()
+        del request["inputs"]["candidate_approval_decision"]
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(request, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "git-service",
+                "validate-request",
+                "--request",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_operation_request_input_missing", codes)
+
     def test_git_service_execute_promotion_dry_run_plans_operations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             promotion_request = self.build_graph_repository_promotion_request(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(tmp_root)
             repository_dir = self.create_graph_repository_checkout(tmp_root)
             workspace_dir = tmp_root / "candidate-worktree"
             output = tmp_root / "git_service_promotion_execution_report.json"
@@ -969,6 +1101,8 @@ workspaces:
                 "git-service-operation-contract.example.json",
                 "--promotion-request",
                 str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
                 "--repository-dir",
                 str(repository_dir),
                 "--workspace-dir",
@@ -1008,6 +1142,7 @@ workspaces:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             promotion_request = self.build_graph_repository_promotion_request(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(tmp_root)
             repository_dir = self.create_graph_repository_checkout(tmp_root)
             materialized_source = tmp_root / "materialized"
             spec_path = materialized_source / "specs" / "nodes" / "SG-SPEC-CANDIDATE.yaml"
@@ -1025,6 +1160,8 @@ workspaces:
                 "git-service-operation-contract.example.json",
                 "--promotion-request",
                 str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
                 "--repository-dir",
                 str(repository_dir),
                 "--workspace-dir",
@@ -1087,6 +1224,7 @@ workspaces:
             promotion_request_path = self.build_graph_repository_promotion_request(
                 tmp_root
             )
+            approval_decision = self.write_candidate_approval_decision(tmp_root)
             promotion_request = json.loads(
                 promotion_request_path.read_text(encoding="utf-8")
             )
@@ -1103,6 +1241,8 @@ workspaces:
                 "git-service-operation-contract.example.json",
                 "--promotion-request",
                 str(promotion_request_path),
+                "--approval-decision",
+                str(approval_decision),
                 "--repository-dir",
                 str(tmp_root / "missing"),
                 "--workspace-dir",
@@ -1116,6 +1256,111 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("git_service_promotion_request_not_ok", codes)
 
+    def test_git_service_execute_promotion_requires_approved_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request = self.build_graph_repository_promotion_request(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                decision_state="rejected",
+                ready=False,
+            )
+
+            result = self.run_cli(
+                "git-service",
+                "execute-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(tmp_root / "missing"),
+                "--workspace-dir",
+                str(tmp_root / "candidate-worktree"),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_candidate_approval_not_approved", codes)
+        self.assertIn("git_service_candidate_approval_not_ready", codes)
+        self.assertEqual(payload["operations"], [])
+
+    def test_git_service_execute_promotion_rejects_approval_candidate_mismatch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request = self.build_graph_repository_promotion_request(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                candidate_id="other-idea",
+            )
+
+            result = self.run_cli(
+                "git-service",
+                "execute-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(tmp_root / "missing"),
+                "--workspace-dir",
+                str(tmp_root / "candidate-worktree"),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_candidate_approval_candidate_mismatch", codes)
+        self.assertEqual(payload["operations"], [])
+
+    def test_git_service_execute_promotion_rejects_approval_path_mismatch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request = self.build_graph_repository_promotion_request(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                paths=["docs/proposals/OTHER.md"],
+            )
+
+            result = self.run_cli(
+                "git-service",
+                "execute-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(tmp_root / "missing"),
+                "--workspace-dir",
+                str(tmp_root / "candidate-worktree"),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_candidate_approval_paths_mismatch", codes)
+        self.assertEqual(payload["operations"], [])
+
     def test_git_service_execute_promotion_rejects_bootstrap_target_under_product_profile(
         self,
     ) -> None:
@@ -1123,6 +1368,11 @@ workspaces:
             tmp_root = Path(tmp_dir)
             promotion_request_path = self.build_graph_repository_promotion_request(
                 tmp_root
+            )
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                workflow_lane="specgraph_bootstrap",
+                target_repository_role="specgraph_bootstrap",
             )
             promotion_request = json.loads(
                 promotion_request_path.read_text(encoding="utf-8")
@@ -1142,6 +1392,8 @@ workspaces:
                 "git-service-operation-contract.example.json",
                 "--promotion-request",
                 str(promotion_request_path),
+                "--approval-decision",
+                str(approval_decision),
                 "--repository-dir",
                 str(tmp_root / "missing"),
                 "--workspace-dir",
@@ -1166,6 +1418,11 @@ workspaces:
             promotion_request_path = self.build_graph_repository_promotion_request(
                 tmp_root
             )
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                workflow_lane="specgraph_bootstrap",
+                target_repository_role="specgraph_bootstrap",
+            )
             promotion_request = json.loads(
                 promotion_request_path.read_text(encoding="utf-8")
             )
@@ -1185,6 +1442,8 @@ workspaces:
                 "git-service-operation-contract.example.json",
                 "--promotion-request",
                 str(promotion_request_path),
+                "--approval-decision",
+                str(approval_decision),
                 "--deployment-profile",
                 "deployment-profile.specgraph-bootstrap-internal.example.json",
                 "--repository-dir",

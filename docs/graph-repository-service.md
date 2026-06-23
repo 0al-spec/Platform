@@ -88,6 +88,12 @@ scripts/platform.py git-service validate-response \
   --response path/to/git-service-response.json
 ```
 
+For `prepare_worktree`, the request envelope must include input refs for the
+promotion request, execution plan, and `candidate_approval_decision`. The
+envelope validator checks that the approval ref exists; the approval decision
+content is validated by `execute-promotion` before any Git Service operation
+runs.
+
 The contract requires these service-level operations:
 
 - `prepare_worktree`;
@@ -108,13 +114,16 @@ scripts/platform.py git-service execute-promotion \
   --contract git-service-operation-contract.example.json \
   --deployment-profile deployment-profile.product-idea-to-spec.example.json \
   --promotion-request runs/graph_repository_promotion_request.json \
+  --approval-decision runs/candidate_approval_decision.json \
   --repository-dir ../SpecGraph \
   --workspace-dir .platform/candidates/my-idea-v1-worktree \
   --materialized-source-dir runs/materialized-candidates
 ```
 
-`execute-promotion` first validates the promotion request against the active
-deployment profile. The default profile is
+`execute-promotion` first validates the promotion request and the explicit
+`candidate_approval_decision` against the active deployment profile. The
+approval decision must be `approved`, ready, bound to the same candidate,
+workflow lane, repository role, and promotion paths. The default profile is
 `deployment-profile.product-idea-to-spec.example.json`; it requires:
 
 - `workflow_lane: product_idea_to_spec`;
