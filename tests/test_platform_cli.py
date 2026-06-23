@@ -270,6 +270,7 @@ class PlatformCliTests(unittest.TestCase):
             "inputs": {
                 "promotion_request": "runs/graph_repository_promotion_request.json",
                 "execution_plan": "runs/graph_repository_execution_plan.json",
+                "candidate_approval_decision": "runs/candidate_approval_decision.json",
             },
             "authority_boundary": {
                 "specspace_direct_git_write": False,
@@ -975,6 +976,35 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("git_service_lock_scope_missing", codes)
 
+    def test_git_service_validate_rejects_missing_approval_contract_input(
+        self,
+    ) -> None:
+        contract = json.loads(
+            (REPO_ROOT / "git-service-operation-contract.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        contract["operations"][0]["required_inputs"].remove(
+            "candidate_approval_decision"
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(contract, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "git-service",
+                "validate-contract",
+                "--contract",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_required_input_missing", codes)
+
     def test_git_service_validate_accepts_request_and_response(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".json") as request_handle:
             json.dump(self.git_service_request(), request_handle)
@@ -1031,6 +1061,29 @@ workspaces:
         payload = json.loads(result.stdout)
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("git_service_operation_request_schema_invalid", codes)
+
+    def test_git_service_validate_rejects_missing_approval_request_input(
+        self,
+    ) -> None:
+        request = self.git_service_request()
+        del request["inputs"]["candidate_approval_decision"]
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(request, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "git-service",
+                "validate-request",
+                "--request",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("git_service_operation_request_input_missing", codes)
 
     def test_git_service_execute_promotion_dry_run_plans_operations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

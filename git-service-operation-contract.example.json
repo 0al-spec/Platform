@@ -74,7 +74,8 @@
       ],
       "required_inputs": [
         "platform_graph_repository_promotion_request",
-        "platform_graph_repository_execution_plan"
+        "platform_graph_repository_execution_plan",
+        "candidate_approval_decision"
       ],
       "writes": {
         "canonical_specs": false,

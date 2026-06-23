@@ -88,6 +88,12 @@ scripts/platform.py git-service validate-response \
   --response path/to/git-service-response.json
 ```
 
+For `prepare_worktree`, the request envelope must include input refs for the
+promotion request, execution plan, and `candidate_approval_decision`. The
+envelope validator checks that the approval ref exists; the approval decision
+content is validated by `execute-promotion` before any Git Service operation
+runs.
+
 The contract requires these service-level operations:
 
 - `prepare_worktree`;

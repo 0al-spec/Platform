@@ -210,7 +210,9 @@ authority boundary for:
 generic operation envelopes that a future hosted service or queue-backed worker
 will exchange. These envelopes are deliberately separate from the local
 `graph-repository` adapter commands so SpecSpace and orchestrators do not bind
-to local filesystem paths as the product contract.
+to local filesystem paths as the product contract. A `prepare_worktree` request
+must include `candidate_approval_decision` in `inputs`; envelope validation only
+checks the ref shape, while `execute-promotion` validates the decision content.
 
 `deployment-profile validate` checks the deployment authority boundary that
 keeps client-facing product work separate from SpecGraph bootstrapping. The

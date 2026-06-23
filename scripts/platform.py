@@ -70,6 +70,11 @@ GIT_SERVICE_REQUIRED_OPERATIONS = {
             "read_model": False,
         },
         "lock_scopes": {"candidate_ref"},
+        "required_inputs": {
+            "platform_graph_repository_promotion_request",
+            "platform_graph_repository_execution_plan",
+            "candidate_approval_decision",
+        },
     },
     "commit_candidate": {
         "adapter_command": "graph-repository commit-worktree",
@@ -79,6 +84,10 @@ GIT_SERVICE_REQUIRED_OPERATIONS = {
             "read_model": False,
         },
         "lock_scopes": {"candidate_ref"},
+        "required_inputs": {
+            "platform_graph_repository_worktree_prepare_report",
+            "materialized_candidate_paths",
+        },
     },
     "open_review": {
         "adapter_command": "graph-repository open-review",
@@ -88,6 +97,11 @@ GIT_SERVICE_REQUIRED_OPERATIONS = {
             "read_model": False,
         },
         "lock_scopes": {"candidate_ref", "review_ref"},
+        "required_inputs": {
+            "platform_graph_repository_review_commit_report",
+            "review_title",
+            "review_body",
+        },
     },
     "review_status": {
         "adapter_command": "graph-repository review-status",
@@ -97,6 +111,9 @@ GIT_SERVICE_REQUIRED_OPERATIONS = {
             "read_model": False,
         },
         "lock_scopes": {"review_ref"},
+        "required_inputs": {
+            "platform_graph_repository_open_review_report",
+        },
     },
     "publish_read_model": {
         "adapter_command": "graph-repository publish-read-model",
@@ -106,6 +123,34 @@ GIT_SERVICE_REQUIRED_OPERATIONS = {
             "read_model": True,
         },
         "lock_scopes": {"read_model_publish"},
+        "required_inputs": {
+            "platform_graph_repository_review_status_report",
+            "artifact_manifest",
+        },
+    },
+}
+
+GIT_SERVICE_REQUEST_REQUIRED_INPUTS = {
+    "prepare_worktree": {
+        "promotion_request",
+        "execution_plan",
+        "candidate_approval_decision",
+    },
+    "commit_candidate": {
+        "worktree_prepare_report",
+        "materialized_candidate_paths",
+    },
+    "open_review": {
+        "review_commit_report",
+        "review_title",
+        "review_body",
+    },
+    "review_status": {
+        "open_review_report",
+    },
+    "publish_read_model": {
+        "review_status_report",
+        "artifact_manifest",
     },
 }
 
@@ -1045,6 +1090,23 @@ def git_service_operation_contract_semantic_diagnostics(
                         ),
                     )
                 )
+        required_inputs = operation.get("required_inputs")
+        if isinstance(required_inputs, list):
+            missing_inputs = sorted(
+                expected["required_inputs"] - set(required_inputs)
+            )
+            if missing_inputs:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="git_service_required_input_missing",
+                        subject=f"operations[{index}].required_inputs",
+                        message=(
+                            f"operation `{name}` is missing required inputs: "
+                            f"{', '.join(missing_inputs)}"
+                        ),
+                    )
+                )
 
     repository_binding = contract.get("repository_binding")
     ref_ownership = contract.get("ref_ownership")
@@ -1107,6 +1169,35 @@ def git_service_operation_contract_semantic_diagnostics(
     return diagnostics
 
 
+def git_service_operation_request_semantic_diagnostics(
+    request: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    operation = str(request.get("operation") or "")
+    required_inputs = GIT_SERVICE_REQUEST_REQUIRED_INPUTS.get(operation)
+    inputs = request.get("inputs")
+    if not required_inputs or not isinstance(inputs, dict):
+        return diagnostics
+    missing_inputs = sorted(
+        key
+        for key in required_inputs
+        if not isinstance(inputs.get(key), str) or not inputs.get(key).strip()
+    )
+    if missing_inputs:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="git_service_operation_request_input_missing",
+                subject="inputs",
+                message=(
+                    f"operation `{operation}` is missing required inputs: "
+                    f"{', '.join(missing_inputs)}"
+                ),
+            )
+        )
+    return diagnostics
+
+
 def git_service_validate_contract(args: argparse.Namespace) -> int:
     contract_path = Path(args.contract)
     contract = load_json_mapping(contract_path, label="git service contract")
@@ -1145,6 +1236,11 @@ def git_service_validate_operation_payload(
 ) -> int:
     payload_data = load_json_mapping(path, label=label)
     diagnostics = validator(payload_data)
+    if label == "git service request":
+        diagnostics = [
+            *diagnostics,
+            *git_service_operation_request_semantic_diagnostics(payload_data),
+        ]
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     output = {
         "path": str(path),
