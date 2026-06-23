@@ -1739,7 +1739,7 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
 
 def git_service_finalize_promotion(args: argparse.Namespace) -> int:
     contract_path = Path(args.contract)
-    open_review_report_path = Path(args.open_review_report)
+    open_review_report_path = Path(args.open_review_report).resolve()
     worktree_dir = Path(args.worktree_dir).resolve()
     bundle_dir = Path(args.bundle_dir).resolve()
     output_dir = Path(args.output_dir).resolve()
