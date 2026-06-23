@@ -47,6 +47,7 @@ class PlatformCliTests(unittest.TestCase):
         self,
         *args: str,
         env_overrides: dict[str, str | None] | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         for key, value in (env_overrides or {}).items():
@@ -58,7 +59,7 @@ class PlatformCliTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(CLI), *args],
             check=False,
-            cwd=REPO_ROOT,
+            cwd=cwd or REPO_ROOT,
             env=env,
             text=True,
             stdout=subprocess.PIPE,
@@ -1198,6 +1199,180 @@ workspaces:
         payload = json.loads(result.stdout)
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("deployment_profile_git_service_dry_run_only", codes)
+
+    def test_git_service_finalize_promotion_publishes_read_model_after_merge(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir, open_review_report = self.open_graph_repository_review(
+                tmp_root
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "MERGED",
+                    "isDraft": False,
+                    "mergedAt": "2026-06-21T16:00:00Z",
+                    "mergeCommit": {"oid": "abc123"},
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            output_dir = tmp_root / "published-read-model"
+
+            result = self.run_cli(
+                "git-service",
+                "finalize-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--open-review-report",
+                str(open_review_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(output_dir),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_git_service_promotion_finalization_report",
+            )
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertEqual(payload["review_state"], "merged")
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(statuses["review_status"], "succeeded")
+            self.assertEqual(statuses["publish_read_model"], "succeeded")
+            self.assertTrue(payload["summary"]["read_model_published"])
+            self.assertTrue((output_dir / "artifact_manifest.json").is_file())
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "git_service_promotion_finalization_report.json"
+                ).is_file()
+            )
+
+    def test_git_service_finalize_promotion_resolves_relative_review_report(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir, _open_review_report = self.open_graph_repository_review(
+                tmp_root
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "MERGED",
+                    "isDraft": False,
+                    "mergedAt": "2026-06-21T16:00:00Z",
+                    "mergeCommit": {"oid": "abc123"},
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            output_dir = tmp_root / "published-read-model"
+
+            result = self.run_cli(
+                "git-service",
+                "finalize-promotion",
+                "--contract",
+                str(REPO_ROOT / "git-service-operation-contract.example.json"),
+                "--open-review-report",
+                ".platform/graph_repository_open_review_report.json",
+                "--worktree-dir",
+                ".",
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(output_dir),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+                cwd=workspace_dir,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertEqual(payload["review_state"], "merged")
+            self.assertTrue(output_dir.joinpath("artifact_manifest.json").is_file())
+
+    def test_git_service_finalize_promotion_rejects_unmerged_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir, open_review_report = self.open_graph_repository_review(
+                tmp_root
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "mergedAt": None,
+                    "mergeCommit": None,
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            output_dir = tmp_root / "published-read-model"
+
+            result = self.run_cli(
+                "git-service",
+                "finalize-promotion",
+                "--contract",
+                "git-service-operation-contract.example.json",
+                "--open-review-report",
+                str(open_review_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(output_dir),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["review_state"], "open")
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn("git_service_review_not_merged", codes)
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(statuses["publish_read_model"], "skipped_review_not_merged")
+            self.assertFalse(output_dir.exists())
 
     def test_graph_repository_validate_rejects_auto_merge(self) -> None:
         contract = json.loads(

@@ -20,7 +20,7 @@ repository that owns the behavior:
 
 ## Current Anchors
 
-As of 2026-06-21:
+As of 2026-06-23:
 
 - Ontology PR `#53` is merged: `ontologyc` adapter report artifact line.
 - Ontology PR `#54` is merged: Hypercode IR v2 ontology package import.
@@ -78,6 +78,19 @@ As of 2026-06-21:
 - agent-passport PR `#6` is merged: `x-behaviorPolicies` is documented as an
   experimental `x-*` extension that remains report-only unless a consumer
   defines explicit enforcement semantics.
+- SpecGraph proposals `0149` through `0155` are implemented for the first
+  `product_idea_to_spec` line: event-storming intake, candidate graph contract,
+  pre-SIB/coherence metrics, autonomous repair preview, materialized candidate
+  previews, promotion gate, and active candidate source.
+- SpecGraph publishes a product workspace candidate graph for the Team Decision
+  Log pilot without treating it as SpecGraph bootstrap state.
+- SpecSpace routes `specgraph.space/` and `specgraph.space/team-decision-log`
+  as separate workspace views, and the product route reads product workspace
+  artifacts instead of leaking bootstrap graph artifacts.
+- Platform deployment profiles now separate `product_idea_to_spec` promotion
+  from `specgraph_bootstrap` writes. Product promotion may target only
+  `product_spec_workspace` repository roles, while bootstrap-internal Git
+  Service writes remain dry-run-only.
 - The next product direction is an autonomous idea-to-spec workflow: SpecSpace
   should help a user clarify a product idea through an event-storming-like
   intake, then let SpecGraph build a complete candidate specification graph
@@ -148,12 +161,16 @@ be able to draft and repair the graph without requiring a human for each node.
 The authority boundary remains unchanged: generated content is candidate state
 until validation and repository governance promote it.
 
-The first real product pilot should be `Team Decision Log`. It is intentionally
-small but not a mock: teams record decisions, considered options, rationale,
+The first real product pilot is `Team Decision Log`. It is intentionally small
+but not a mock: teams record decisions, considered options, rationale,
 evidence, owners, review triggers, and supersession/conflict relations. This
 domain gives the idea-to-spec loop enough structure to exercise event-storming
 intake, ontology extraction, candidate graph repair, pre-SIB metrics, and
 promotion gates without mixing in SpecGraph bootstrap/self-evolution concerns.
+
+`Team Decision Log` must remain product data. System logic, scripts, route
+selection, and deployment profiles should stay generic enough that another idea
+can replace the pilot without adding a new product-specific SpecGraph flow.
 
 The desired public deployment shape is one SpecSpace deployment with distinct
 workspace routes:
@@ -201,6 +218,33 @@ This separates the read path from the write path:
   service and validation result.
 
 ## Roadmap
+
+### Immediate Product Workspace Execution Order
+
+The current execution order is:
+
+1. **SpecSpace product workspace workflow lane.** Show a compact read-only
+   chain for intake, candidate graph, pre-SIB, repair, materialization,
+   promotion gate, Platform promotion request, and Git Service execution. The
+   surface should answer "where are we and what is the next handoff?" without
+   granting write authority.
+2. **Git Service post-review and read-model orchestration.** Extend the current
+   local executor path beyond `prepare-worktree`, `commit-worktree`, and
+   `open-review` so review status and read-model publication become explicit
+   service operations rather than separate operator knowledge.
+3. **Real idea intake / event-storming entry point.** Add a user-facing intake
+   source where a raw idea becomes structured actors, events, commands,
+   policies, constraints, vocabulary questions, and context-completion
+   questions. The output remains candidate state until gates pass.
+4. **Ontology applicability in product review.** Continue compiler-backed
+   layers, `modelApplicability`, and change classification so product
+   candidates can explain which ontology layer and applicability frame each
+   claim depends on.
+
+Platform should not introduce a separate task-tracking CLI yet. Markdown
+roadmaps plus GitHub PR history remain the source of truth. If automation is
+needed, prefer small read-only status commands in `scripts/platform.py` over a
+new tracker.
 
 ### 1. Ontology 039: Layered Ontology Compiler Model
 
@@ -365,7 +409,9 @@ Defer these until the review loop above is stable:
 
 ### 9. Autonomous Idea-To-Spec Loop
 
-Status: active product-facing line after the SpecAuthor prompt-side stack.
+Status: implemented through the first active candidate source and public
+product workspace route; the next slices are workflow review, Git Service
+closure, and real intake.
 
 Add a bounded authoring loop that can create a full candidate graph from a raw
 idea without human review on every node:
@@ -382,23 +428,23 @@ idea without human review on every node:
   unresolved refs, and implementation-readiness signals;
 - landed SpecGraph artifact: autonomous repair loop that can revise candidate
   graph state until metrics reach configured thresholds;
-- landed SpecSpace workspace that shows the candidate graph, metric deltas,
-  repair history, and remaining blockers;
+- landed SpecSpace workspace route that separates the product pilot from
+  SpecGraph bootstrap/showcase state;
 - landed SpecGraph promotion gate artifact and SpecSpace read-only promotion
   gate lane;
-- next handoff: Git Service backed repository execution before any production
-  write UX.
+- next handoff: Git Service backed repository execution and read-model
+  publication before any production write UX.
 
-The next implementation target for this line is the Team Decision Log pilot:
+The next implementation target for this line is to remove remaining pilot
+specificity from the system layer while keeping Team Decision Log as data:
 
-- declare an active candidate source rather than publishing
-  `no_active_candidate` placeholders;
-- publish public-safe candidate artifacts under a product workspace manifest;
+- publish public-safe candidate artifacts under product workspace manifests;
 - keep raw prompt text, private operator notes, and local paths out of public
   bundles;
 - make promotion requests target only `product_spec_workspace` repositories;
-- preserve `specgraph.space/` as the SpecGraph showcase while using
-  `specgraph.space/team-decision-log` for the product pilot.
+- preserve `specgraph.space/` as the SpecGraph showcase while allowing product
+  routes such as `specgraph.space/team-decision-log` to point at independent
+  workspace manifests.
 
 ### 10. Git-Backed Graph Repository Service
 
@@ -466,17 +512,20 @@ Completed Git Service foundation:
    spec workspaces, while `specgraph_bootstrap_internal` keeps Git Service
    writes in dry-run-only mode.
 
-The next valuable implementation choices are:
+The previous valuable implementation choices have partially landed: active
+candidate source, workspace route selection, controlled promotion UI, and
+deployment lane isolation are now present. The next valuable implementation
+choices are:
 
-1. SpecGraph: connect Team Decision Log as the first real active idea-to-spec
-   candidate source so the public handoff artifacts can move from
-   `no_active_candidate` placeholders to real candidate materialization and
-   promotion gate data.
-2. SpecSpace: add workspace-route selection so `specgraph.space/` opens the
-   SpecGraph showcase and `specgraph.space/team-decision-log` opens the product
-   idea-to-spec workbench without bootstrap/self-evolution lanes.
-3. Platform: move the Git Service boundary from local adapter orchestration
-   toward a hosted or queue-backed service implementation.
+1. SpecSpace: make the product workspace show a derived workflow lane and next
+   operator handoff across candidate graph, pre-SIB, repair, promotion gate, and
+   Git Service reports.
+2. Platform: move the Git Service boundary from local adapter orchestration
+   toward explicit post-review status and read-model publication operations,
+   then toward a hosted or queue-backed service implementation.
+3. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
+   become structured event-storming input without adding a product-specific
+   script.
 4. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 

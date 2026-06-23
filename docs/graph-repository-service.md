@@ -138,6 +138,28 @@ not merge reviews, accept specs, write Ontology packages, or publish private
 artifacts. Use `--open-review-dry-run` when the operator wants to validate the
 handoff without pushing a branch or creating a pull request.
 
+After a review exists, the post-review lifecycle is handled by a separate Git
+Service finalization command:
+
+```bash
+scripts/platform.py git-service finalize-promotion \
+  --contract git-service-operation-contract.example.json \
+  --open-review-report .platform/candidates/my-idea-v1-worktree/.platform/graph_repository_open_review_report.json \
+  --worktree-dir .platform/candidates/my-idea-v1-worktree \
+  --bundle-dir ../SpecGraph/dist/specgraph-public \
+  --output-dir dist/specgraph-public
+```
+
+`finalize-promotion` calls:
+
+1. `graph-repository review-status`;
+2. `graph-repository publish-read-model`, only when review state is `merged`.
+
+The command writes `platform_git_service_promotion_finalization_report` so
+SpecSpace and operators can inspect the post-review step as part of the same
+promotion lifecycle. It does not merge reviews, auto-accept specs, write
+Ontology packages, or publish read models from an unmerged review.
+
 ## Validate
 
 ```bash

@@ -1737,6 +1737,260 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def git_service_finalize_promotion(args: argparse.Namespace) -> int:
+    contract_path = Path(args.contract)
+    open_review_report_path = Path(args.open_review_report).resolve()
+    worktree_dir = Path(args.worktree_dir).resolve()
+    bundle_dir = Path(args.bundle_dir).resolve()
+    output_dir = Path(args.output_dir).resolve()
+    contract = load_json_mapping(contract_path, label="git service contract")
+    diagnostics = [
+        *validate_git_service_operation_contract_schema(contract),
+        *git_service_operation_contract_semantic_diagnostics(contract),
+    ]
+    operation_records: list[dict[str, Any]] = []
+    command_results: list[dict[str, Any]] = []
+    report_refs: dict[str, str] = {}
+    review_state = "unknown"
+    read_model_published = False
+
+    preflight_error_count = sum(
+        1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+    )
+    if preflight_error_count == 0:
+        review_status_command = [
+            "graph-repository",
+            "review-status",
+            "--open-review-report",
+            str(open_review_report_path),
+            "--worktree-dir",
+            str(worktree_dir),
+            "--gh-bin",
+            args.gh_bin,
+            "--format",
+            "json",
+        ]
+        if args.repo:
+            review_status_command.extend(["--repo", args.repo])
+        review_payload, review_result, review_diagnostic = run_platform_json_command(
+            review_status_command
+        )
+        command_results.append(review_result)
+        if review_diagnostic is not None:
+            diagnostics.append(review_diagnostic)
+        review_ok = review_payload is not None and review_payload.get("ok") is True
+        review_state = (
+            str(review_payload.get("review_state"))
+            if review_payload is not None
+            and isinstance(review_payload.get("review_state"), str)
+            else "unknown"
+        )
+        review_status_report = (
+            worktree_dir
+            / ".platform"
+            / "graph_repository_review_status_report.json"
+        )
+        if review_ok:
+            report_refs["review_status"] = str(review_status_report)
+        operation_records.append(
+            git_service_operation_record(
+                name="review_status",
+                status="succeeded" if review_ok else "failed",
+                request_artifact_kind="platform_git_service_review_status_request",
+                response_artifact_kind="platform_git_service_review_status_response",
+                report_ref=str(review_status_report) if review_ok else None,
+                adapter_command=review_status_command,
+                diagnostics=[review_diagnostic] if review_diagnostic else [],
+            )
+        )
+
+        if review_ok and review_state == "merged":
+            publish_command = [
+                "graph-repository",
+                "publish-read-model",
+                "--review-status-report",
+                str(review_status_report),
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(output_dir),
+                "--manifest-name",
+                args.manifest_name,
+                "--format",
+                "json",
+            ]
+            if args.dry_run:
+                publish_command.append("--dry-run")
+            publish_payload, publish_result, publish_diagnostic = (
+                run_platform_json_command(publish_command)
+            )
+            command_results.append(publish_result)
+            if publish_diagnostic is not None:
+                diagnostics.append(publish_diagnostic)
+            publish_ok = (
+                publish_payload is not None and publish_payload.get("ok") is True
+            )
+            read_model_published = (
+                publish_payload is not None
+                and nested_mapping(publish_payload, "summary").get("published")
+                is True
+            )
+            publish_report = (
+                output_dir
+                / ".platform"
+                / "graph_repository_publish_read_model_report.json"
+            )
+            if publish_ok:
+                report_refs["publish_read_model"] = str(publish_report)
+            operation_records.append(
+                git_service_operation_record(
+                    name="publish_read_model",
+                    status="dry_run" if publish_ok and args.dry_run else "succeeded"
+                    if publish_ok
+                    else "failed",
+                    request_artifact_kind=(
+                        "platform_git_service_publish_read_model_request"
+                    ),
+                    response_artifact_kind=(
+                        "platform_git_service_publish_read_model_response"
+                    ),
+                    report_ref=str(publish_report) if publish_ok else None,
+                    adapter_command=publish_command,
+                    diagnostics=[publish_diagnostic] if publish_diagnostic else [],
+                )
+            )
+        elif review_ok:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_review_not_merged",
+                    subject="review_state",
+                    message="read-model publication requires merged review status",
+                )
+            )
+            operation_records.append(
+                git_service_operation_record(
+                    name="publish_read_model",
+                    status="skipped_review_not_merged",
+                    request_artifact_kind=(
+                        "platform_git_service_publish_read_model_request"
+                    ),
+                    response_artifact_kind=(
+                        "platform_git_service_publish_read_model_response"
+                    ),
+                )
+            )
+        else:
+            operation_records.append(
+                git_service_operation_record(
+                    name="publish_read_model",
+                    status="skipped_review_status_failed",
+                    request_artifact_kind=(
+                        "platform_git_service_publish_read_model_request"
+                    ),
+                    response_artifact_kind=(
+                        "platform_git_service_publish_read_model_response"
+                    ),
+                )
+            )
+    else:
+        operation_records.extend(
+            [
+                git_service_operation_record(
+                    name="review_status",
+                    status="skipped_preflight_failed",
+                    request_artifact_kind="platform_git_service_review_status_request",
+                    response_artifact_kind=(
+                        "platform_git_service_review_status_response"
+                    ),
+                ),
+                git_service_operation_record(
+                    name="publish_read_model",
+                    status="skipped_preflight_failed",
+                    request_artifact_kind=(
+                        "platform_git_service_publish_read_model_request"
+                    ),
+                    response_artifact_kind=(
+                        "platform_git_service_publish_read_model_response"
+                    ),
+                ),
+            ]
+        )
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and all(
+        operation["status"] in {"succeeded", "dry_run"}
+        for operation in operation_records
+    )
+    output_path = Path(args.output) if args.output else (
+        worktree_dir / ".platform" / "git_service_promotion_finalization_report.json"
+    )
+    report = {
+        "schema_version": 1,
+        "artifact_kind": "platform_git_service_promotion_finalization_report",
+        "generated_at": utc_now_iso(),
+        "contract_ref": str(contract_path),
+        "open_review_report_ref": str(open_review_report_path),
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "review_state": review_state,
+        "worktree_dir": str(worktree_dir),
+        "bundle_dir": str(bundle_dir),
+        "output_dir": str(output_dir),
+        "operations": operation_records,
+        "adapter_command_results": command_results,
+        "report_refs": report_refs,
+        "authority_boundary": {
+            "specspace_direct_git_write": False,
+            "canonical_spec_mutation_without_review": False,
+            "ontology_package_write": False,
+            "auto_merge": False,
+            "private_artifact_publication": False,
+        },
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "operation_count": len(operation_records),
+            "completed_operation_count": sum(
+                1
+                for operation in operation_records
+                if operation["status"] in {"succeeded", "dry_run"}
+            ),
+            "read_model_published": read_model_published,
+        },
+    }
+
+    if not args.no_write_report and (ok or output_path.parent.exists()):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "review_state": review_state,
+                        "status": "ok" if ok else "blocked",
+                        "published": str(read_model_published),
+                    }
+                ],
+                [
+                    ("review_state", "REVIEW"),
+                    ("status", "STATUS"),
+                    ("published", "PUBLISHED"),
+                ],
+            )
+        )
+    return 0 if ok else 1
+
+
 def nested_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
     value = payload.get(key)
     return value if isinstance(value, dict) else {}
@@ -5423,6 +5677,73 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     git_service_execute_parser.set_defaults(func=git_service_execute_promotion)
+    git_service_finalize_parser = git_service_subcommands.add_parser(
+        "finalize-promotion",
+        help=(
+            "Inspect review status and publish a read model through the Git "
+            "Service post-review boundary."
+        ),
+    )
+    git_service_finalize_parser.add_argument(
+        "--contract",
+        required=True,
+        help="Path to a Git Service operation contract JSON artifact.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--open-review-report",
+        required=True,
+        help="Path to a graph repository open-review report.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--worktree-dir",
+        required=True,
+        help="Candidate worktree that owns the open-review report.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--bundle-dir",
+        required=True,
+        help="Public-safe read-model bundle directory to publish after merge.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Destination directory for the published read model.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--manifest-name",
+        default="artifact_manifest.json",
+        help="Required bundle manifest file name.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--repo",
+        help="Optional GitHub repository passed to gh as owner/name.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--gh-bin",
+        default="gh",
+        help="GitHub CLI executable to use for review-status.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Inspect review state and validate read-model publication only.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--output",
+        help="Optional path where the finalization report JSON should be written.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the finalization report.",
+    )
+    git_service_finalize_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    git_service_finalize_parser.set_defaults(func=git_service_finalize_promotion)
 
     graph_repository_parser = subcommands.add_parser(
         "graph-repository",
