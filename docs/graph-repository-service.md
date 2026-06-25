@@ -206,19 +206,34 @@ The planner requires these SpecGraph artifacts:
 - `product_ontology_gap_review_decisions.json`;
 - `idea_to_spec_answer_rerun_input.json`;
 - `idea_to_spec_rerun_preview.json`;
-- `idea_to_spec_rerun_materialization.json`.
+- `idea_to_spec_rerun_materialization.json`;
+- `idea_to_spec_repair_session.json`.
 
 The clarification request artifact is retained as review evidence even when its
 own readiness state still says `clarification_required`; the accepted answers,
 typed ontology decisions, rerun input, rerun preview, and rerun materialization
-must be ready before branch preparation. If the rerun preview or materialized
-candidate preview still reports unresolved ontology gaps, the plan remains
-`ready_for_branch: false`.
+must be ready before branch preparation. The repair session journal is the
+durable handoff state: it must remain review-only, reference the expected
+source artifacts, identify the same product candidate/workspace, report ready
+intermediate artifacts, and set `ready_for_candidate_approval: true` before the
+Graph Repository Service can mark branch preparation ready. If the rerun
+preview, materialized candidate preview, or repair session journal still reports
+unresolved ontology gaps, the plan remains `ready_for_branch: false`.
+
+`ready_for_platform_promotion` is intentionally not required at this stage. It
+becomes relevant only after a separate `candidate_approval_decision` authorizes
+promotion into the Git Service flow.
 
 Each artifact must remain review-only:
 
 - `canonical_mutations_allowed: false`;
 - `tracked_artifacts_written: false`.
+
+The repair session journal additionally must keep all authority flags false,
+including branch/commit creation, prompt execution, candidate mutation, ontology
+term acceptance, ontology package writes, pull request creation, and read-model
+publication. Its privacy boundary must keep raw idea text, raw prompts, raw
+model output, and raw operator notes unpublished.
 
 The planner does not run Git, create commits, open pull requests, publish read
 models, write Ontology packages, or mutate canonical SpecGraph specs. It only

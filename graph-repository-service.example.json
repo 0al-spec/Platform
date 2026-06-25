@@ -25,7 +25,8 @@
       "product_ontology_gap_review_decisions",
       "idea_to_spec_answer_rerun_input",
       "idea_to_spec_rerun_preview",
-      "idea_to_spec_rerun_materialization"
+      "idea_to_spec_rerun_materialization",
+      "idea_to_spec_repair_session"
     ],
     "required_before_commit": [
       "candidate_repair_loop_report",

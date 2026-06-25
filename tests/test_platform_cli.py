@@ -79,9 +79,66 @@ class PlatformCliTests(unittest.TestCase):
         rerun_input_ready: bool = True,
         rerun_preview_ready: bool = True,
         rerun_materialization_ready: bool = True,
+        repair_session_ready: bool = True,
+        repair_session_intermediate_ready: bool | None = None,
+        repair_session_ready_for_candidate_approval: bool | None = None,
+        repair_session_authority_expanded: bool = False,
+        repair_session_privacy_expanded: bool = False,
+        repair_session_stale_source_ref: bool = False,
         unresolved_ontology_gap_count: object = 0,
         include_unresolved_ontology_gap_count: bool = True,
     ) -> None:
+        unresolved_count_is_clear = (
+            include_unresolved_ontology_gap_count
+            and isinstance(unresolved_ontology_gap_count, int)
+            and unresolved_ontology_gap_count == 0
+        )
+        if repair_session_intermediate_ready is None:
+            repair_session_intermediate_ready = all(
+                (
+                    clarification_answers_ready,
+                    ontology_decisions_ready,
+                    rerun_input_ready,
+                    rerun_preview_ready,
+                    rerun_materialization_ready,
+                )
+            )
+        if repair_session_ready_for_candidate_approval is None:
+            repair_session_ready_for_candidate_approval = all(
+                (
+                    candidate_ready,
+                    repair_ready,
+                    context_required_count == 0,
+                    repair_session_intermediate_ready,
+                    unresolved_count_is_clear,
+                )
+            )
+        repair_session_blockers: list[str] = []
+        if not candidate_ready:
+            repair_session_blockers.append("candidate_not_ready")
+        if not repair_ready:
+            repair_session_blockers.append("repair_loop_not_ready")
+        if context_required_count:
+            repair_session_blockers.append("repair_context_required")
+        if not clarification_answers_ready:
+            repair_session_blockers.append("clarification_answers_not_ready")
+        if not ontology_decisions_ready:
+            repair_session_blockers.append("ontology_gap_decisions_not_ready")
+        if not rerun_input_ready:
+            repair_session_blockers.append("rerun_input_not_ready")
+        if not rerun_preview_ready:
+            repair_session_blockers.append("rerun_preview_not_ready")
+        if not rerun_materialization_ready:
+            repair_session_blockers.append("rerun_materialization_not_ready")
+        if not unresolved_count_is_clear:
+            repair_session_blockers.append("unresolved_ontology_gaps")
+        if (
+            not repair_session_ready_for_candidate_approval
+            and not repair_session_blockers
+        ):
+            repair_session_blockers.append(
+                "repair_session_not_ready_for_candidate_approval"
+            )
         rerun_preview_summary: dict[str, object] = {
             "resolved_ontology_gap_count": 1,
         }
@@ -96,6 +153,30 @@ class PlatformCliTests(unittest.TestCase):
             rerun_materialization_summary["unresolved_ontology_gap_count"] = (
                 unresolved_ontology_gap_count
             )
+        repair_session_source_refs = {
+            "active_candidate": "runs/active_idea_to_spec_candidate.json",
+            "clarification_requests": "runs/idea_to_spec_clarification_requests.json",
+            "clarification_answers": "runs/idea_to_spec_clarification_answers.json",
+            "ontology_decisions": "runs/product_ontology_gap_review_decisions.json",
+            "rerun_input": "runs/idea_to_spec_answer_rerun_input.json",
+            "rerun_preview": "runs/idea_to_spec_rerun_preview.json",
+            "rerun_materialization": "runs/idea_to_spec_rerun_materialization.json",
+            "promotion_gate": "runs/idea_to_spec_promotion_gate.json",
+        }
+        if repair_session_stale_source_ref:
+            repair_session_source_refs["rerun_preview"] = "runs/stale_preview.json"
+        repair_session_source_artifacts = {
+            key: {
+                "artifact_key": key,
+                "source_ref": source_ref,
+                "artifact_kind": key,
+                "readiness": {
+                    "ready": True,
+                    "review_state": "ready",
+                },
+            }
+            for key, source_ref in repair_session_source_refs.items()
+        }
         artifacts = {
             "idea_event_storming_intake.json": {
                 "schema_version": 1,
@@ -224,6 +305,73 @@ class PlatformCliTests(unittest.TestCase):
                     else "rerun_materialization_blocked",
                 },
                 "summary": rerun_materialization_summary,
+            },
+            "idea_to_spec_repair_session.json": {
+                "schema_version": 1,
+                "artifact_kind": "idea_to_spec_repair_session_journal",
+                "contract_ref": "specgraph.idea-to-spec.repair-session-journal.v0.1",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "authority_boundary": {
+                    "may_accept_ontology_terms": False,
+                    "may_apply_answers_to_source_artifacts": False,
+                    "may_apply_decisions_to_source_artifacts": False,
+                    "may_create_branch_or_commit": repair_session_authority_expanded,
+                    "may_execute_prompt_agent": False,
+                    "may_mark_candidate_graph_accepted": False,
+                    "may_mutate_candidate_source_artifacts": False,
+                    "may_mutate_canonical_specs": False,
+                    "may_open_pull_request": False,
+                    "may_publish_read_model": False,
+                    "may_write_ontology_lockfile": False,
+                    "may_write_ontology_package": False,
+                },
+                "privacy_boundary": {
+                    "raw_idea_text_published": repair_session_privacy_expanded,
+                    "raw_model_output_published": False,
+                    "raw_operator_note_published": False,
+                    "raw_prompt_published": False,
+                    "static_flags_are_asserted_invariants": True,
+                },
+                "session": {
+                    "candidate_id": "idea-alpha",
+                    "workflow_lane": "product_idea_to_spec",
+                    "target_repository_role": "product_spec_workspace",
+                    "workspace_route": "/idea-alpha",
+                },
+                "readiness": {
+                    "ready": repair_session_ready,
+                    "review_state": "repair_session_journal_ready"
+                    if repair_session_ready
+                    else "repair_session_journal_blocked",
+                },
+                "readiness_impact": {
+                    "blocked_by": repair_session_blockers,
+                    "intermediate_artifacts_ready": repair_session_intermediate_ready,
+                    "ready_for_candidate_approval": (
+                        repair_session_ready_for_candidate_approval
+                    ),
+                    "ready_for_platform_promotion": False,
+                    "unresolved_ontology_gap_count": (
+                        unresolved_ontology_gap_count
+                        if include_unresolved_ontology_gap_count
+                        else None
+                    ),
+                },
+                "source_artifacts": repair_session_source_artifacts,
+                "summary": {
+                    "candidate_id": "idea-alpha",
+                    "workflow_lane": "product_idea_to_spec",
+                    "ready_for_candidate_approval": (
+                        repair_session_ready_for_candidate_approval
+                    ),
+                    "unresolved_ontology_gap_count": (
+                        unresolved_ontology_gap_count
+                        if include_unresolved_ontology_gap_count
+                        else None
+                    ),
+                    "source_artifact_count": len(repair_session_source_artifacts),
+                },
             },
         }
         for filename, payload in artifacts.items():
@@ -1823,6 +1971,35 @@ workspaces:
         self.assertIn("graph_repository_contract_schema_invalid", codes)
         self.assertIn("graph_repository_validation_gate_empty", codes)
 
+    def test_graph_repository_validate_requires_repair_session_branch_gate(
+        self,
+    ) -> None:
+        contract = json.loads(
+            (REPO_ROOT / "graph-repository-service.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        contract["validation_gates"]["required_before_branch"].remove(
+            "idea_to_spec_repair_session"
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(contract, handle)
+            handle.flush()
+
+            result = self.run_cli(
+                "graph-repository",
+                "validate",
+                "--contract",
+                handle.name,
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_repair_session_gate_missing", codes)
+
     def test_graph_repository_plan_builds_readonly_execution_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             runs_dir = Path(tmp_dir)
@@ -1888,6 +2065,123 @@ workspaces:
         payload = json.loads(result.stdout)
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("graph_repository_artifact_missing", codes)
+        self.assertFalse(payload["ok"])
+
+    def test_graph_repository_plan_requires_repair_session_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(runs_dir)
+            (runs_dir / "idea_to_spec_repair_session.json").unlink()
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        missing = [
+            diagnostic
+            for diagnostic in payload["diagnostics"]
+            if diagnostic["code"] == "graph_repository_artifact_missing"
+        ]
+        self.assertTrue(
+            any(
+                "idea_to_spec_repair_session.json" in diagnostic["subject"]
+                for diagnostic in missing
+            )
+        )
+        self.assertFalse(payload["ok"])
+
+    def test_graph_repository_plan_blocks_when_repair_session_not_approval_ready(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                repair_session_ready_for_candidate_approval=False,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        operations = {
+            operation["name"]: operation for operation in payload["operations"]
+        }
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["ready_for_branch"])
+        blockers = set(operations["prepare_branch"]["reason"].split(","))
+        self.assertIn("repair_session_not_ready_for_candidate_approval", blockers)
+
+    def test_graph_repository_plan_rejects_stale_repair_session_source_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                repair_session_stale_source_ref=True,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_repair_session_source_ref_stale", codes)
+        self.assertFalse(payload["ok"])
+
+    def test_graph_repository_plan_rejects_write_capable_repair_session(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                repair_session_authority_expanded=True,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_repair_session_authority_expanded", codes)
         self.assertFalse(payload["ok"])
 
     def test_graph_repository_plan_blocks_when_candidate_is_not_ready(self) -> None:
