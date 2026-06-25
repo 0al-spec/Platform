@@ -2389,9 +2389,35 @@ def graph_repository_operation(
     }
 
 
-def graph_repository_summary_int(payload: dict[str, Any], key: str) -> int:
-    value = nested_mapping(payload, "summary").get(key, 0)
-    return value if isinstance(value, int) else 0
+def graph_repository_required_summary_count(
+    payload: dict[str, Any],
+    *,
+    artifact_key: str,
+    key: str,
+) -> tuple[int, list[Diagnostic]]:
+    summary = nested_mapping(payload, "summary")
+    subject = f"{artifact_key}.summary.{key}"
+    if key not in summary:
+        return 0, [
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_required_summary_count_missing",
+                subject=subject,
+                message="required SpecGraph run artifact summary count is missing",
+            )
+        ]
+
+    value = summary.get(key)
+    if type(value) is not int or value < 0:
+        return 0, [
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_required_summary_count_invalid",
+                subject=subject,
+                message="required SpecGraph run artifact summary count must be a non-negative integer",
+            )
+        ]
+    return value, []
 
 
 def build_graph_repository_execution_plan(
@@ -2487,13 +2513,28 @@ def build_graph_repository_execution_plan(
         context_required_count = repair_summary.get("context_required_count", 0)
         if not isinstance(context_required_count, int):
             context_required_count = 0
-        rerun_preview_unresolved_gap_count = graph_repository_summary_int(
-            rerun_preview,
-            "unresolved_ontology_gap_count",
+        rerun_preview_unresolved_gap_count, rerun_preview_count_diagnostics = (
+            graph_repository_required_summary_count(
+                rerun_preview,
+                artifact_key="idea_to_spec_rerun_preview",
+                key="unresolved_ontology_gap_count",
+            )
         )
-        rerun_materialization_unresolved_gap_count = graph_repository_summary_int(
+        diagnostics.extend(rerun_preview_count_diagnostics)
+        (
+            rerun_materialization_unresolved_gap_count,
+            rerun_materialization_count_diagnostics,
+        ) = graph_repository_required_summary_count(
             rerun_materialization,
-            "unresolved_ontology_gap_count",
+            artifact_key="idea_to_spec_rerun_materialization",
+            key="unresolved_ontology_gap_count",
+        )
+        diagnostics.extend(rerun_materialization_count_diagnostics)
+        rerun_preview_unresolved_gap_count_invalid = bool(
+            rerun_preview_count_diagnostics
+        )
+        rerun_materialization_unresolved_gap_count_invalid = bool(
+            rerun_materialization_count_diagnostics
         )
 
         prepare_blockers: list[str] = []
@@ -2517,6 +2558,10 @@ def build_graph_repository_execution_plan(
             prepare_blockers.append("rerun_preview_not_ready")
         if rerun_materialization_readiness.get("ready") is not True:
             prepare_blockers.append("rerun_materialization_not_ready")
+        if rerun_preview_unresolved_gap_count_invalid:
+            prepare_blockers.append("rerun_preview_unresolved_gap_count_invalid")
+        if rerun_materialization_unresolved_gap_count_invalid:
+            prepare_blockers.append("rerun_materialization_unresolved_gap_count_invalid")
         if rerun_preview_unresolved_gap_count > 0:
             prepare_blockers.append("rerun_preview_unresolved_ontology_gaps")
         if rerun_materialization_unresolved_gap_count > 0:
@@ -2580,6 +2625,7 @@ def build_graph_repository_execution_plan(
             ),
         ]
 
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     plan = {
         "schema_version": 1,
         "artifact_kind": "platform_graph_repository_execution_plan",

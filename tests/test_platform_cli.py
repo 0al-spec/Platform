@@ -79,8 +79,23 @@ class PlatformCliTests(unittest.TestCase):
         rerun_input_ready: bool = True,
         rerun_preview_ready: bool = True,
         rerun_materialization_ready: bool = True,
-        unresolved_ontology_gap_count: int = 0,
+        unresolved_ontology_gap_count: object = 0,
+        include_unresolved_ontology_gap_count: bool = True,
     ) -> None:
+        rerun_preview_summary: dict[str, object] = {
+            "resolved_ontology_gap_count": 1,
+        }
+        rerun_materialization_summary: dict[str, object] = {
+            "removed_gap_count": 1,
+            "resolved_ontology_gap_count": 1,
+        }
+        if include_unresolved_ontology_gap_count:
+            rerun_preview_summary["unresolved_ontology_gap_count"] = (
+                unresolved_ontology_gap_count
+            )
+            rerun_materialization_summary["unresolved_ontology_gap_count"] = (
+                unresolved_ontology_gap_count
+            )
         artifacts = {
             "idea_event_storming_intake.json": {
                 "schema_version": 1,
@@ -195,10 +210,7 @@ class PlatformCliTests(unittest.TestCase):
                     if rerun_preview_ready
                     else "rerun_preview_blocked",
                 },
-                "summary": {
-                    "resolved_ontology_gap_count": 1,
-                    "unresolved_ontology_gap_count": unresolved_ontology_gap_count,
-                },
+                "summary": rerun_preview_summary,
             },
             "idea_to_spec_rerun_materialization.json": {
                 "schema_version": 1,
@@ -211,11 +223,7 @@ class PlatformCliTests(unittest.TestCase):
                     if rerun_materialization_ready
                     else "rerun_materialization_blocked",
                 },
-                "summary": {
-                    "removed_gap_count": 1,
-                    "resolved_ontology_gap_count": 1,
-                    "unresolved_ontology_gap_count": unresolved_ontology_gap_count,
-                },
+                "summary": rerun_materialization_summary,
             },
         }
         for filename, payload in artifacts.items():
@@ -1942,6 +1950,64 @@ workspaces:
         blockers = set(operations["prepare_branch"]["reason"].split(","))
         self.assertIn("rerun_preview_unresolved_ontology_gaps", blockers)
         self.assertIn("rerun_materialization_unresolved_ontology_gaps", blockers)
+
+    def test_graph_repository_plan_blocks_missing_unresolved_gap_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                include_unresolved_ontology_gap_count=False,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        operations = {
+            operation["name"]: operation for operation in payload["operations"]
+        }
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_required_summary_count_missing", codes)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["ready_for_branch"])
+        blockers = set(operations["prepare_branch"]["reason"].split(","))
+        self.assertIn("rerun_preview_unresolved_gap_count_invalid", blockers)
+        self.assertIn("rerun_materialization_unresolved_gap_count_invalid", blockers)
+
+    def test_graph_repository_plan_blocks_malformed_unresolved_gap_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                unresolved_ontology_gap_count="unknown",
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_required_summary_count_invalid", codes)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["ready_for_branch"])
 
     def test_graph_repository_plan_rejects_artifact_authority_expansion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
