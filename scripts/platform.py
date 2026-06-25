@@ -55,6 +55,30 @@ GRAPH_REPOSITORY_REQUIRED_RUN_ARTIFACTS = {
         "candidate_repair_loop_report.json",
         "candidate_repair_loop_report",
     ),
+    "idea_to_spec_clarification_requests": (
+        "idea_to_spec_clarification_requests.json",
+        "idea_to_spec_clarification_requests",
+    ),
+    "idea_to_spec_clarification_answers": (
+        "idea_to_spec_clarification_answers.json",
+        "idea_to_spec_clarification_answers",
+    ),
+    "product_ontology_gap_review_decisions": (
+        "product_ontology_gap_review_decisions.json",
+        "product_ontology_gap_review_decisions",
+    ),
+    "idea_to_spec_answer_rerun_input": (
+        "idea_to_spec_answer_rerun_input.json",
+        "idea_to_spec_answer_rerun_input",
+    ),
+    "idea_to_spec_rerun_preview": (
+        "idea_to_spec_rerun_preview.json",
+        "idea_to_spec_rerun_preview",
+    ),
+    "idea_to_spec_rerun_materialization": (
+        "idea_to_spec_rerun_materialization.json",
+        "idea_to_spec_rerun_materialization",
+    ),
 }
 GRAPH_REPOSITORY_PROMOTION_PATH_PREFIXES = (
     "specs/",
@@ -2365,6 +2389,37 @@ def graph_repository_operation(
     }
 
 
+def graph_repository_required_summary_count(
+    payload: dict[str, Any],
+    *,
+    artifact_key: str,
+    key: str,
+) -> tuple[int, list[Diagnostic]]:
+    summary = nested_mapping(payload, "summary")
+    subject = f"{artifact_key}.summary.{key}"
+    if key not in summary:
+        return 0, [
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_required_summary_count_missing",
+                subject=subject,
+                message="required SpecGraph run artifact summary count is missing",
+            )
+        ]
+
+    value = summary.get(key)
+    if type(value) is not int or value < 0:
+        return 0, [
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_required_summary_count_invalid",
+                subject=subject,
+                message="required SpecGraph run artifact summary count must be a non-negative integer",
+            )
+        ]
+    return value, []
+
+
 def build_graph_repository_execution_plan(
     *,
     contract_path: Path,
@@ -2432,13 +2487,55 @@ def build_graph_repository_execution_plan(
         candidate = payloads["candidate_spec_graph"]
         pre_sib = payloads["pre_sib_coherence_report"]
         repair = payloads["candidate_repair_loop_report"]
+        clarification_answers = payloads["idea_to_spec_clarification_answers"]
+        ontology_decisions = payloads["product_ontology_gap_review_decisions"]
+        rerun_input = payloads["idea_to_spec_answer_rerun_input"]
+        rerun_preview = payloads["idea_to_spec_rerun_preview"]
+        rerun_materialization = payloads["idea_to_spec_rerun_materialization"]
         candidate_readiness = nested_mapping(candidate, "pre_sib_readiness")
         pre_sib_readiness = nested_mapping(pre_sib, "readiness")
         repair_readiness = nested_mapping(repair, "readiness")
+        clarification_answers_readiness = nested_mapping(
+            clarification_answers,
+            "readiness",
+        )
+        ontology_decisions_readiness = nested_mapping(
+            ontology_decisions,
+            "readiness",
+        )
+        rerun_input_readiness = nested_mapping(rerun_input, "readiness")
+        rerun_preview_readiness = nested_mapping(rerun_preview, "readiness")
+        rerun_materialization_readiness = nested_mapping(
+            rerun_materialization,
+            "readiness",
+        )
         repair_summary = nested_mapping(repair, "summary")
         context_required_count = repair_summary.get("context_required_count", 0)
         if not isinstance(context_required_count, int):
             context_required_count = 0
+        rerun_preview_unresolved_gap_count, rerun_preview_count_diagnostics = (
+            graph_repository_required_summary_count(
+                rerun_preview,
+                artifact_key="idea_to_spec_rerun_preview",
+                key="unresolved_ontology_gap_count",
+            )
+        )
+        diagnostics.extend(rerun_preview_count_diagnostics)
+        (
+            rerun_materialization_unresolved_gap_count,
+            rerun_materialization_count_diagnostics,
+        ) = graph_repository_required_summary_count(
+            rerun_materialization,
+            artifact_key="idea_to_spec_rerun_materialization",
+            key="unresolved_ontology_gap_count",
+        )
+        diagnostics.extend(rerun_materialization_count_diagnostics)
+        rerun_preview_unresolved_gap_count_invalid = bool(
+            rerun_preview_count_diagnostics
+        )
+        rerun_materialization_unresolved_gap_count_invalid = bool(
+            rerun_materialization_count_diagnostics
+        )
 
         prepare_blockers: list[str] = []
         if candidate_readiness.get("ready") is not True:
@@ -2451,6 +2548,24 @@ def build_graph_repository_execution_plan(
             prepare_blockers.append("repair_loop_not_ready")
         if context_required_count > 0:
             prepare_blockers.append("repair_context_required")
+        if clarification_answers_readiness.get("ready") is not True:
+            prepare_blockers.append("clarification_answers_not_ready")
+        if ontology_decisions_readiness.get("ready") is not True:
+            prepare_blockers.append("ontology_gap_decisions_not_ready")
+        if rerun_input_readiness.get("ready") is not True:
+            prepare_blockers.append("rerun_input_not_ready")
+        if rerun_preview_readiness.get("ready") is not True:
+            prepare_blockers.append("rerun_preview_not_ready")
+        if rerun_materialization_readiness.get("ready") is not True:
+            prepare_blockers.append("rerun_materialization_not_ready")
+        if rerun_preview_unresolved_gap_count_invalid:
+            prepare_blockers.append("rerun_preview_unresolved_gap_count_invalid")
+        if rerun_materialization_unresolved_gap_count_invalid:
+            prepare_blockers.append("rerun_materialization_unresolved_gap_count_invalid")
+        if rerun_preview_unresolved_gap_count > 0:
+            prepare_blockers.append("rerun_preview_unresolved_ontology_gaps")
+        if rerun_materialization_unresolved_gap_count > 0:
+            prepare_blockers.append("rerun_materialization_unresolved_ontology_gaps")
 
         ready_for_branch = not prepare_blockers
         operations = [
@@ -2461,26 +2576,36 @@ def build_graph_repository_execution_plan(
                 evidence=[
                     "idea_event_storming_intake",
                     "candidate_spec_graph",
+                    "idea_to_spec_clarification_requests",
                 ],
             ),
             graph_repository_operation(
                 name="validate_candidate_graph",
-                status="ready",
-                reason="candidate graph and pre-SIB report are available",
+                status="ready" if ready_for_branch else "blocked",
+                reason="candidate graph, pre-SIB, repair chain, and ontology gaps ready"
+                if ready_for_branch
+                else ",".join(prepare_blockers),
                 evidence=[
                     "candidate_spec_graph",
                     "pre_sib_coherence_report",
+                    "idea_to_spec_rerun_preview",
+                    "idea_to_spec_rerun_materialization",
                 ],
             ),
             graph_repository_operation(
                 name="prepare_branch",
                 status="ready" if ready_for_branch else "blocked",
-                reason="pre_sib_and_repair_loop_ready"
+                reason="pre_sib_repair_loop_and_rerun_materialization_ready"
                 if ready_for_branch
                 else ",".join(prepare_blockers),
                 evidence=[
                     "pre_sib_coherence_report",
                     "candidate_repair_loop_report",
+                    "idea_to_spec_clarification_answers",
+                    "product_ontology_gap_review_decisions",
+                    "idea_to_spec_answer_rerun_input",
+                    "idea_to_spec_rerun_preview",
+                    "idea_to_spec_rerun_materialization",
                 ],
             ),
             graph_repository_operation(
@@ -2500,6 +2625,7 @@ def build_graph_repository_execution_plan(
             ),
         ]
 
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     plan = {
         "schema_version": 1,
         "artifact_kind": "platform_graph_repository_execution_plan",

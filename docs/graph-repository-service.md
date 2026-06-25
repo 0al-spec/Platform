@@ -200,7 +200,20 @@ The planner requires these SpecGraph artifacts:
 - `idea_event_storming_intake.json`;
 - `candidate_spec_graph.json`;
 - `pre_sib_coherence_report.json`;
-- `candidate_repair_loop_report.json`.
+- `candidate_repair_loop_report.json`;
+- `idea_to_spec_clarification_requests.json`;
+- `idea_to_spec_clarification_answers.json`;
+- `product_ontology_gap_review_decisions.json`;
+- `idea_to_spec_answer_rerun_input.json`;
+- `idea_to_spec_rerun_preview.json`;
+- `idea_to_spec_rerun_materialization.json`.
+
+The clarification request artifact is retained as review evidence even when its
+own readiness state still says `clarification_required`; the accepted answers,
+typed ontology decisions, rerun input, rerun preview, and rerun materialization
+must be ready before branch preparation. If the rerun preview or materialized
+candidate preview still reports unresolved ontology gaps, the plan remains
+`ready_for_branch: false`.
 
 Each artifact must remain review-only:
 

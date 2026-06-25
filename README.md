@@ -236,7 +236,11 @@ branch or creating a pull request.
 `graph-repository plan` reads the required SpecGraph idea-to-spec run artifacts
 and emits a report-only execution plan for the repository service boundary. The
 planner verifies that the inputs remain review-only and does not run Git, open
-reviews, publish read models, or mutate canonical SpecGraph specs.
+reviews, publish read models, or mutate canonical SpecGraph specs. For
+product idea-to-spec promotion, the required inputs include the clarification
+answers, product ontology gap decisions, rerun input, rerun preview, and rerun
+materialization artifacts; unresolved ontology gaps keep branch preparation
+blocked.
 
 `graph-repository prepare-local` validates a ready execution plan and writes a
 local candidate workspace manifest/report. It calculates the candidate branch

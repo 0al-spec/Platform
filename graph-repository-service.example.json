@@ -20,10 +20,16 @@
     "required_before_branch": [
       "idea_event_storming_intake",
       "candidate_spec_graph",
-      "pre_sib_coherence_report"
+      "pre_sib_coherence_report",
+      "idea_to_spec_clarification_answers",
+      "product_ontology_gap_review_decisions",
+      "idea_to_spec_answer_rerun_input",
+      "idea_to_spec_rerun_preview",
+      "idea_to_spec_rerun_materialization"
     ],
     "required_before_commit": [
       "candidate_repair_loop_report",
+      "idea_to_spec_clarification_requests",
       "ontology_workbench",
       "proposal_tracking_gate"
     ],
