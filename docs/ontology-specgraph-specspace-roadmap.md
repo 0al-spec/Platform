@@ -224,11 +224,13 @@ This separates the read path from the write path:
 The current execution order is:
 
 1. **SpecSpace product workspace workflow lane.** Show a compact read-only
-   chain for intake, candidate graph, pre-SIB, repair, materialization,
-   promotion gate, Platform promotion request, and Git Service execution. The
-   surface should answer "where are we and what is the next handoff?" without
-   granting write authority.
-2. **Git Service post-review and read-model orchestration.** Extend the current
+   chain for intake, candidate graph, pre-SIB, repair session journal,
+   materialization, promotion gate, Platform promotion request, and Git Service
+   execution. The surface should answer "where are we and what is the next
+   handoff?" without granting write authority.
+2. **Git Service post-review and read-model orchestration.** Require the
+   `idea_to_spec_repair_session` journal as the durable readiness handoff before
+   branch preparation, then extend the current
    local executor path beyond `prepare-worktree`, `commit-worktree`, and
    `open-review` so review status and read-model publication become explicit
    service operations rather than separate operator knowledge.

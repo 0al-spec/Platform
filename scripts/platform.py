@@ -79,7 +79,44 @@ GRAPH_REPOSITORY_REQUIRED_RUN_ARTIFACTS = {
         "idea_to_spec_rerun_materialization.json",
         "idea_to_spec_rerun_materialization",
     ),
+    "idea_to_spec_repair_session": (
+        "idea_to_spec_repair_session.json",
+        "idea_to_spec_repair_session_journal",
+    ),
 }
+GRAPH_REPOSITORY_REPAIR_SESSION_CONTRACT_REF = (
+    "specgraph.idea-to-spec.repair-session-journal.v0.1"
+)
+GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS = {
+    "active_candidate": "runs/active_idea_to_spec_candidate.json",
+    "clarification_requests": "runs/idea_to_spec_clarification_requests.json",
+    "clarification_answers": "runs/idea_to_spec_clarification_answers.json",
+    "ontology_decisions": "runs/product_ontology_gap_review_decisions.json",
+    "rerun_input": "runs/idea_to_spec_answer_rerun_input.json",
+    "rerun_preview": "runs/idea_to_spec_rerun_preview.json",
+    "rerun_materialization": "runs/idea_to_spec_rerun_materialization.json",
+    "promotion_gate": "runs/idea_to_spec_promotion_gate.json",
+}
+GRAPH_REPOSITORY_REPAIR_SESSION_AUTHORITY_FLAGS = (
+    "may_accept_ontology_terms",
+    "may_apply_answers_to_source_artifacts",
+    "may_apply_decisions_to_source_artifacts",
+    "may_create_branch_or_commit",
+    "may_execute_prompt_agent",
+    "may_mark_candidate_graph_accepted",
+    "may_mutate_candidate_source_artifacts",
+    "may_mutate_canonical_specs",
+    "may_open_pull_request",
+    "may_publish_read_model",
+    "may_write_ontology_lockfile",
+    "may_write_ontology_package",
+)
+GRAPH_REPOSITORY_REPAIR_SESSION_PRIVATE_FLAGS = (
+    "raw_idea_text_published",
+    "raw_model_output_published",
+    "raw_operator_note_published",
+    "raw_prompt_published",
+)
 GRAPH_REPOSITORY_PROMOTION_PATH_PREFIXES = (
     "specs/",
     "docs/proposals/",
@@ -596,6 +633,22 @@ def graph_repository_contract_semantic_diagnostics(
                         message="validation gate lists must not be empty",
                     )
                 )
+        required_before_branch = validation_gates.get("required_before_branch")
+        if (
+            isinstance(required_before_branch, list)
+            and "idea_to_spec_repair_session" not in required_before_branch
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_repair_session_gate_missing",
+                    subject="validation_gates.required_before_branch",
+                    message=(
+                        "required_before_branch must include "
+                        "`idea_to_spec_repair_session`"
+                    ),
+                )
+            )
 
     authority_boundary = contract.get("authority_boundary")
     if isinstance(authority_boundary, dict):
@@ -2270,6 +2323,17 @@ def nested_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def add_blocker(blockers: list[str], blocker: str) -> None:
+    if blocker and blocker not in blockers:
+        blockers.append(blocker)
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -2420,6 +2484,204 @@ def graph_repository_required_summary_count(
     return value, []
 
 
+def repair_session_readiness_flag(
+    repair_session: dict[str, Any],
+    key: str,
+) -> bool | None:
+    readiness_impact = nested_mapping(repair_session, "readiness_impact")
+    summary = nested_mapping(repair_session, "summary")
+    value = readiness_impact.get(key)
+    if isinstance(value, bool):
+        return value
+    value = summary.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def graph_repository_repair_session_diagnostics(
+    repair_session: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    subject = "runs.idea_to_spec_repair_session.json"
+
+    contract_ref = repair_session.get("contract_ref")
+    if contract_ref != GRAPH_REPOSITORY_REPAIR_SESSION_CONTRACT_REF:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repair_session_contract_mismatch",
+                subject=f"{subject}.contract_ref",
+                message=(
+                    "expected repair session journal contract "
+                    f"`{GRAPH_REPOSITORY_REPAIR_SESSION_CONTRACT_REF}`"
+                ),
+            )
+        )
+
+    authority_boundary = repair_session.get("authority_boundary")
+    if not isinstance(authority_boundary, dict):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repair_session_authority_missing",
+                subject=f"{subject}.authority_boundary",
+                message="repair session journal must declare an authority boundary",
+            )
+        )
+    else:
+        for flag in GRAPH_REPOSITORY_REPAIR_SESSION_AUTHORITY_FLAGS:
+            if authority_boundary.get(flag) is not False:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_repair_session_authority_expanded",
+                        subject=f"{subject}.authority_boundary.{flag}",
+                        message=f"{flag} must be false before Git Service handoff",
+                    )
+                )
+
+    privacy_boundary = repair_session.get("privacy_boundary")
+    if not isinstance(privacy_boundary, dict):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repair_session_privacy_missing",
+                subject=f"{subject}.privacy_boundary",
+                message="repair session journal must declare a privacy boundary",
+            )
+        )
+    else:
+        for flag in GRAPH_REPOSITORY_REPAIR_SESSION_PRIVATE_FLAGS:
+            if privacy_boundary.get(flag) is not False:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_repair_session_privacy_expanded",
+                        subject=f"{subject}.privacy_boundary.{flag}",
+                        message=f"{flag} must be false in public-safe handoff state",
+                    )
+                )
+        if privacy_boundary.get("static_flags_are_asserted_invariants") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_repair_session_privacy_invariant_missing",
+                    subject=(
+                        f"{subject}.privacy_boundary."
+                        "static_flags_are_asserted_invariants"
+                    ),
+                    message="repair session journal must assert privacy invariants",
+                )
+            )
+
+    source_artifacts = repair_session.get("source_artifacts")
+    if not isinstance(source_artifacts, dict):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repair_session_source_refs_missing",
+                subject=f"{subject}.source_artifacts",
+                message="repair session journal must include source artifact refs",
+            )
+        )
+    else:
+        for key, expected_ref in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items():
+            source_entry = source_artifacts.get(key)
+            if not isinstance(source_entry, dict):
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_repair_session_source_ref_missing",
+                        subject=f"{subject}.source_artifacts.{key}",
+                        message=f"missing repair session source ref `{key}`",
+                    )
+                )
+                continue
+            source_ref = source_entry.get("source_ref")
+            if source_ref != expected_ref:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="graph_repository_repair_session_source_ref_stale",
+                        subject=f"{subject}.source_artifacts.{key}.source_ref",
+                        message=(
+                            f"expected `{expected_ref}` but found "
+                            f"`{source_ref if source_ref is not None else 'missing'}`"
+                        ),
+                    )
+                )
+
+    session = nested_mapping(repair_session, "session")
+    summary = nested_mapping(repair_session, "summary")
+    session_candidate = session.get("candidate_id")
+    summary_candidate = summary.get("candidate_id")
+    if not isinstance(session_candidate, str) or not session_candidate:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repair_session_candidate_missing",
+                subject=f"{subject}.session.candidate_id",
+                message="repair session journal must identify the candidate id",
+            )
+        )
+    elif summary_candidate != session_candidate:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repair_session_candidate_mismatch",
+                subject=f"{subject}.summary.candidate_id",
+                message="repair session summary must match session candidate id",
+            )
+        )
+
+    if session.get("workflow_lane") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repair_session_workflow_mismatch",
+                subject=f"{subject}.session.workflow_lane",
+                message="repair session journal must belong to product_idea_to_spec",
+            )
+        )
+    if summary.get("workflow_lane") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repair_session_workflow_mismatch",
+                subject=f"{subject}.summary.workflow_lane",
+                message="repair session summary must belong to product_idea_to_spec",
+            )
+        )
+    if session.get("target_repository_role") != "product_spec_workspace":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_repair_session_repository_role_mismatch",
+                subject=f"{subject}.session.target_repository_role",
+                message=(
+                    "repair session journal must target product_spec_workspace "
+                    "before Git Service handoff"
+                ),
+            )
+        )
+
+    for key in (
+        "intermediate_artifacts_ready",
+        "ready_for_candidate_approval",
+        "ready_for_platform_promotion",
+    ):
+        if repair_session_readiness_flag(repair_session, key) is None:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_repair_session_readiness_flag_missing",
+                    subject=f"{subject}.readiness_impact.{key}",
+                    message=f"repair session journal must report `{key}` as a boolean",
+                )
+            )
+
+    return diagnostics
+
+
 def build_graph_repository_execution_plan(
     *,
     contract_path: Path,
@@ -2446,6 +2708,10 @@ def build_graph_repository_execution_plan(
         if payload is not None:
             payloads[artifact_key] = payload
         diagnostics.extend(artifact_diagnostics)
+
+    repair_session = payloads.get("idea_to_spec_repair_session")
+    if repair_session is not None:
+        diagnostics.extend(graph_repository_repair_session_diagnostics(repair_session))
 
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     operations: list[dict[str, Any]]
@@ -2492,6 +2758,7 @@ def build_graph_repository_execution_plan(
         rerun_input = payloads["idea_to_spec_answer_rerun_input"]
         rerun_preview = payloads["idea_to_spec_rerun_preview"]
         rerun_materialization = payloads["idea_to_spec_rerun_materialization"]
+        repair_session = payloads["idea_to_spec_repair_session"]
         candidate_readiness = nested_mapping(candidate, "pre_sib_readiness")
         pre_sib_readiness = nested_mapping(pre_sib, "readiness")
         repair_readiness = nested_mapping(repair, "readiness")
@@ -2509,6 +2776,8 @@ def build_graph_repository_execution_plan(
             rerun_materialization,
             "readiness",
         )
+        repair_session_readiness = nested_mapping(repair_session, "readiness")
+        repair_session_impact = nested_mapping(repair_session, "readiness_impact")
         repair_summary = nested_mapping(repair, "summary")
         context_required_count = repair_summary.get("context_required_count", 0)
         if not isinstance(context_required_count, int):
@@ -2536,36 +2805,92 @@ def build_graph_repository_execution_plan(
         rerun_materialization_unresolved_gap_count_invalid = bool(
             rerun_materialization_count_diagnostics
         )
+        repair_session_unresolved_gap_count, repair_session_count_diagnostics = (
+            graph_repository_required_summary_count(
+                repair_session,
+                artifact_key="idea_to_spec_repair_session",
+                key="unresolved_ontology_gap_count",
+            )
+        )
+        diagnostics.extend(repair_session_count_diagnostics)
+        repair_session_unresolved_gap_count_invalid = bool(
+            repair_session_count_diagnostics
+        )
 
         prepare_blockers: list[str] = []
         if candidate_readiness.get("ready") is not True:
-            prepare_blockers.append("candidate_not_ready")
+            add_blocker(prepare_blockers, "candidate_not_ready")
         if candidate_readiness.get("review_state") == "context_required":
-            prepare_blockers.append("candidate_context_required")
+            add_blocker(prepare_blockers, "candidate_context_required")
         if pre_sib_readiness.get("ready") is not True:
-            prepare_blockers.append("pre_sib_not_ready")
+            add_blocker(prepare_blockers, "pre_sib_not_ready")
         if repair_readiness.get("ready") is not True:
-            prepare_blockers.append("repair_loop_not_ready")
+            add_blocker(prepare_blockers, "repair_loop_not_ready")
         if context_required_count > 0:
-            prepare_blockers.append("repair_context_required")
+            add_blocker(prepare_blockers, "repair_context_required")
         if clarification_answers_readiness.get("ready") is not True:
-            prepare_blockers.append("clarification_answers_not_ready")
+            add_blocker(prepare_blockers, "clarification_answers_not_ready")
         if ontology_decisions_readiness.get("ready") is not True:
-            prepare_blockers.append("ontology_gap_decisions_not_ready")
+            add_blocker(prepare_blockers, "ontology_gap_decisions_not_ready")
         if rerun_input_readiness.get("ready") is not True:
-            prepare_blockers.append("rerun_input_not_ready")
+            add_blocker(prepare_blockers, "rerun_input_not_ready")
         if rerun_preview_readiness.get("ready") is not True:
-            prepare_blockers.append("rerun_preview_not_ready")
+            add_blocker(prepare_blockers, "rerun_preview_not_ready")
         if rerun_materialization_readiness.get("ready") is not True:
-            prepare_blockers.append("rerun_materialization_not_ready")
+            add_blocker(prepare_blockers, "rerun_materialization_not_ready")
         if rerun_preview_unresolved_gap_count_invalid:
-            prepare_blockers.append("rerun_preview_unresolved_gap_count_invalid")
+            add_blocker(
+                prepare_blockers,
+                "rerun_preview_unresolved_gap_count_invalid",
+            )
         if rerun_materialization_unresolved_gap_count_invalid:
-            prepare_blockers.append("rerun_materialization_unresolved_gap_count_invalid")
+            add_blocker(
+                prepare_blockers,
+                "rerun_materialization_unresolved_gap_count_invalid",
+            )
+        if repair_session_unresolved_gap_count_invalid:
+            add_blocker(
+                prepare_blockers,
+                "repair_session_unresolved_gap_count_invalid",
+            )
         if rerun_preview_unresolved_gap_count > 0:
-            prepare_blockers.append("rerun_preview_unresolved_ontology_gaps")
+            add_blocker(prepare_blockers, "rerun_preview_unresolved_ontology_gaps")
         if rerun_materialization_unresolved_gap_count > 0:
-            prepare_blockers.append("rerun_materialization_unresolved_ontology_gaps")
+            add_blocker(
+                prepare_blockers,
+                "rerun_materialization_unresolved_ontology_gaps",
+            )
+        if repair_session_unresolved_gap_count > 0:
+            add_blocker(prepare_blockers, "repair_session_unresolved_ontology_gaps")
+        if repair_session_readiness.get("ready") is not True:
+            add_blocker(prepare_blockers, "repair_session_not_ready")
+        if (
+            repair_session_readiness_flag(
+                repair_session,
+                "intermediate_artifacts_ready",
+            )
+            is not True
+        ):
+            add_blocker(
+                prepare_blockers,
+                "repair_session_intermediate_artifacts_not_ready",
+            )
+        if (
+            repair_session_readiness_flag(
+                repair_session,
+                "ready_for_candidate_approval",
+            )
+            is not True
+        ):
+            impact_blockers = string_list(repair_session_impact.get("blocked_by"))
+            if impact_blockers:
+                for blocker in impact_blockers:
+                    add_blocker(prepare_blockers, blocker)
+            else:
+                add_blocker(
+                    prepare_blockers,
+                    "repair_session_not_ready_for_candidate_approval",
+                )
 
         ready_for_branch = not prepare_blockers
         operations = [
@@ -2577,6 +2902,7 @@ def build_graph_repository_execution_plan(
                     "idea_event_storming_intake",
                     "candidate_spec_graph",
                     "idea_to_spec_clarification_requests",
+                    "idea_to_spec_repair_session",
                 ],
             ),
             graph_repository_operation(
@@ -2590,6 +2916,7 @@ def build_graph_repository_execution_plan(
                     "pre_sib_coherence_report",
                     "idea_to_spec_rerun_preview",
                     "idea_to_spec_rerun_materialization",
+                    "idea_to_spec_repair_session",
                 ],
             ),
             graph_repository_operation(
@@ -2606,6 +2933,7 @@ def build_graph_repository_execution_plan(
                     "idea_to_spec_answer_rerun_input",
                     "idea_to_spec_rerun_preview",
                     "idea_to_spec_rerun_materialization",
+                    "idea_to_spec_repair_session",
                 ],
             ),
             graph_repository_operation(
