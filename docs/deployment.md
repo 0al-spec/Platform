@@ -297,8 +297,9 @@ self-evolution through tracked deployment profile contracts:
 
 - `deployment-profile.product-idea-to-spec.example.json` exposes the
   idea-to-spec workspace, ontology workspace, pre-SIB metrics, and controlled
-  promotion review after an approved `candidate_approval_decision`. Its Git
-  Service mode is `controlled_promotion`, but only for
+  promotion review after an approved `candidate_approval_decision` and a ready
+  idea-to-spec repair chain. Its Git Service mode is `controlled_promotion`,
+  but only for
   `workflow_lane: product_idea_to_spec` and
   `target_repository_role: product_spec_workspace`.
 - `deployment-profile.specgraph-bootstrap-internal.example.json` exposes

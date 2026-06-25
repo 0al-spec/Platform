@@ -74,6 +74,12 @@ class PlatformCliTests(unittest.TestCase):
         candidate_ready: bool = True,
         repair_ready: bool = True,
         context_required_count: int = 0,
+        clarification_answers_ready: bool = True,
+        ontology_decisions_ready: bool = True,
+        rerun_input_ready: bool = True,
+        rerun_preview_ready: bool = True,
+        rerun_materialization_ready: bool = True,
+        unresolved_ontology_gap_count: int = 0,
     ) -> None:
         artifacts = {
             "idea_event_storming_intake.json": {
@@ -114,6 +120,101 @@ class PlatformCliTests(unittest.TestCase):
                 },
                 "summary": {
                     "context_required_count": context_required_count,
+                },
+            },
+            "idea_to_spec_clarification_requests.json": {
+                "schema_version": 1,
+                "artifact_kind": "idea_to_spec_clarification_requests",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "readiness": {
+                    "ready": False,
+                    "review_state": "clarification_required",
+                },
+                "summary": {
+                    "request_count": 1,
+                    "blocking_request_count": 1,
+                },
+            },
+            "idea_to_spec_clarification_answers.json": {
+                "schema_version": 1,
+                "artifact_kind": "idea_to_spec_clarification_answers",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "readiness": {
+                    "ready": clarification_answers_ready,
+                    "review_state": "answers_ready_for_rerun"
+                    if clarification_answers_ready
+                    else "answers_blocked",
+                },
+                "summary": {
+                    "accepted_answer_count": 1 if clarification_answers_ready else 0,
+                    "unresolved_blocking_count": 0
+                    if clarification_answers_ready
+                    else 1,
+                },
+            },
+            "product_ontology_gap_review_decisions.json": {
+                "schema_version": 1,
+                "artifact_kind": "product_ontology_gap_review_decisions",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "readiness": {
+                    "ready": ontology_decisions_ready,
+                    "review_state": "ontology_gap_decisions_ready"
+                    if ontology_decisions_ready
+                    else "ontology_gap_decisions_blocked",
+                },
+                "summary": {
+                    "decision_count": 1 if ontology_decisions_ready else 0,
+                },
+            },
+            "idea_to_spec_answer_rerun_input.json": {
+                "schema_version": 1,
+                "artifact_kind": "idea_to_spec_answer_rerun_input",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "readiness": {
+                    "ready": rerun_input_ready,
+                    "review_state": "rerun_input_ready"
+                    if rerun_input_ready
+                    else "rerun_input_blocked",
+                },
+                "summary": {
+                    "ontology_decision_count": 1 if ontology_decisions_ready else 0,
+                },
+            },
+            "idea_to_spec_rerun_preview.json": {
+                "schema_version": 1,
+                "artifact_kind": "idea_to_spec_rerun_preview",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "readiness": {
+                    "ready": rerun_preview_ready,
+                    "review_state": "rerun_preview_ready"
+                    if rerun_preview_ready
+                    else "rerun_preview_blocked",
+                },
+                "summary": {
+                    "resolved_ontology_gap_count": 1,
+                    "unresolved_ontology_gap_count": unresolved_ontology_gap_count,
+                },
+            },
+            "idea_to_spec_rerun_materialization.json": {
+                "schema_version": 1,
+                "artifact_kind": "idea_to_spec_rerun_materialization",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "readiness": {
+                    "ready": rerun_materialization_ready,
+                    "review_state": "rerun_materialization_ready"
+                    if rerun_materialization_ready
+                    else "rerun_materialization_blocked",
+                },
+                "summary": {
+                    "removed_gap_count": 1,
+                    "resolved_ontology_gap_count": 1,
+                    "unresolved_ontology_gap_count": unresolved_ontology_gap_count,
                 },
             },
         }
@@ -1809,6 +1910,38 @@ workspaces:
         self.assertFalse(payload["ready_for_branch"])
         self.assertEqual(operations["prepare_branch"]["status"], "blocked")
         self.assertEqual(operations["prepare_branch"]["reason"], "candidate_not_ready")
+
+    def test_graph_repository_plan_blocks_unresolved_ontology_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                unresolved_ontology_gap_count=2,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        operations = {
+            operation["name"]: operation for operation in payload["operations"]
+        }
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["ready_for_branch"])
+        self.assertEqual(operations["validate_candidate_graph"]["status"], "blocked")
+        self.assertEqual(operations["prepare_branch"]["status"], "blocked")
+        blockers = set(operations["prepare_branch"]["reason"].split(","))
+        self.assertIn("rerun_preview_unresolved_ontology_gaps", blockers)
+        self.assertIn("rerun_materialization_unresolved_ontology_gaps", blockers)
 
     def test_graph_repository_plan_rejects_artifact_authority_expansion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
