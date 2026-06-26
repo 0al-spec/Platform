@@ -513,18 +513,24 @@ Completed Git Service foundation:
    `product_idea_to_spec_workbench` allows controlled promotion only for product
    spec workspaces, while `specgraph_bootstrap_internal` keeps Git Service
    writes in dry-run-only mode.
+6. Platform now owns a controlled Product Repair Rerun execution adapter:
+   it validates SpecSpace-owned rerun request state, SpecGraph import preview,
+   request gate, and repair session journal before invoking the single
+   approved SpecGraph rerun make target, then verifies public-safe bundle
+   publication. It does not create branches, commits, pull requests, ontology
+   writes, or canonical spec mutations.
 
 The previous valuable implementation choices have partially landed: active
 candidate source, workspace route selection, controlled promotion UI, and
 deployment lane isolation are now present. The next valuable implementation
 choices are:
 
-1. SpecSpace: make the product workspace show a derived workflow lane and next
-   operator handoff across candidate graph, pre-SIB, repair, promotion gate, and
-   Git Service reports.
-2. Platform: move the Git Service boundary from local adapter orchestration
-   toward explicit post-review status and read-model publication operations,
-   then toward a hosted or queue-backed service implementation.
+1. SpecSpace: show Product Repair Rerun execution/publication status alongside
+   the existing draft request, import preview, rerun report, repair session,
+   promotion gate, and Git Service handoff surfaces.
+2. Platform: move Product Repair Rerun and Git Service execution from local
+   adapter orchestration toward hosted or queue-backed service implementation
+   while preserving the same report contracts.
 3. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
    become structured event-storming input without adding a product-specific
    script.

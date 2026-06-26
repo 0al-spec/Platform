@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -121,6 +122,92 @@ GRAPH_REPOSITORY_PROMOTION_PATH_PREFIXES = (
     "specs/",
     "docs/proposals/",
     "runs/",
+)
+PRODUCT_REPAIR_RERUN_PLAN_KIND = "platform_product_repair_rerun_execution_plan"
+PRODUCT_REPAIR_RERUN_EXECUTION_REPORT_KIND = (
+    "platform_product_repair_rerun_execution_report"
+)
+PRODUCT_REPAIR_RERUN_PUBLICATION_REPORT_KIND = (
+    "platform_product_repair_rerun_publication_report"
+)
+PRODUCT_REPAIR_RERUN_REQUEST_KIND = (
+    "specspace_idea_to_spec_repair_rerun_request_state"
+)
+PRODUCT_REPAIR_RERUN_IMPORT_PREVIEW_KIND = "specspace_repair_draft_import_preview"
+PRODUCT_REPAIR_RERUN_IMPORT_PREVIEW_CONTRACT_REF = (
+    "specgraph.idea-to-spec.specspace-repair-draft-import-preview.v0.1"
+)
+PRODUCT_REPAIR_RERUN_GATE_KIND = "specspace_repair_rerun_request_gate"
+PRODUCT_REPAIR_RERUN_GATE_CONTRACT_REF = (
+    "specgraph.idea-to-spec.specspace-repair-rerun-request-gate.v0.1"
+)
+PRODUCT_REPAIR_RERUN_REPORT_KIND = "specspace_repair_draft_rerun_report"
+PRODUCT_REPAIR_RERUN_REPORT_CONTRACT_REF = (
+    "specgraph.idea-to-spec.specspace-repair-draft-rerun.v0.1"
+)
+PRODUCT_REPAIR_RERUN_MAKE_TARGET = "product-workspace-requested-repair-draft-rerun"
+PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS = {
+    "request_gate": "runs/specspace_repair_rerun_request_gate.json",
+    "rerun_report": "runs/specspace_repair_draft_rerun_report.json",
+    "repair_session": "runs/idea_to_spec_repair_session.json",
+    "rerun_preview": "runs/idea_to_spec_rerun_preview.json",
+    "rerun_materialization": "runs/idea_to_spec_rerun_materialization.json",
+}
+PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS = {
+    "rerun_request": "runs/idea_to_spec_repair_rerun_requests.json",
+    "import_preview": "runs/specspace_repair_draft_import_preview.json",
+    "repair_session": "runs/idea_to_spec_repair_session.json",
+    "request_gate": "runs/specspace_repair_rerun_request_gate.json",
+}
+PRODUCT_REPAIR_RERUN_FALSE_TOP_LEVEL_FIELDS = (
+    "canonical_mutations_allowed",
+    "tracked_artifacts_written",
+)
+PRODUCT_REPAIR_RERUN_REQUEST_FALSE_FIELDS = (
+    "may_execute_specgraph",
+    "may_run_make_target",
+    "may_execute_prompt_agent",
+    "may_apply_to_specgraph",
+    "may_apply_answers",
+    "may_apply_decisions",
+    "may_apply_drafts_to_source_artifacts",
+    "may_apply_answers_to_source_artifacts",
+    "may_apply_decisions_to_source_artifacts",
+    "may_mutate_candidate_source_artifacts",
+    "may_mutate_canonical_specs",
+    "may_write_ontology_package",
+    "may_write_ontology_lockfile",
+    "may_accept_ontology_terms",
+    "may_mark_candidate_graph_accepted",
+    "may_create_branch_or_commit",
+    "may_open_pull_request",
+    "may_publish_read_model",
+    "may_execute_git_service_operation",
+    "canonical_mutations_allowed",
+    "tracked_artifacts_written",
+)
+PRODUCT_REPAIR_RERUN_BOUNDARY_FALSE_FIELDS = (
+    "may_execute_specgraph",
+    "may_run_make_target",
+    "may_execute_prompt_agent",
+    "may_apply_to_specgraph",
+    "may_apply_answers",
+    "may_apply_decisions",
+    "may_mutate_candidate_source_artifacts",
+    "may_mutate_canonical_specs",
+    "may_write_ontology_package",
+    "may_accept_ontology_terms",
+    "may_create_branch_or_commit",
+    "may_open_pull_request",
+    "may_execute_git_service_operation",
+    "rerun_request_state_is_authority",
+    "specgraph_execution_authority",
+    "specgraph_artifact_authority",
+    "ontology_authority",
+    "git_service_authority",
+    "canonical_mutations_allowed",
+    "may_execute_specgraph_from_request",
+    "may_run_make_target_from_request",
 )
 GIT_SERVICE_REQUIRED_OPERATIONS = {
     "prepare_worktree": {
@@ -2338,6 +2425,27 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def file_sha256(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def path_arg_or_default(
+    value: str | None,
+    *,
+    base_dir: Path,
+    default_rel: str,
+) -> Path:
+    if value:
+        return Path(value).resolve()
+    return (base_dir / default_rel).resolve()
+
+
 def graph_repository_run_artifact_status(
     *,
     runs_dir: Path,
@@ -3033,6 +3141,1220 @@ def graph_repository_plan(args: argparse.Namespace) -> int:
             )
         )
     return 0 if error_count == 0 else 1
+
+
+def load_product_repair_artifact(
+    path: Path,
+    *,
+    label: str,
+    expected_kind: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any], list[Diagnostic]]:
+    subject = label.replace(" ", "_")
+    if not path.is_file():
+        return (
+            None,
+            {
+                "key": subject,
+                "path": str(path),
+                "available": False,
+                "expected_artifact_kind": expected_kind,
+            },
+            [
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_artifact_missing",
+                    subject=subject,
+                    message=f"{label} artifact is required before rerun execution",
+                )
+            ],
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return (
+            None,
+            {
+                "key": subject,
+                "path": str(path),
+                "available": False,
+                "expected_artifact_kind": expected_kind,
+            },
+            [
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_artifact_json_invalid",
+                    subject=subject,
+                    message=f"{label} artifact is not valid JSON: {exc}",
+                )
+            ],
+        )
+    if not isinstance(payload, dict):
+        return (
+            None,
+            {
+                "key": subject,
+                "path": str(path),
+                "available": False,
+                "expected_artifact_kind": expected_kind,
+            },
+            [
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_artifact_shape_invalid",
+                    subject=subject,
+                    message=f"{label} artifact must be a JSON object",
+                )
+            ],
+        )
+
+    diagnostics: list[Diagnostic] = []
+    artifact_kind = payload.get("artifact_kind")
+    if artifact_kind != expected_kind:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_artifact_kind_mismatch",
+                subject=f"{subject}.artifact_kind",
+                message=f"expected {expected_kind}, found {artifact_kind}",
+            )
+        )
+    status = {
+        "key": subject,
+        "path": str(path),
+        "available": True,
+        "artifact_kind": artifact_kind,
+        "expected_artifact_kind": expected_kind,
+        "contract_ref": payload.get("contract_ref"),
+        "sha256": file_sha256(path),
+    }
+    return payload, status, diagnostics
+
+
+def product_repair_false_field_diagnostics(
+    payload: dict[str, Any],
+    *,
+    fields: tuple[str, ...],
+    subject: str,
+    code: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for field in fields:
+        if payload.get(field) is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code=code,
+                    subject=f"{subject}.{field}",
+                    message=f"{field} must remain false for product repair rerun handoff",
+                )
+            )
+    return diagnostics
+
+
+def product_repair_boundary_diagnostics(
+    payload: dict[str, Any],
+    *,
+    section: str,
+    subject: str,
+) -> list[Diagnostic]:
+    value = payload.get(section)
+    if not isinstance(value, dict):
+        return [
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_boundary_missing",
+                subject=f"{subject}.{section}",
+                message=f"{section} is required for product repair rerun handoff",
+            )
+        ]
+    return product_repair_false_field_diagnostics(
+        value,
+        fields=PRODUCT_REPAIR_RERUN_BOUNDARY_FALSE_FIELDS,
+        subject=f"{subject}.{section}",
+        code="product_repair_rerun_authority_expanded",
+    )
+
+
+def product_repair_deployment_profile_diagnostics(
+    profile: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics = [
+        *validate_deployment_profile_schema(profile),
+        *deployment_profile_semantic_diagnostics(profile),
+    ]
+    if profile.get("profile_id") != "product_idea_to_spec_workbench":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_profile_unsupported",
+                subject="deployment_profile.profile_id",
+                message=(
+                    "product repair rerun execution requires the "
+                    "product_idea_to_spec_workbench deployment profile"
+                ),
+            )
+        )
+    if profile.get("workflow_lane") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_workflow_lane_unsupported",
+                subject="deployment_profile.workflow_lane",
+                message="product repair rerun execution requires product_idea_to_spec",
+            )
+        )
+    return diagnostics
+
+
+def product_repair_import_preview_diagnostics(
+    import_preview: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if import_preview.get("contract_ref") != PRODUCT_REPAIR_RERUN_IMPORT_PREVIEW_CONTRACT_REF:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_import_preview_contract_mismatch",
+                subject="import_preview.contract_ref",
+                message=(
+                    "expected import preview contract "
+                    f"{PRODUCT_REPAIR_RERUN_IMPORT_PREVIEW_CONTRACT_REF}"
+                ),
+            )
+        )
+    diagnostics.extend(
+        product_repair_false_field_diagnostics(
+            import_preview,
+            fields=PRODUCT_REPAIR_RERUN_FALSE_TOP_LEVEL_FIELDS,
+            subject="import_preview",
+            code="product_repair_rerun_import_preview_authority_expanded",
+        )
+    )
+    diagnostics.extend(
+        product_repair_boundary_diagnostics(
+            import_preview,
+            section="authority_boundary",
+            subject="import_preview",
+        )
+    )
+    readiness = nested_mapping(import_preview, "readiness")
+    if readiness.get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_import_preview_not_ready",
+                subject="import_preview.readiness.ready",
+                message="import preview must be ready before Platform rerun execution",
+            )
+        )
+    accepted_count = nested_mapping(import_preview, "summary").get(
+        "accepted_for_rerun_count"
+    )
+    if not isinstance(accepted_count, int) or accepted_count <= 0:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_import_preview_no_accepted_drafts",
+                subject="import_preview.summary.accepted_for_rerun_count",
+                message="import preview must contain at least one accepted draft",
+            )
+        )
+    return diagnostics
+
+
+def product_repair_request_state_diagnostics(
+    request_state: dict[str, Any],
+    *,
+    selected_request_id: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if request_state.get("state_owner") != "SpecSpace":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_request_state_owner_invalid",
+                subject="request_state.state_owner",
+                message="repair rerun request state must be owned by SpecSpace",
+            )
+        )
+    diagnostics.extend(
+        product_repair_false_field_diagnostics(
+            request_state,
+            fields=PRODUCT_REPAIR_RERUN_FALSE_TOP_LEVEL_FIELDS,
+            subject="request_state",
+            code="product_repair_rerun_request_state_authority_expanded",
+        )
+    )
+    diagnostics.extend(
+        product_repair_boundary_diagnostics(
+            request_state,
+            section="consumer_boundary",
+            subject="request_state",
+        )
+    )
+    diagnostics.extend(
+        product_repair_boundary_diagnostics(
+            request_state,
+            section="authority_boundary",
+            subject="request_state",
+        )
+    )
+    requests = [
+        item for item in request_state.get("requests", []) if isinstance(item, dict)
+    ]
+    selected = next(
+        (item for item in requests if item.get("id") == selected_request_id),
+        None,
+    )
+    if selected is None:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_request_missing",
+                subject="request_state.requests",
+                message="request state must include the request selected by SpecGraph gate",
+            )
+        )
+        return diagnostics
+    if selected.get("requested_action") != "prepare_repair_draft_rerun":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_request_action_unsupported",
+                subject="request_state.requests[].requested_action",
+                message="selected request must ask to prepare_repair_draft_rerun",
+            )
+        )
+    if selected.get("status") != "requested":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_request_status_unsupported",
+                subject="request_state.requests[].status",
+                message="selected request must still be in requested state",
+            )
+        )
+    diagnostics.extend(
+        product_repair_false_field_diagnostics(
+            selected,
+            fields=PRODUCT_REPAIR_RERUN_REQUEST_FALSE_FIELDS,
+            subject="request_state.requests[]",
+            code="product_repair_rerun_request_authority_expanded",
+        )
+    )
+    return diagnostics
+
+
+def product_repair_request_gate_diagnostics(
+    gate: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if gate.get("contract_ref") != PRODUCT_REPAIR_RERUN_GATE_CONTRACT_REF:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_gate_contract_mismatch",
+                subject="request_gate.contract_ref",
+                message=f"expected request gate contract {PRODUCT_REPAIR_RERUN_GATE_CONTRACT_REF}",
+            )
+        )
+    diagnostics.extend(
+        product_repair_false_field_diagnostics(
+            gate,
+            fields=PRODUCT_REPAIR_RERUN_FALSE_TOP_LEVEL_FIELDS,
+            subject="request_gate",
+            code="product_repair_rerun_gate_authority_expanded",
+        )
+    )
+    diagnostics.extend(
+        product_repair_boundary_diagnostics(
+            gate,
+            section="authority_boundary",
+            subject="request_gate",
+        )
+    )
+    readiness = nested_mapping(gate, "readiness")
+    if readiness.get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_gate_not_ready",
+                subject="request_gate.readiness.ready",
+                message="SpecGraph repair rerun request gate must be ready",
+            )
+        )
+    recommended = nested_mapping(gate, "recommended_invocation")
+    if recommended.get("make_target") != PRODUCT_REPAIR_RERUN_MAKE_TARGET:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_gate_make_target_mismatch",
+                subject="request_gate.recommended_invocation.make_target",
+                message=f"expected {PRODUCT_REPAIR_RERUN_MAKE_TARGET}",
+            )
+        )
+    return diagnostics
+
+
+def product_repair_identity_diagnostics(
+    *,
+    gate: dict[str, Any],
+    import_preview: dict[str, Any],
+    repair_session: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    gate_summary = nested_mapping(gate, "summary")
+    gate_inputs = nested_mapping(gate, "resolved_inputs")
+    preview_session = nested_mapping(import_preview, "session")
+    repair_session_session = nested_mapping(repair_session, "session")
+    expected = {
+        "workspace_id": gate_summary.get("workspace_id")
+        or gate_inputs.get("workspace_id"),
+        "candidate_id": gate_summary.get("candidate_id")
+        or gate_inputs.get("candidate_id"),
+    }
+    for field, expected_value in expected.items():
+        if not isinstance(expected_value, str) or not expected_value:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_identity_missing",
+                    subject=f"request_gate.summary.{field}",
+                    message=f"request gate must identify {field}",
+                )
+            )
+            continue
+        for artifact_name, source in (
+            ("import_preview", preview_session),
+            ("repair_session", repair_session_session),
+        ):
+            actual = source.get(field)
+            if actual and actual != expected_value:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_identity_mismatch",
+                        subject=f"{artifact_name}.session.{field}",
+                        message=(
+                            f"{artifact_name} {field} must match request gate "
+                            f"({expected_value})"
+                        ),
+                    )
+                )
+    if repair_session_session.get("workflow_lane") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_repair_session_lane_mismatch",
+                subject="repair_session.session.workflow_lane",
+                message="repair session must belong to product_idea_to_spec",
+            )
+        )
+    if repair_session_session.get("target_repository_role") != "product_spec_workspace":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_repair_session_repository_role_mismatch",
+                subject="repair_session.session.target_repository_role",
+                message="repair session must target product_spec_workspace",
+            )
+        )
+    return diagnostics
+
+
+def product_repair_operation(
+    *,
+    name: str,
+    status: str,
+    reason: str,
+    evidence: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "reason": reason,
+        "evidence": evidence or [],
+    }
+
+
+def build_product_repair_rerun_execution_plan(
+    *,
+    deployment_profile_path: Path,
+    deployment_profile: dict[str, Any],
+    specgraph_dir: Path,
+    request_state_path: Path,
+    request_state: dict[str, Any] | None,
+    import_preview_path: Path,
+    import_preview: dict[str, Any] | None,
+    repair_session_path: Path,
+    repair_session: dict[str, Any] | None,
+    request_gate_path: Path,
+    request_gate: dict[str, Any] | None,
+    source_artifacts: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[Diagnostic]]:
+    diagnostics = product_repair_deployment_profile_diagnostics(deployment_profile)
+
+    if not specgraph_dir.is_dir():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_specgraph_dir_missing",
+                subject="specgraph_dir",
+                message="SpecGraph directory must exist before product repair rerun",
+            )
+        )
+    elif not (specgraph_dir / "Makefile").is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_specgraph_makefile_missing",
+                subject="specgraph_dir",
+                message="SpecGraph directory must contain a Makefile",
+            )
+        )
+
+    selected_request_id = ""
+    if request_gate is not None:
+        diagnostics.extend(product_repair_request_gate_diagnostics(request_gate))
+        selected_request_id = str(
+            nested_mapping(request_gate, "summary").get("selected_request_id") or ""
+        )
+    if request_state is not None:
+        diagnostics.extend(
+            product_repair_request_state_diagnostics(
+                request_state,
+                selected_request_id=selected_request_id,
+            )
+        )
+    if import_preview is not None:
+        diagnostics.extend(product_repair_import_preview_diagnostics(import_preview))
+    if repair_session is not None:
+        diagnostics.extend(graph_repository_repair_session_diagnostics(repair_session))
+        if nested_mapping(repair_session, "readiness").get("ready") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_repair_session_not_ready",
+                    subject="repair_session.readiness.ready",
+                    message="repair session journal must be ready before rerun execution",
+                )
+            )
+    if (
+        request_gate is not None
+        and import_preview is not None
+        and repair_session is not None
+    ):
+        diagnostics.extend(
+            product_repair_identity_diagnostics(
+                gate=request_gate,
+                import_preview=import_preview,
+                repair_session=repair_session,
+            )
+        )
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ready_to_execute = error_count == 0
+    operations = [
+        product_repair_operation(
+            name="validate_deployment_profile",
+            status="ready" if not product_repair_deployment_profile_diagnostics(deployment_profile) else "blocked",
+            reason=(
+                "product idea-to-spec deployment profile allows controlled rerun execution"
+                if not product_repair_deployment_profile_diagnostics(deployment_profile)
+                else "deployment_profile_invalid"
+            ),
+            evidence=["deployment_profile"],
+        ),
+        product_repair_operation(
+            name="validate_specspace_rerun_request",
+            status="ready" if ready_to_execute else "blocked",
+            reason="request, import preview, gate, and repair session are coherent"
+            if ready_to_execute
+            else "request_or_gate_not_ready",
+            evidence=[
+                "idea_to_spec_repair_rerun_requests",
+                "specspace_repair_draft_import_preview",
+                "specspace_repair_rerun_request_gate",
+                "idea_to_spec_repair_session",
+            ],
+        ),
+        product_repair_operation(
+            name="execute_specgraph_requested_rerun",
+            status="ready" if ready_to_execute else "blocked",
+            reason="SpecGraph requested repair rerun target can be invoked"
+            if ready_to_execute
+            else "preflight_not_ready",
+            evidence=[PRODUCT_REPAIR_RERUN_MAKE_TARGET],
+        ),
+        product_repair_operation(
+            name="publish_public_safe_bundle",
+            status="blocked_until_execution",
+            reason="publication is a separate post-execution step",
+            evidence=["make publish-bundle"],
+        ),
+    ]
+    output_refs = {
+        key: str(specgraph_dir / value)
+        for key, value in PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS.items()
+    }
+    plan = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_REPAIR_RERUN_PLAN_KIND,
+        "generated_at": utc_now_iso(),
+        "deployment_profile_ref": str(deployment_profile_path),
+        "specgraph_dir": str(specgraph_dir),
+        "ok": error_count == 0,
+        "ready_to_execute": ready_to_execute,
+        "read_only": False,
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "target_make": {
+            "target": PRODUCT_REPAIR_RERUN_MAKE_TARGET,
+            "cwd": str(specgraph_dir),
+            "variables": {
+                "SPECSPACE_REPAIR_RERUN_REQUEST_STATE": str(request_state_path),
+                "SPECSPACE_REPAIR_RERUN_REQUEST_IMPORT_PREVIEW": str(import_preview_path),
+                "SPECSPACE_REPAIR_RERUN_REQUEST_REPAIR_SESSION": str(repair_session_path),
+                "SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT": str(request_gate_path),
+            },
+        },
+        "source_artifacts": source_artifacts,
+        "expected_outputs": output_refs,
+        "operations": operations,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "authority_boundary": {
+            "executes_specgraph_make_target": True,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "accepts_ontology_terms": False,
+            "mutates_canonical_specs": False,
+            "publishes_private_artifacts": False,
+        },
+        "summary": {
+            "status": "ready_to_execute" if ready_to_execute else "blocked",
+            "error_count": error_count,
+            "source_artifact_count": len(source_artifacts),
+            "expected_output_count": len(output_refs),
+            "workspace_id": (
+                nested_mapping(request_gate or {}, "summary").get("workspace_id")
+            ),
+            "candidate_id": (
+                nested_mapping(request_gate or {}, "summary").get("candidate_id")
+            ),
+            "selected_request_id": (
+                nested_mapping(request_gate or {}, "summary").get(
+                    "selected_request_id"
+                )
+            ),
+        },
+    }
+    return plan, diagnostics
+
+
+def product_repair_rerun_plan(args: argparse.Namespace) -> int:
+    deployment_profile_path = Path(args.deployment_profile)
+    specgraph_dir = Path(args.specgraph_dir).resolve()
+    request_state_path = path_arg_or_default(
+        args.rerun_request,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["rerun_request"],
+    )
+    import_preview_path = path_arg_or_default(
+        args.import_preview,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["import_preview"],
+    )
+    repair_session_path = path_arg_or_default(
+        args.repair_session,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["repair_session"],
+    )
+    request_gate_path = path_arg_or_default(
+        args.request_gate,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["request_gate"],
+    )
+    deployment_profile = load_json_mapping(
+        deployment_profile_path,
+        label="deployment profile",
+    )
+    source_artifacts: list[dict[str, Any]] = []
+    request_state, request_status, request_diagnostics = load_product_repair_artifact(
+        request_state_path,
+        label="idea_to_spec_repair_rerun_requests",
+        expected_kind=PRODUCT_REPAIR_RERUN_REQUEST_KIND,
+    )
+    source_artifacts.append(request_status)
+    import_preview, import_status, import_diagnostics = load_product_repair_artifact(
+        import_preview_path,
+        label="specspace_repair_draft_import_preview",
+        expected_kind=PRODUCT_REPAIR_RERUN_IMPORT_PREVIEW_KIND,
+    )
+    source_artifacts.append(import_status)
+    repair_session, repair_status, repair_diagnostics = load_product_repair_artifact(
+        repair_session_path,
+        label="idea_to_spec_repair_session",
+        expected_kind="idea_to_spec_repair_session_journal",
+    )
+    source_artifacts.append(repair_status)
+    request_gate, gate_status, gate_diagnostics = load_product_repair_artifact(
+        request_gate_path,
+        label="specspace_repair_rerun_request_gate",
+        expected_kind=PRODUCT_REPAIR_RERUN_GATE_KIND,
+    )
+    source_artifacts.append(gate_status)
+    plan, diagnostics = build_product_repair_rerun_execution_plan(
+        deployment_profile_path=deployment_profile_path,
+        deployment_profile=deployment_profile,
+        specgraph_dir=specgraph_dir,
+        request_state_path=request_state_path,
+        request_state=request_state,
+        import_preview_path=import_preview_path,
+        import_preview=import_preview,
+        repair_session_path=repair_session_path,
+        repair_session=repair_session,
+        request_gate_path=request_gate_path,
+        request_gate=request_gate,
+        source_artifacts=source_artifacts,
+    )
+    diagnostics = [
+        *request_diagnostics,
+        *import_diagnostics,
+        *repair_diagnostics,
+        *gate_diagnostics,
+        *diagnostics,
+    ]
+    if diagnostics:
+        plan["diagnostics"] = [asdict(diagnostic) for diagnostic in diagnostics]
+        error_count = sum(
+            1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+        )
+        plan["ok"] = error_count == 0
+        plan["ready_to_execute"] = error_count == 0 and plan["ready_to_execute"]
+        plan["summary"]["error_count"] = error_count
+        plan["summary"]["status"] = (
+            "ready_to_execute" if plan["ready_to_execute"] else "blocked"
+        )
+    else:
+        error_count = 0
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(plan, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(plan, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "operation": operation["name"],
+                        "status": operation["status"],
+                        "reason": operation["reason"],
+                    }
+                    for operation in plan["operations"]
+                ],
+                [
+                    ("operation", "OPERATION"),
+                    ("status", "STATUS"),
+                    ("reason", "REASON"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
+def product_repair_plan_diagnostics(plan: dict[str, Any]) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if plan.get("artifact_kind") != PRODUCT_REPAIR_RERUN_PLAN_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_plan_kind_mismatch",
+                subject="artifact_kind",
+                message=f"expected {PRODUCT_REPAIR_RERUN_PLAN_KIND}",
+            )
+        )
+    if plan.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_plan_not_ok",
+                subject="ok",
+                message="execution plan must be ok before rerun execution",
+            )
+        )
+    if plan.get("ready_to_execute") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_plan_not_ready",
+                subject="ready_to_execute",
+                message="execution plan must be ready_to_execute",
+            )
+        )
+    authority = nested_mapping(plan, "authority_boundary")
+    for field in (
+        "executes_git_commands",
+        "opens_pull_requests",
+        "merges_pull_requests",
+        "writes_ontology_packages",
+        "accepts_ontology_terms",
+        "mutates_canonical_specs",
+        "publishes_private_artifacts",
+    ):
+        if authority.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_plan_authority_expanded",
+                    subject=f"authority_boundary.{field}",
+                    message=f"{field} must remain false",
+                )
+            )
+    return diagnostics
+
+
+def product_repair_make_command(
+    plan: dict[str, Any],
+    *,
+    python: str | None = None,
+) -> list[str]:
+    target_make = nested_mapping(plan, "target_make")
+    command = ["make", str(target_make.get("target") or PRODUCT_REPAIR_RERUN_MAKE_TARGET)]
+    variables = nested_mapping(target_make, "variables")
+    for key in sorted(variables):
+        value = variables.get(key)
+        if isinstance(value, str) and value:
+            command.append(f"{key}={value}")
+    if python:
+        command.append(f"PYTHON={python}")
+    return command
+
+
+def product_repair_output_record(path: Path) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                payload = parsed
+        except json.JSONDecodeError:
+            payload = {}
+    return {
+        "path": str(path),
+        "present": path.is_file(),
+        "artifact_kind": payload.get("artifact_kind"),
+        "contract_ref": payload.get("contract_ref"),
+        "ready": nested_mapping(payload, "readiness").get("ready"),
+        "status": nested_mapping(payload, "summary").get("status")
+        or nested_mapping(payload, "readiness").get("review_state"),
+        "sha256": file_sha256(path),
+    }
+
+
+def product_repair_output_diagnostics(
+    output_records: dict[str, dict[str, Any]],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    rerun_report = output_records.get("rerun_report", {})
+    if rerun_report.get("present") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_report_missing",
+                subject="outputs.rerun_report",
+                message="SpecGraph requested rerun must produce a rerun report",
+            )
+        )
+    elif rerun_report.get("artifact_kind") != PRODUCT_REPAIR_RERUN_REPORT_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_report_kind_mismatch",
+                subject="outputs.rerun_report.artifact_kind",
+                message=f"expected {PRODUCT_REPAIR_RERUN_REPORT_KIND}",
+            )
+        )
+    elif rerun_report.get("contract_ref") != PRODUCT_REPAIR_RERUN_REPORT_CONTRACT_REF:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_report_contract_mismatch",
+                subject="outputs.rerun_report.contract_ref",
+                message=f"expected {PRODUCT_REPAIR_RERUN_REPORT_CONTRACT_REF}",
+            )
+        )
+    elif rerun_report.get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_report_not_ready",
+                subject="outputs.rerun_report.readiness.ready",
+                message="SpecGraph requested rerun report must be ready",
+            )
+        )
+    repair_session = output_records.get("repair_session", {})
+    if repair_session.get("present") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_repair_session_missing",
+                subject="outputs.repair_session",
+                message="SpecGraph requested rerun must refresh the repair session journal",
+            )
+        )
+    return diagnostics
+
+
+def product_repair_rerun_execute(args: argparse.Namespace) -> int:
+    plan_path = Path(args.plan)
+    plan = load_json_mapping(plan_path, label="product repair rerun execution plan")
+    diagnostics = product_repair_plan_diagnostics(plan)
+    specgraph_dir = Path(plan.get("specgraph_dir") or ".").resolve()
+    output_path = (
+        Path(args.output)
+        if args.output
+        else specgraph_dir / "runs" / "platform_product_repair_rerun_execution_report.json"
+    )
+    command = product_repair_make_command(plan, python=args.python)
+    command_result: dict[str, Any] | None = None
+    execution_started_at = utc_now_iso()
+    if not diagnostics and not args.dry_run:
+        completed = subprocess.run(
+            command,
+            cwd=specgraph_dir,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": completed.returncode,
+            "stdout": completed.stdout[-4000:],
+            "stderr": completed.stderr[-4000:],
+        }
+        if completed.returncode != 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_make_failed",
+                    subject=PRODUCT_REPAIR_RERUN_MAKE_TARGET,
+                    message=(
+                        "SpecGraph requested repair rerun target failed with exit "
+                        f"code {completed.returncode}"
+                    ),
+                )
+            )
+    elif args.dry_run:
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "dry_run": True,
+        }
+
+    expected_outputs = nested_mapping(plan, "expected_outputs")
+    output_records = {
+        key: product_repair_output_record(Path(value))
+        for key, value in expected_outputs.items()
+        if isinstance(value, str)
+    }
+    if not diagnostics and not args.dry_run:
+        diagnostics.extend(product_repair_output_diagnostics(output_records))
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and (args.dry_run or command_result is not None)
+    operations = [
+        product_repair_operation(
+            name="execute_specgraph_requested_rerun",
+            status="dry_run" if args.dry_run else "succeeded" if ok else "failed",
+            reason="SpecGraph requested rerun target executed"
+            if ok and not args.dry_run
+            else "dry_run"
+            if args.dry_run
+            else "execution_failed",
+            evidence=[PRODUCT_REPAIR_RERUN_MAKE_TARGET],
+        ),
+        product_repair_operation(
+            name="publish_public_safe_bundle",
+            status="blocked_until_publication",
+            reason="run product-repair-rerun publish after successful execution",
+            evidence=["make publish-bundle"],
+        ),
+    ]
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_REPAIR_RERUN_EXECUTION_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "started_at": execution_started_at,
+        "plan_ref": str(plan_path),
+        "specgraph_dir": str(specgraph_dir),
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "authority_boundary": {
+            "executes_specgraph_make_target": not args.dry_run,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "accepts_ontology_terms": False,
+            "mutates_canonical_specs": False,
+            "publishes_private_artifacts": False,
+        },
+        "command": command,
+        "command_result": command_result,
+        "operations": operations,
+        "output_artifacts": output_records,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "completed" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
+            "error_count": error_count,
+            "output_artifact_count": len(output_records),
+            "rerun_report_digest": nested_mapping(output_records, "rerun_report").get(
+                "sha256"
+            ),
+            "repair_session_digest": nested_mapping(
+                output_records,
+                "repair_session",
+            ).get("sha256"),
+        },
+    }
+    if not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": report["summary"]["status"],
+                        "outputs": str(len(output_records)),
+                    }
+                ],
+                [("status", "STATUS"), ("outputs", "OUTPUTS")],
+            )
+        )
+    return 0 if ok else 1
+
+
+def product_repair_execution_report_diagnostics(
+    report: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if report.get("artifact_kind") != PRODUCT_REPAIR_RERUN_EXECUTION_REPORT_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_execution_report_kind_mismatch",
+                subject="artifact_kind",
+                message=f"expected {PRODUCT_REPAIR_RERUN_EXECUTION_REPORT_KIND}",
+            )
+        )
+    if report.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_execution_report_not_ok",
+                subject="ok",
+                message="publication requires a successful repair rerun execution report",
+            )
+        )
+    authority = nested_mapping(report, "authority_boundary")
+    for field in (
+        "executes_git_commands",
+        "opens_pull_requests",
+        "merges_pull_requests",
+        "writes_ontology_packages",
+        "accepts_ontology_terms",
+        "mutates_canonical_specs",
+        "publishes_private_artifacts",
+    ):
+        if authority.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_execution_authority_expanded",
+                    subject=f"authority_boundary.{field}",
+                    message=f"{field} must remain false before publication",
+                )
+            )
+    return diagnostics
+
+
+def product_repair_rerun_publish(args: argparse.Namespace) -> int:
+    execution_report_path = Path(args.execution_report)
+    execution_report = load_json_mapping(
+        execution_report_path,
+        label="product repair rerun execution report",
+    )
+    diagnostics = product_repair_execution_report_diagnostics(execution_report)
+    specgraph_dir = Path(args.specgraph_dir or execution_report.get("specgraph_dir") or ".").resolve()
+    output_path = (
+        Path(args.output)
+        if args.output
+        else specgraph_dir
+        / "runs"
+        / "platform_product_repair_rerun_publication_report.json"
+    )
+    command = ["make", "publish-bundle"]
+    if args.python:
+        command.append(f"PYTHON={args.python}")
+    command_result: dict[str, Any] | None = None
+    if not diagnostics and not args.dry_run:
+        completed = subprocess.run(
+            command,
+            cwd=specgraph_dir,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": completed.returncode,
+            "stdout": completed.stdout[-4000:],
+            "stderr": completed.stderr[-4000:],
+        }
+        if completed.returncode != 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_publish_bundle_failed",
+                    subject="make publish-bundle",
+                    message=f"publish-bundle failed with exit code {completed.returncode}",
+                )
+            )
+    elif args.dry_run:
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "dry_run": True,
+        }
+
+    manifest_path = specgraph_dir / "dist" / "specgraph-public" / "artifact_manifest.json"
+    manifest_present = manifest_path.is_file()
+    if not args.dry_run and not manifest_present:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_public_manifest_missing",
+                subject="dist/specgraph-public/artifact_manifest.json",
+                message="publish-bundle must produce a public artifact manifest",
+            )
+        )
+    public_paths = [
+        "runs/idea_to_spec_repair_session.json",
+        "runs/specspace_repair_draft_rerun_report.json",
+        "runs/idea_to_spec_rerun_preview.json",
+        "runs/idea_to_spec_rerun_materialization.json",
+    ]
+    present_public_paths = []
+    missing_public_paths = []
+    for rel_path in public_paths:
+        if (specgraph_dir / "dist" / "specgraph-public" / rel_path).is_file():
+            present_public_paths.append(rel_path)
+        else:
+            missing_public_paths.append(rel_path)
+    if not args.dry_run and missing_public_paths:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_public_artifacts_missing",
+                subject="dist/specgraph-public/runs",
+                message=(
+                    "publish-bundle did not publish expected repair rerun artifacts: "
+                    + ", ".join(missing_public_paths)
+                ),
+            )
+        )
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_REPAIR_RERUN_PUBLICATION_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "execution_report_ref": str(execution_report_path),
+        "specgraph_dir": str(specgraph_dir),
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "authority_boundary": {
+            "executes_specgraph_make_target": not args.dry_run,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "accepts_ontology_terms": False,
+            "mutates_canonical_specs": False,
+            "publishes_private_artifacts": False,
+        },
+        "command": command,
+        "command_result": command_result,
+        "manifest": {
+            "path": str(manifest_path),
+            "present": manifest_present,
+            "sha256": file_sha256(manifest_path),
+        },
+        "published_artifacts": present_public_paths,
+        "missing_artifacts": missing_public_paths,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "published" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
+            "error_count": error_count,
+            "published_artifact_count": len(present_public_paths),
+            "missing_artifact_count": len(missing_public_paths),
+        },
+    }
+    if not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": report["summary"]["status"],
+                        "published": str(len(present_public_paths)),
+                    }
+                ],
+                [("status", "STATUS"), ("published", "PUBLISHED")],
+            )
+        )
+    return 0 if ok else 1
 
 
 def graph_repository_prepare_plan_diagnostics(
@@ -6821,6 +8143,148 @@ def build_parser() -> argparse.ArgumentParser:
     graph_repository_publish_parser.set_defaults(
         func=graph_repository_publish_read_model
     )
+
+    product_repair_parser = subcommands.add_parser(
+        "product-repair-rerun",
+        help="Validate and execute controlled product repair rerun handoffs.",
+    )
+    product_repair_subcommands = product_repair_parser.add_subparsers(
+        dest="product_repair_rerun_command",
+        required=True,
+    )
+    product_repair_plan_parser = product_repair_subcommands.add_parser(
+        "plan",
+        help="Build a controlled execution plan for a SpecSpace repair rerun request.",
+    )
+    product_repair_plan_parser.add_argument(
+        "--deployment-profile",
+        default=str(DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE),
+        help=(
+            "Path to a platform_deployment_profile artifact. Defaults to the "
+            "product idea-to-spec workbench profile."
+        ),
+    )
+    product_repair_plan_parser.add_argument(
+        "--specgraph-dir",
+        default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
+        help="Local SpecGraph checkout that owns the repair rerun make target.",
+    )
+    product_repair_plan_parser.add_argument(
+        "--rerun-request",
+        help=(
+            "SpecSpace-owned rerun request state artifact. Defaults to "
+            "runs/idea_to_spec_repair_rerun_requests.json under --specgraph-dir."
+        ),
+    )
+    product_repair_plan_parser.add_argument(
+        "--import-preview",
+        help=(
+            "SpecGraph import preview for SpecSpace repair drafts. Defaults to "
+            "runs/specspace_repair_draft_import_preview.json under --specgraph-dir."
+        ),
+    )
+    product_repair_plan_parser.add_argument(
+        "--repair-session",
+        help=(
+            "Idea-to-spec repair session journal. Defaults to "
+            "runs/idea_to_spec_repair_session.json under --specgraph-dir."
+        ),
+    )
+    product_repair_plan_parser.add_argument(
+        "--request-gate",
+        help=(
+            "SpecGraph rerun request gate artifact. Defaults to "
+            "runs/specspace_repair_rerun_request_gate.json under --specgraph-dir."
+        ),
+    )
+    product_repair_plan_parser.add_argument(
+        "--output",
+        help="Optional path where the execution plan JSON should be written.",
+    )
+    product_repair_plan_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_repair_plan_parser.set_defaults(func=product_repair_rerun_plan)
+
+    product_repair_execute_parser = product_repair_subcommands.add_parser(
+        "execute",
+        help="Run the allowed SpecGraph repair rerun make target from a ready plan.",
+    )
+    product_repair_execute_parser.add_argument(
+        "--plan",
+        required=True,
+        help="Path to a platform_product_repair_rerun_execution_plan artifact.",
+    )
+    product_repair_execute_parser.add_argument(
+        "--python",
+        help="Optional PYTHON make variable passed to SpecGraph.",
+    )
+    product_repair_execute_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the make invocation without executing it.",
+    )
+    product_repair_execute_parser.add_argument(
+        "--output",
+        help="Optional path where the execution report JSON should be written.",
+    )
+    product_repair_execute_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the execution report.",
+    )
+    product_repair_execute_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_repair_execute_parser.set_defaults(func=product_repair_rerun_execute)
+
+    product_repair_publish_parser = product_repair_subcommands.add_parser(
+        "publish",
+        help="Publish and verify public-safe SpecGraph repair rerun artifacts.",
+    )
+    product_repair_publish_parser.add_argument(
+        "--execution-report",
+        required=True,
+        help="Path to a platform_product_repair_rerun_execution_report artifact.",
+    )
+    product_repair_publish_parser.add_argument(
+        "--specgraph-dir",
+        help=(
+            "Local SpecGraph checkout. Defaults to specgraph_dir from the "
+            "execution report."
+        ),
+    )
+    product_repair_publish_parser.add_argument(
+        "--python",
+        help="Optional PYTHON make variable passed to publish-bundle.",
+    )
+    product_repair_publish_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render publication without running publish-bundle.",
+    )
+    product_repair_publish_parser.add_argument(
+        "--output",
+        help="Optional path where the publication report JSON should be written.",
+    )
+    product_repair_publish_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the publication report.",
+    )
+    product_repair_publish_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_repair_publish_parser.set_defaults(func=product_repair_rerun_publish)
 
     deploy_parser = subcommands.add_parser(
         "deploy",
