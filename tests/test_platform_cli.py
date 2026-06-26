@@ -712,7 +712,7 @@ publish-bundle:
         context_required_count: int = 0,
     ) -> Path:
         runs_dir = tmp_root / "runs"
-        runs_dir.mkdir()
+        runs_dir.mkdir(parents=True)
         self.write_graph_repository_run_artifacts(
             runs_dir,
             repair_ready=repair_ready,
@@ -769,6 +769,7 @@ publish-bundle:
         ready: bool = True,
         paths: list[str] | None = None,
     ) -> Path:
+        tmp_root.mkdir(parents=True, exist_ok=True)
         approval_path = tmp_root / "candidate_approval_decision.json"
         promotion_paths = paths or ["specs/nodes/SG-SPEC-CANDIDATE.yaml"]
         approval_path.write_text(
@@ -819,6 +820,19 @@ publish-bundle:
                         "paths": promotion_paths,
                         "requires_git_service_execution": True,
                     },
+                    "source_artifacts": {
+                        "candidate_approval_gate": (
+                            "runs/platform_candidate_approval_intent_gate_report.json"
+                        ),
+                        "repair_session": "runs/idea_to_spec_repair_session.json",
+                        "promotion_gate": "runs/idea_to_spec_promotion_gate.json",
+                        "platform_repair_execution": (
+                            "runs/platform_product_repair_rerun_execution_report.json"
+                        ),
+                        "platform_repair_publication": (
+                            "runs/platform_product_repair_rerun_publication_report.json"
+                        ),
+                    },
                     "authority_boundary": {
                         "may_execute_prompt_agent": False,
                         "may_mutate_candidate_source_artifacts": False,
@@ -829,6 +843,7 @@ publish-bundle:
                         "may_create_branch_or_commit": False,
                         "may_open_pull_request": False,
                         "may_publish_read_model": False,
+                        "may_execute_git_service_operation": False,
                     },
                 }
             ),
@@ -3648,6 +3663,231 @@ workspaces:
         self.assertIn("product_candidate_approval_gate_report_not_ok", codes)
         self.assertIn("product_candidate_approval_gate_not_ready", codes)
         self.assertIn("product_candidate_approval_gate_authority_expanded", codes)
+
+    def test_product_candidate_promotion_request_uses_approval_decision(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(tmp_root)
+            output = tmp_root / "graph_repository_promotion_request.json"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            persisted = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload, persisted)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_graph_repository_promotion_request",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["candidate_id"], "idea-alpha")
+            self.assertEqual(payload["workflow_lane"], "product_idea_to_spec")
+            self.assertEqual(payload["target_repository_role"], "product_spec_workspace")
+            self.assertEqual(payload["authority_profile"], "workspace_owner_controlled")
+            self.assertEqual(
+                payload["commit_paths"],
+                ["specs/nodes/SG-SPEC-CANDIDATE.yaml"],
+            )
+            self.assertEqual(payload["candidate_branch"], "graph-candidate/idea-alpha")
+            self.assertEqual(
+                payload["requested_operations"],
+                ["prepare_branch", "create_commit", "open_review"],
+            )
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+            self.assertFalse(payload["authority_boundary"]["creates_commits"])
+            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_candidate_promotion_request_dry_run_does_not_write(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(tmp_root)
+            output = tmp_root / "graph_repository_promotion_request.json"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--output",
+                str(output),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(payload["local_files_written"], [])
+            self.assertFalse(output.exists())
+
+    def test_product_candidate_promotion_request_rejects_blocked_plan(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(
+                tmp_root,
+                repair_ready=False,
+                context_required_count=1,
+            )
+            approval_decision = self.write_candidate_approval_decision(tmp_root)
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_plan_not_ready", codes)
+        self.assertIn("graph_repository_prepare_branch_not_ready", codes)
+        self.assertNotIn("git_service_candidate_approval_paths_mismatch", codes)
+        self.assertFalse(payload["ok"])
+
+    def test_product_candidate_promotion_request_rejects_cross_run_decision(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root / "plan-b")
+            approval_decision = self.write_candidate_approval_decision(tmp_root / "plan-a")
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("product_candidate_promotion_source_plan_mismatch", codes)
+        self.assertFalse(payload["ok"])
+
+    def test_product_candidate_promotion_request_rejects_unapproved_decision(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                decision_state="needs_context",
+                ready=False,
+            )
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("product_candidate_promotion_approval_not_approved", codes)
+        self.assertIn("product_candidate_promotion_approval_not_ready", codes)
+        self.assertIn("git_service_candidate_approval_not_approved", codes)
+        self.assertFalse(payload["ok"])
+
+    def test_product_candidate_promotion_request_rejects_unsupported_path_root(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                paths=["README.md"],
+            )
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_promotion_path_not_allowed", codes)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["commit_paths"], [])
+
+    def test_product_candidate_promotion_request_rejects_truthy_authority(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(tmp_root)
+            payload = json.loads(approval_decision.read_text(encoding="utf-8"))
+            payload["authority_boundary"]["may_open_pull_request"] = "true"
+            approval_decision.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_promotion_approval_authority_expanded",
+            codes,
+        )
+        self.assertFalse(payload["ok"])
 
     def test_graph_repository_prepare_local_writes_workspace_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

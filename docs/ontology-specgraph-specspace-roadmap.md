@@ -527,6 +527,10 @@ Completed Git Service foundation:
 8. SpecSpace now records a candidate approval intent as SpecSpace-owned state,
    and Platform validates that intent through `product-candidate-approval gate`
    before materializing the narrow `candidate_approval_decision.json` handoff.
+   Platform then derives a report-only Graph Repository promotion request via
+   `product-candidate-promotion request`, using the approved candidate id and
+   materialized paths from the decision artifact rather than requiring the
+   operator to retype them.
    The gate requires an approval-ready repair session plus successful
    repair-rerun execution/publication reports and still does not start Git
    Service promotion.
