@@ -712,7 +712,7 @@ publish-bundle:
         context_required_count: int = 0,
     ) -> Path:
         runs_dir = tmp_root / "runs"
-        runs_dir.mkdir()
+        runs_dir.mkdir(parents=True)
         self.write_graph_repository_run_artifacts(
             runs_dir,
             repair_ready=repair_ready,
@@ -769,6 +769,7 @@ publish-bundle:
         ready: bool = True,
         paths: list[str] | None = None,
     ) -> Path:
+        tmp_root.mkdir(parents=True, exist_ok=True)
         approval_path = tmp_root / "candidate_approval_decision.json"
         promotion_paths = paths or ["specs/nodes/SG-SPEC-CANDIDATE.yaml"]
         approval_path.write_text(
@@ -818,6 +819,19 @@ publish-bundle:
                         ),
                         "paths": promotion_paths,
                         "requires_git_service_execution": True,
+                    },
+                    "source_artifacts": {
+                        "candidate_approval_gate": (
+                            "runs/platform_candidate_approval_intent_gate_report.json"
+                        ),
+                        "repair_session": "runs/idea_to_spec_repair_session.json",
+                        "promotion_gate": "runs/idea_to_spec_promotion_gate.json",
+                        "platform_repair_execution": (
+                            "runs/platform_product_repair_rerun_execution_report.json"
+                        ),
+                        "platform_repair_publication": (
+                            "runs/platform_product_repair_rerun_publication_report.json"
+                        ),
                     },
                     "authority_boundary": {
                         "may_execute_prompt_agent": False,
@@ -3756,6 +3770,32 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("graph_repository_plan_not_ready", codes)
         self.assertIn("graph_repository_prepare_branch_not_ready", codes)
+        self.assertNotIn("git_service_candidate_approval_paths_mismatch", codes)
+        self.assertFalse(payload["ok"])
+
+    def test_product_candidate_promotion_request_rejects_cross_run_decision(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root / "plan-b")
+            approval_decision = self.write_candidate_approval_decision(tmp_root / "plan-a")
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("product_candidate_promotion_source_plan_mismatch", codes)
         self.assertFalse(payload["ok"])
 
     def test_product_candidate_promotion_request_rejects_unapproved_decision(

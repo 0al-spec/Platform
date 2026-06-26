@@ -6561,6 +6561,118 @@ def product_candidate_promotion_decision_diagnostics(
     return diagnostics
 
 
+def product_candidate_promotion_plan_runs_dir(
+    *,
+    plan_path: Path,
+    plan: dict[str, Any],
+) -> Path | None:
+    raw_runs_dir = plan.get("runs_dir")
+    if not isinstance(raw_runs_dir, str) or not raw_runs_dir.strip():
+        return None
+    runs_dir = Path(raw_runs_dir)
+    if not runs_dir.is_absolute():
+        runs_dir = plan_path.parent / runs_dir
+    return runs_dir.resolve()
+
+
+def product_candidate_promotion_approval_ref_path(
+    *,
+    approval_decision_path: Path,
+    raw_ref: Any,
+) -> Path | None:
+    if not isinstance(raw_ref, str) or not raw_ref.strip():
+        return None
+    ref_path = Path(raw_ref)
+    if ref_path.is_absolute():
+        return ref_path.resolve()
+    decision_dir = approval_decision_path.parent.resolve()
+    workspace_root = decision_dir.parent if decision_dir.name == "runs" else decision_dir
+    if ref_path.parts and ref_path.parts[0] == "runs":
+        return (workspace_root / ref_path).resolve()
+    return (decision_dir / ref_path).resolve()
+
+
+def product_candidate_promotion_plan_source_diagnostics(
+    *,
+    plan_path: Path,
+    plan: dict[str, Any],
+    approval_decision_path: Path,
+    approval_decision: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    plan_runs_dir = product_candidate_promotion_plan_runs_dir(
+        plan_path=plan_path,
+        plan=plan,
+    )
+    if plan_runs_dir is None:
+        return [
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_plan_runs_dir_missing",
+                subject="plan.runs_dir",
+                message="execution plan must identify the validated runs directory",
+            )
+        ]
+
+    refs: list[tuple[str, Any]] = []
+    candidate = nested_mapping(approval_decision, "candidate")
+    refs.extend(
+        [
+            (
+                "approval_decision.candidate.active_candidate_ref",
+                candidate.get("active_candidate_ref"),
+            ),
+            (
+                "approval_decision.candidate.promotion_gate_ref",
+                candidate.get("promotion_gate_ref"),
+            ),
+        ]
+    )
+    source_artifacts = nested_mapping(approval_decision, "source_artifacts")
+    for key in (
+        "candidate_approval_gate",
+        "repair_session",
+        "promotion_gate",
+        "platform_repair_execution",
+        "platform_repair_publication",
+    ):
+        refs.append(
+            (
+                f"approval_decision.source_artifacts.{key}",
+                source_artifacts.get(key),
+            )
+        )
+
+    for subject, raw_ref in refs:
+        ref_path = product_candidate_promotion_approval_ref_path(
+            approval_decision_path=approval_decision_path,
+            raw_ref=raw_ref,
+        )
+        if ref_path is None:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_source_ref_missing",
+                    subject=subject,
+                    message="candidate approval decision must include promotion source refs",
+                )
+            )
+            continue
+        if not ref_path.is_relative_to(plan_runs_dir):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_source_plan_mismatch",
+                    subject=subject,
+                    message=(
+                        "candidate approval source refs must resolve inside the "
+                        "execution plan runs_dir"
+                    ),
+                )
+            )
+    return diagnostics
+
+
 def build_graph_repository_promotion_request_payload(
     *,
     plan_path: Path,
@@ -6681,6 +6793,12 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
     authority_profile = args.authority_profile
     diagnostics = [
         *product_candidate_promotion_decision_diagnostics(approval_decision),
+        *product_candidate_promotion_plan_source_diagnostics(
+            plan_path=plan_path,
+            plan=plan,
+            approval_decision_path=approval_decision_path,
+            approval_decision=approval_decision,
+        ),
         *graph_repository_promotion_request_diagnostics(
             plan,
             candidate_id=candidate_id,
@@ -6705,7 +6823,7 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
         authority_profile=authority_profile,
         output_path=None,
         dry_run=True,
-        diagnostics=diagnostics,
+        diagnostics=[],
     )
     diagnostics.extend(
         git_service_candidate_approval_diagnostics(
