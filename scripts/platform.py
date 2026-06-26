@@ -3343,7 +3343,7 @@ def product_repair_false_field_diagnostics(
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for field in fields:
-        if payload.get(field) is True:
+        if field in payload and payload.get(field) is not False:
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
@@ -4622,7 +4622,7 @@ def product_candidate_approval_false_field_diagnostics(
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for field in fields:
-        if payload.get(field) is True:
+        if field in payload and payload.get(field) is not False:
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
@@ -4715,11 +4715,31 @@ def product_candidate_approval_latest_intent(
     )[-1]
 
 
+def product_candidate_approval_expected_refs(
+    *,
+    raw_arg: str | None,
+    resolved_path: Path,
+    default_rel: str,
+    specgraph_dir: Path,
+) -> tuple[str, ...]:
+    refs = {default_rel}
+    if raw_arg:
+        refs.add(raw_arg)
+        refs.add(str(resolved_path))
+    try:
+        refs.add(resolved_path.relative_to(specgraph_dir).as_posix())
+    except ValueError:
+        pass
+    return tuple(sorted(ref for ref in refs if ref))
+
+
 def product_candidate_approval_intent_state_diagnostics(
     intent_state: dict[str, Any],
     *,
     selected_intent: dict[str, Any] | None,
     workspace_id: str | None,
+    expected_repair_session_refs: tuple[str, ...],
+    expected_promotion_gate_refs: tuple[str, ...],
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     if intent_state.get("state_owner") != "SpecSpace":
@@ -4850,28 +4870,28 @@ def product_candidate_approval_intent_state_diagnostics(
                 message="selected intent must not carry unresolved blockers",
             )
         )
-    if (
-        selected_intent.get("repair_session_ref")
-        != PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"]
-    ):
+    if selected_intent.get("repair_session_ref") not in expected_repair_session_refs:
         diagnostics.append(
             Diagnostic(
                 level="ERROR",
                 code="product_candidate_approval_intent_repair_session_ref_stale",
                 subject="approval_intents.intents[].repair_session_ref",
-                message="selected intent must reference the current repair session run",
+                message=(
+                    "selected intent must reference the repair session input for "
+                    "this invocation"
+                ),
             )
         )
-    if (
-        selected_intent.get("promotion_gate_ref")
-        != PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"]
-    ):
+    if selected_intent.get("promotion_gate_ref") not in expected_promotion_gate_refs:
         diagnostics.append(
             Diagnostic(
                 level="ERROR",
                 code="product_candidate_approval_intent_promotion_gate_ref_stale",
                 subject="approval_intents.intents[].promotion_gate_ref",
-                message="selected intent must reference the current promotion gate run",
+                message=(
+                    "selected intent must reference the promotion gate input for "
+                    "this invocation"
+                ),
             )
         )
     diagnostics.extend(
@@ -4952,7 +4972,7 @@ def product_candidate_approval_promotion_gate_diagnostics(
     authority_boundary = promotion_gate.get("authority_boundary")
     if isinstance(authority_boundary, dict):
         for key, value in sorted(authority_boundary.items()):
-            if value is True:
+            if value is not False:
                 diagnostics.append(
                     Diagnostic(
                         level="ERROR",
@@ -5131,6 +5151,8 @@ def build_product_candidate_approval_gate_report(
     selected_intent: dict[str, Any] | None,
     source_artifacts: list[dict[str, Any]],
     paths: list[str],
+    expected_repair_session_refs: tuple[str, ...],
+    expected_promotion_gate_refs: tuple[str, ...],
     extra_diagnostics: list[Diagnostic],
 ) -> tuple[dict[str, Any], list[Diagnostic]]:
     diagnostics: list[Diagnostic] = [
@@ -5156,6 +5178,8 @@ def build_product_candidate_approval_gate_report(
                     and isinstance(selected_intent.get("workspace_id"), str)
                     else None
                 ),
+                expected_repair_session_refs=expected_repair_session_refs,
+                expected_promotion_gate_refs=expected_promotion_gate_refs,
             )
         )
     if repair_session is not None:
@@ -5390,6 +5414,18 @@ def product_candidate_approval_gate(args: argparse.Namespace) -> int:
         selected_intent=selected_intent,
         source_artifacts=source_artifacts,
         paths=list(args.path or []),
+        expected_repair_session_refs=product_candidate_approval_expected_refs(
+            raw_arg=args.repair_session,
+            resolved_path=repair_session_path,
+            default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
+            specgraph_dir=specgraph_dir,
+        ),
+        expected_promotion_gate_refs=product_candidate_approval_expected_refs(
+            raw_arg=args.promotion_gate,
+            resolved_path=promotion_gate_path,
+            default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
+            specgraph_dir=specgraph_dir,
+        ),
         extra_diagnostics=[
             *intent_diagnostics,
             *repair_diagnostics,
@@ -5470,7 +5506,7 @@ def product_candidate_approval_gate_report_diagnostics(
     )
     authority = nested_mapping(report, "authority_boundary")
     for key, value in sorted(authority.items()):
-        if value is True:
+        if value is not False:
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",

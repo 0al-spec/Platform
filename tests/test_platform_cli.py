@@ -509,7 +509,10 @@ class PlatformCliTests(unittest.TestCase):
         self,
         specgraph_dir: Path,
         *,
-        intent_authority_expanded: bool = False,
+        intent_authority_expanded: object = False,
+        promotion_gate_authority_value: object = False,
+        intent_repair_session_ref: str = "runs/idea_to_spec_repair_session.json",
+        intent_promotion_gate_ref: str = "runs/idea_to_spec_promotion_gate.json",
         repair_session_ready_for_candidate_approval: bool = True,
         execution_ok: bool = True,
         execution_dry_run: bool = False,
@@ -544,8 +547,8 @@ class PlatformCliTests(unittest.TestCase):
                     "workspace_id": workspace_id,
                     "candidate_id": candidate_id,
                     "repair_session_id": "repair-session.idea-alpha",
-                    "repair_session_ref": "runs/idea_to_spec_repair_session.json",
-                    "promotion_gate_ref": "runs/idea_to_spec_promotion_gate.json",
+                    "repair_session_ref": intent_repair_session_ref,
+                    "promotion_gate_ref": intent_promotion_gate_ref,
                     "requested_by": "operator://specspace-local",
                     "reason": "Ready for promotion review.",
                     "created_at": "2026-06-26T10:00:00Z",
@@ -606,7 +609,7 @@ class PlatformCliTests(unittest.TestCase):
             "tracked_artifacts_written": False,
             "authority_boundary": {
                 "may_create_branch_or_commit": False,
-                "may_open_pull_request": False,
+                "may_open_pull_request": promotion_gate_authority_value,
                 "may_mutate_canonical_specs": False,
                 "may_write_ontology_package": False,
             },
@@ -3376,7 +3379,7 @@ workspaces:
             self.write_product_repair_makefile(specgraph_dir)
             self.write_product_candidate_approval_artifacts(
                 specgraph_dir,
-                intent_authority_expanded=True,
+                intent_authority_expanded="true",
             )
 
             result = self.run_cli(
@@ -3397,6 +3400,40 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("product_candidate_approval_intent_authority_expanded", codes)
         self.assertFalse(payload["ok"])
+        self.assertFalse(payload["ready_to_materialize"])
+
+    def test_product_candidate_approval_gate_rejects_promotion_gate_non_boolean_authority(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                promotion_gate_authority_value=1,
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_approval_promotion_gate_authority_expanded",
+            codes,
+        )
         self.assertFalse(payload["ready_to_materialize"])
 
     def test_product_candidate_approval_gate_rejects_unready_repair_session(
@@ -3464,6 +3501,109 @@ workspaces:
         self.assertIn("product_candidate_approval_publication_report_dry_run", codes)
         self.assertFalse(payload["ready_to_materialize"])
 
+    def test_product_candidate_approval_gate_requires_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("product_candidate_approval_paths_missing", codes)
+        self.assertFalse(payload["ready_to_materialize"])
+
+    def test_product_candidate_approval_gate_rejects_disallowed_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "README.md",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("product_candidate_approval_path_not_allowed", codes)
+        self.assertFalse(payload["ready_to_materialize"])
+
+    def test_product_candidate_approval_gate_honors_overridden_input_refs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref="inputs/idea_to_spec_repair_session.json",
+                intent_promotion_gate_ref="inputs/idea_to_spec_promotion_gate.json",
+            )
+            inputs_dir = specgraph_dir / "inputs"
+            inputs_dir.mkdir()
+            for filename in (
+                "idea_to_spec_repair_session.json",
+                "idea_to_spec_promotion_gate.json",
+            ):
+                (inputs_dir / filename).write_text(
+                    (specgraph_dir / "runs" / filename).read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--repair-session",
+                "inputs/idea_to_spec_repair_session.json",
+                "--promotion-gate",
+                "inputs/idea_to_spec_promotion_gate.json",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+                cwd=specgraph_dir,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ready_to_materialize"])
+        self.assertEqual(
+            payload["selected_intent"]["repair_session_ref"],
+            "inputs/idea_to_spec_repair_session.json",
+        )
+        self.assertEqual(
+            payload["selected_intent"]["promotion_gate_ref"],
+            "inputs/idea_to_spec_promotion_gate.json",
+        )
+
     def test_product_candidate_approval_materialize_rejects_blocked_gate(
         self,
     ) -> None:
@@ -3483,7 +3623,7 @@ workspaces:
                         "tracked_artifacts_written": False,
                         "approved_paths": [],
                         "authority_boundary": {
-                            "executes_git_commands": False,
+                            "executes_git_commands": "true",
                             "opens_pull_requests": False,
                             "writes_ontology_packages": False,
                             "mutates_canonical_specs": False,
@@ -3507,6 +3647,7 @@ workspaces:
         codes = set(payload["readiness"]["blocked_by"])
         self.assertIn("product_candidate_approval_gate_report_not_ok", codes)
         self.assertIn("product_candidate_approval_gate_not_ready", codes)
+        self.assertIn("product_candidate_approval_gate_authority_expanded", codes)
 
     def test_graph_repository_prepare_local_writes_workspace_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
