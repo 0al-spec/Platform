@@ -2875,6 +2875,118 @@ workspaces:
             codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
             self.assertIn("product_repair_rerun_publish_specgraph_makefile_missing", codes)
 
+    def test_product_repair_rerun_smoke_runs_full_demo_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            smoke_report_path = (
+                specgraph_dir / "runs" / "platform_product_repair_rerun_smoke.json"
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(smoke_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            persisted = json.loads(smoke_report_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload, persisted)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_repair_rerun_smoke_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["summary"]["status"], "passed")
+            self.assertTrue(payload["summary"]["plan_ok"])
+            self.assertTrue(payload["summary"]["execution_ok"])
+            self.assertTrue(payload["summary"]["publication_ok"])
+            self.assertIsInstance(payload["summary"]["rerun_report_digest"], str)
+            self.assertIsInstance(payload["summary"]["repair_session_digest"], str)
+            self.assertIsInstance(payload["summary"]["manifest_digest"], str)
+            self.assertEqual(payload["summary"]["published_artifact_count"], 4)
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+            self.assertFalse(payload["authority_boundary"]["writes_ontology_packages"])
+            self.assertFalse(payload["authority_boundary"]["mutates_canonical_specs"])
+            self.assertFalse(
+                payload["authority_boundary"]["candidate_approval_performed"]
+            )
+            self.assertFalse(
+                payload["authority_boundary"]["git_service_promotion_started"]
+            )
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(statuses["plan_product_repair_rerun"], "succeeded")
+            self.assertEqual(statuses["execute_specgraph_requested_rerun"], "succeeded")
+            self.assertEqual(statuses["publish_public_safe_bundle"], "succeeded")
+            self.assertTrue(payload["phase_reports"]["plan"]["present"])
+            self.assertTrue(payload["phase_reports"]["execution"]["present"])
+            self.assertTrue(payload["phase_reports"]["publication"]["present"])
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "dist"
+                    / "specgraph-public"
+                    / "runs"
+                    / "idea_to_spec_repair_session.json"
+                ).is_file()
+            )
+
+    def test_product_repair_rerun_smoke_stops_when_plan_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(
+                specgraph_dir,
+                request_authority_expanded=True,
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(statuses["plan_product_repair_rerun"], "failed")
+            self.assertEqual(statuses["execute_specgraph_requested_rerun"], "skipped")
+            self.assertEqual(statuses["publish_public_safe_bundle"], "skipped")
+            self.assertFalse(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "platform_product_repair_rerun_execution_report.json"
+                ).exists()
+            )
+            self.assertFalse(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "platform_product_repair_rerun_publication_report.json"
+                ).exists()
+            )
+
     def test_graph_repository_prepare_local_writes_workspace_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)

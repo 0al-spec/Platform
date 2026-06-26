@@ -130,6 +130,7 @@ PRODUCT_REPAIR_RERUN_EXECUTION_REPORT_KIND = (
 PRODUCT_REPAIR_RERUN_PUBLICATION_REPORT_KIND = (
     "platform_product_repair_rerun_publication_report"
 )
+PRODUCT_REPAIR_RERUN_SMOKE_REPORT_KIND = "platform_product_repair_rerun_smoke_report"
 PRODUCT_REPAIR_RERUN_REQUEST_KIND = (
     "specspace_idea_to_spec_repair_rerun_request_state"
 )
@@ -158,6 +159,12 @@ PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS = {
     "import_preview": "runs/specspace_repair_draft_import_preview.json",
     "repair_session": "runs/idea_to_spec_repair_session.json",
     "request_gate": "runs/specspace_repair_rerun_request_gate.json",
+}
+PRODUCT_REPAIR_RERUN_DEFAULT_REPORTS = {
+    "plan": "runs/platform_product_repair_rerun_execution_plan.json",
+    "execution": "runs/platform_product_repair_rerun_execution_report.json",
+    "publication": "runs/platform_product_repair_rerun_publication_report.json",
+    "smoke": "runs/platform_product_repair_rerun_smoke_report.json",
 }
 PRODUCT_REPAIR_RERUN_FALSE_TOP_LEVEL_FIELDS = (
     "canonical_mutations_allowed",
@@ -4422,6 +4429,430 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def run_platform_json_subcommand(command_args: list[str]) -> tuple[
+    subprocess.CompletedProcess[str],
+    dict[str, Any] | None,
+    Diagnostic | None,
+]:
+    command = [sys.executable, str(Path(__file__).resolve()), *command_args]
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        payload = json.loads(completed.stdout) if completed.stdout.strip() else None
+    except json.JSONDecodeError as exc:
+        return (
+            completed,
+            None,
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_smoke_output_json_invalid",
+                subject="stdout",
+                message=f"product repair rerun subcommand did not emit JSON: {exc}",
+            ),
+        )
+    if payload is not None and not isinstance(payload, dict):
+        return (
+            completed,
+            None,
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_smoke_output_shape_invalid",
+                subject="stdout",
+                message="product repair rerun subcommand JSON output must be an object",
+            ),
+        )
+    return completed, payload, None
+
+
+def product_repair_smoke_phase(
+    *,
+    name: str,
+    command_args: list[str],
+    output_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[Diagnostic]]:
+    completed, payload, parse_diagnostic = run_platform_json_subcommand(command_args)
+    diagnostics: list[Diagnostic] = []
+    if parse_diagnostic is not None:
+        diagnostics.append(parse_diagnostic)
+    if payload is None and parse_diagnostic is None:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_smoke_output_missing",
+                subject=name,
+                message="product repair rerun subcommand did not emit a JSON report",
+            )
+        )
+    report_ok = bool(payload and payload.get("ok") is True)
+    phase_ok = completed.returncode == 0 and report_ok and not diagnostics
+    if completed.returncode != 0 and not diagnostics:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_smoke_phase_failed",
+                subject=name,
+                message=f"{name} exited with status {completed.returncode}",
+            )
+        )
+    operation = {
+        "name": name,
+        "status": "succeeded" if phase_ok else "failed",
+        "reason": "phase completed" if phase_ok else "phase_failed",
+        "report_ref": str(output_path),
+        "report_present": output_path.is_file(),
+        "report_sha256": file_sha256(output_path),
+        "command": [sys.executable, str(Path(__file__).resolve()), *command_args],
+        "returncode": completed.returncode,
+        "stderr_tail": completed.stderr[-2000:],
+    }
+    return operation, payload, diagnostics
+
+
+def product_repair_smoke_authority_diagnostics(
+    payload: dict[str, Any],
+    *,
+    subject: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if payload.get("canonical_mutations_allowed") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_smoke_authority_expanded",
+                subject=f"{subject}.canonical_mutations_allowed",
+                message="smoke phase must not allow canonical mutations",
+            )
+        )
+    if payload.get("tracked_artifacts_written") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_smoke_authority_expanded",
+                subject=f"{subject}.tracked_artifacts_written",
+                message="smoke phase must not claim tracked artifact writes",
+            )
+        )
+    authority = nested_mapping(payload, "authority_boundary")
+    for field in (
+        "executes_git_commands",
+        "opens_pull_requests",
+        "merges_pull_requests",
+        "writes_ontology_packages",
+        "accepts_ontology_terms",
+        "mutates_canonical_specs",
+        "publishes_private_artifacts",
+    ):
+        if authority.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_smoke_authority_expanded",
+                    subject=f"{subject}.authority_boundary.{field}",
+                    message=f"{field} must remain false during repair rerun smoke",
+                )
+            )
+    return diagnostics
+
+
+def product_repair_smoke_report_ref(path: Path) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                payload = parsed
+        except json.JSONDecodeError:
+            payload = {}
+    return {
+        "path": str(path),
+        "present": path.is_file(),
+        "artifact_kind": payload.get("artifact_kind"),
+        "ok": payload.get("ok"),
+        "dry_run": payload.get("dry_run"),
+        "sha256": file_sha256(path),
+        "summary": nested_mapping(payload, "summary"),
+    }
+
+
+def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
+    specgraph_dir = Path(args.specgraph_dir).resolve()
+    plan_path = path_arg_or_default(
+        args.plan_output,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_REPORTS["plan"],
+    )
+    execution_report_path = path_arg_or_default(
+        args.execution_output,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_REPORTS["execution"],
+    )
+    publication_report_path = path_arg_or_default(
+        args.publication_output,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_REPORTS["publication"],
+    )
+    output_path = path_arg_or_default(
+        args.output,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_REPORTS["smoke"],
+    )
+
+    operations: list[dict[str, Any]] = []
+    diagnostics: list[Diagnostic] = []
+    phase_payloads: dict[str, dict[str, Any]] = {}
+
+    plan_command = [
+        "product-repair-rerun",
+        "plan",
+        "--deployment-profile",
+        args.deployment_profile,
+        "--specgraph-dir",
+        str(specgraph_dir),
+        "--output",
+        str(plan_path),
+        "--format",
+        "json",
+    ]
+    optional_plan_inputs = (
+        ("--rerun-request", args.rerun_request),
+        ("--import-preview", args.import_preview),
+        ("--repair-session", args.repair_session),
+        ("--request-gate", args.request_gate),
+    )
+    for flag, value in optional_plan_inputs:
+        if value:
+            plan_command.extend([flag, value])
+
+    operation, payload, phase_diagnostics = product_repair_smoke_phase(
+        name="plan_product_repair_rerun",
+        command_args=plan_command,
+        output_path=plan_path,
+    )
+    operations.append(operation)
+    diagnostics.extend(phase_diagnostics)
+    if payload is not None:
+        phase_payloads["plan"] = payload
+        diagnostics.extend(
+            product_repair_smoke_authority_diagnostics(payload, subject="plan")
+        )
+
+    if not diagnostics and payload and payload.get("ready_to_execute") is True:
+        execute_command = [
+            "product-repair-rerun",
+            "execute",
+            "--plan",
+            str(plan_path),
+            "--output",
+            str(execution_report_path),
+            "--format",
+            "json",
+        ]
+        if args.python:
+            execute_command.extend(["--python", args.python])
+        operation, payload, phase_diagnostics = product_repair_smoke_phase(
+            name="execute_specgraph_requested_rerun",
+            command_args=execute_command,
+            output_path=execution_report_path,
+        )
+        operations.append(operation)
+        diagnostics.extend(phase_diagnostics)
+        if payload is not None:
+            phase_payloads["execution"] = payload
+            diagnostics.extend(
+                product_repair_smoke_authority_diagnostics(
+                    payload,
+                    subject="execution",
+                )
+            )
+            if payload.get("dry_run") is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_smoke_execution_dry_run",
+                        subject="execution.dry_run",
+                        message="end-to-end repair rerun smoke requires real execution",
+                    )
+                )
+    else:
+        operations.append(
+            product_repair_operation(
+                name="execute_specgraph_requested_rerun",
+                status="skipped",
+                reason="plan_not_ready",
+                evidence=[str(plan_path)],
+            )
+        )
+
+    execution_payload = phase_payloads.get("execution")
+    if not diagnostics and execution_payload and execution_payload.get("ok") is True:
+        publish_command = [
+            "product-repair-rerun",
+            "publish",
+            "--execution-report",
+            str(execution_report_path),
+            "--specgraph-dir",
+            str(specgraph_dir),
+            "--output",
+            str(publication_report_path),
+            "--format",
+            "json",
+        ]
+        if args.python:
+            publish_command.extend(["--python", args.python])
+        operation, payload, phase_diagnostics = product_repair_smoke_phase(
+            name="publish_public_safe_bundle",
+            command_args=publish_command,
+            output_path=publication_report_path,
+        )
+        operations.append(operation)
+        diagnostics.extend(phase_diagnostics)
+        if payload is not None:
+            phase_payloads["publication"] = payload
+            diagnostics.extend(
+                product_repair_smoke_authority_diagnostics(
+                    payload,
+                    subject="publication",
+                )
+            )
+            if payload.get("dry_run") is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_smoke_publication_dry_run",
+                        subject="publication.dry_run",
+                        message="end-to-end repair rerun smoke requires real publication",
+                    )
+                )
+    else:
+        operations.append(
+            product_repair_operation(
+                name="publish_public_safe_bundle",
+                status="skipped",
+                reason="execution_not_ready",
+                evidence=[str(execution_report_path)],
+            )
+        )
+
+    execution_summary = nested_mapping(phase_payloads.get("execution") or {}, "summary")
+    publication_summary = nested_mapping(
+        phase_payloads.get("publication") or {},
+        "summary",
+    )
+    if phase_payloads.get("execution") and not execution_summary.get(
+        "rerun_report_digest"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_smoke_rerun_digest_missing",
+                subject="execution.summary.rerun_report_digest",
+                message="smoke execution must capture rerun report digest",
+            )
+        )
+    if phase_payloads.get("execution") and not execution_summary.get(
+        "repair_session_digest"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_smoke_session_digest_missing",
+                subject="execution.summary.repair_session_digest",
+                message="smoke execution must capture refreshed repair session digest",
+            )
+        )
+    if phase_payloads.get("publication") and publication_summary.get(
+        "published_artifact_count"
+    ) != 4:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_smoke_public_artifact_count_mismatch",
+                subject="publication.summary.published_artifact_count",
+                message="smoke publication must verify four public repair rerun artifacts",
+            )
+        )
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and all(
+        phase_payloads.get(key, {}).get("ok") is True
+        for key in ("plan", "execution", "publication")
+    )
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_REPAIR_RERUN_SMOKE_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "ok": ok,
+        "specgraph_dir": str(specgraph_dir),
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "authority_boundary": {
+            "executes_specgraph_make_target": ok,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "accepts_ontology_terms": False,
+            "mutates_canonical_specs": False,
+            "publishes_private_artifacts": False,
+            "candidate_approval_performed": False,
+            "git_service_promotion_started": False,
+        },
+        "phase_reports": {
+            "plan": product_repair_smoke_report_ref(plan_path),
+            "execution": product_repair_smoke_report_ref(execution_report_path),
+            "publication": product_repair_smoke_report_ref(publication_report_path),
+        },
+        "operations": operations,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "passed" if ok else "failed",
+            "error_count": error_count,
+            "plan_ok": phase_payloads.get("plan", {}).get("ok") is True,
+            "execution_ok": phase_payloads.get("execution", {}).get("ok") is True,
+            "publication_ok": phase_payloads.get("publication", {}).get("ok") is True,
+            "rerun_report_digest": execution_summary.get("rerun_report_digest"),
+            "repair_session_digest": execution_summary.get("repair_session_digest"),
+            "manifest_digest": nested_mapping(
+                phase_payloads.get("publication") or {},
+                "manifest",
+            ).get("sha256"),
+            "published_artifact_count": publication_summary.get(
+                "published_artifact_count",
+                0,
+            ),
+        },
+    }
+    if not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": report["summary"]["status"],
+                        "published": str(report["summary"]["published_artifact_count"]),
+                    }
+                ],
+                [("status", "STATUS"), ("published", "PUBLISHED")],
+            )
+        )
+    return 0 if ok else 1
+
+
 def graph_repository_prepare_plan_diagnostics(
     plan: dict[str, Any],
     *,
@@ -8350,6 +8781,96 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     product_repair_publish_parser.set_defaults(func=product_repair_rerun_publish)
+
+    product_repair_smoke_parser = product_repair_subcommands.add_parser(
+        "smoke",
+        help="Run an end-to-end product repair rerun demo smoke.",
+    )
+    product_repair_smoke_parser.add_argument(
+        "--deployment-profile",
+        default=str(DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE),
+        help=(
+            "Path to a platform_deployment_profile artifact. Defaults to the "
+            "product idea-to-spec workbench profile."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--specgraph-dir",
+        default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
+        help="Local SpecGraph checkout that owns the repair rerun make target.",
+    )
+    product_repair_smoke_parser.add_argument(
+        "--rerun-request",
+        help=(
+            "SpecSpace-owned rerun request state artifact. Defaults to "
+            "runs/idea_to_spec_repair_rerun_requests.json under --specgraph-dir."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--import-preview",
+        help=(
+            "SpecGraph import preview for SpecSpace repair drafts. Defaults to "
+            "runs/specspace_repair_draft_import_preview.json under --specgraph-dir."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--repair-session",
+        help=(
+            "Idea-to-spec repair session journal. Defaults to "
+            "runs/idea_to_spec_repair_session.json under --specgraph-dir."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--request-gate",
+        help=(
+            "SpecGraph rerun request gate artifact. Defaults to "
+            "runs/specspace_repair_rerun_request_gate.json under --specgraph-dir."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--python",
+        help="Optional PYTHON make variable passed to SpecGraph targets.",
+    )
+    product_repair_smoke_parser.add_argument(
+        "--plan-output",
+        help=(
+            "Optional path for the intermediate product repair rerun execution "
+            "plan. Defaults to runs/platform_product_repair_rerun_execution_plan.json."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--execution-output",
+        help=(
+            "Optional path for the intermediate product repair rerun execution "
+            "report. Defaults to runs/platform_product_repair_rerun_execution_report.json."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--publication-output",
+        help=(
+            "Optional path for the intermediate product repair rerun publication "
+            "report. Defaults to runs/platform_product_repair_rerun_publication_report.json."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path where the smoke report JSON should be written. "
+            "Defaults to runs/platform_product_repair_rerun_smoke_report.json."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the smoke report.",
+    )
+    product_repair_smoke_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_repair_smoke_parser.set_defaults(func=product_repair_rerun_smoke)
 
     deploy_parser = subcommands.add_parser(
         "deploy",
