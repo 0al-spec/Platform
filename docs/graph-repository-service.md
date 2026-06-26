@@ -319,6 +319,52 @@ The output remains report-only:
 - no read model is published;
 - no SpecGraph or Ontology canonical state is mutated.
 
+## Product Controlled Promotion Execution
+
+After a product promotion request is ready, Platform can execute the controlled
+Git Service promotion flow from the product-scoped handoff:
+
+```bash
+scripts/platform.py product-candidate-promotion execute \
+  --promotion-request ../SpecGraph/runs/graph_repository_promotion_request.json \
+  --approval-decision ../SpecGraph/runs/candidate_approval_decision.json \
+  --repository-dir ../SpecGraph \
+  --workspace-dir .platform/candidates/team-decision-log-worktree \
+  --materialized-source-dir ../SpecGraph/runs/materialized_candidate_specs \
+  --open-review-dry-run \
+  --output ../SpecGraph/runs/product_candidate_promotion_execution_report.json
+```
+
+This command is a product-aware wrapper around
+`git-service execute-promotion`. It revalidates the promotion request,
+candidate approval decision, deployment profile, and Git Service operation
+contract before invoking the lower-level executor. In non-dry-run mode it may
+prepare a candidate worktree/branch and create a candidate commit. When
+`--open-review-dry-run` is omitted, it may also push the candidate branch and
+open a review pull request through `gh`.
+
+The product execution report is:
+
+```text
+runs/product_candidate_promotion_execution_report.json
+```
+
+It records:
+
+- the promotion request and approval decision refs;
+- the inner Git Service execution report ref;
+- the candidate branch;
+- copied materialized paths;
+- prepare/commit/open-review operation statuses;
+- whether the run was a dry-run or open-review dry-run;
+- authority boundary facts for worktree/branch creation, candidate commit, and
+  pull request opening.
+
+The command still does not auto-merge pull requests, publish read models, accept
+candidate specs into canonical state, write Ontology packages, or accept
+Ontology terms. Post-review read-model publication remains a separate
+`review-status` / `publish-read-model` step after the pull request is merged.
+
 ## Validate
 
 ```bash

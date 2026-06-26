@@ -758,6 +758,25 @@ publish-bundle:
         self.assertEqual(result.returncode, 0, result.stderr)
         return output
 
+    def build_product_candidate_promotion_request(self, tmp_root: Path) -> tuple[Path, Path]:
+        plan_path = self.build_graph_repository_execution_plan(tmp_root)
+        approval_decision = self.write_candidate_approval_decision(tmp_root)
+        output = tmp_root / "graph_repository_promotion_request.json"
+        result = self.run_cli(
+            "product-candidate-promotion",
+            "request",
+            "--plan",
+            str(plan_path),
+            "--approval-decision",
+            str(approval_decision),
+            "--output",
+            str(output),
+            "--format",
+            "json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return output, approval_decision
+
     def write_candidate_approval_decision(
         self,
         tmp_root: Path,
@@ -3888,6 +3907,214 @@ workspaces:
             codes,
         )
         self.assertFalse(payload["ok"])
+
+    def test_product_candidate_promotion_execute_dry_run_plans_git_service(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request, approval_decision = (
+                self.build_product_candidate_promotion_request(tmp_root)
+            )
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+            output = tmp_root / "product_candidate_promotion_execution_report.json"
+            git_service_output = tmp_root / "git_service_promotion_execution_report.json"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(workspace_dir),
+                "--dry-run",
+                "--output",
+                str(output),
+                "--git-service-output",
+                str(git_service_output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_candidate_promotion_execution_report",
+            )
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(payload["summary"]["status"], "dry_run")
+            self.assertFalse(workspace_dir.exists())
+            self.assertTrue(output.is_file())
+            self.assertTrue(git_service_output.is_file())
+            self.assertTrue(payload["git_service_execution"]["ok"])
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["git_service_execution"]["operations"]
+            }
+            self.assertEqual(statuses["prepare_worktree"], "dry_run")
+            self.assertEqual(statuses["commit_candidate"], "skipped_dry_run")
+            self.assertFalse(payload["authority_boundary"]["opens_pull_request"])
+
+    def test_product_candidate_promotion_execute_runs_controlled_local_adapter(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request, approval_decision = (
+                self.build_product_candidate_promotion_request(tmp_root)
+            )
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            materialized_source = tmp_root / "materialized"
+            spec_path = materialized_source / "specs" / "nodes" / "SG-SPEC-CANDIDATE.yaml"
+            spec_path.parent.mkdir(parents=True)
+            spec_path.write_text(
+                "id: SG-SPEC-CANDIDATE\nsummary: Candidate spec\n",
+                encoding="utf-8",
+            )
+            workspace_dir = tmp_root / "candidate-worktree"
+            output = tmp_root / "product_candidate_promotion_execution_report.json"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(workspace_dir),
+                "--materialized-source-dir",
+                str(materialized_source),
+                "--open-review-dry-run",
+                "--repo",
+                "0al-spec/SpecGraph",
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertFalse(payload["dry_run"])
+            self.assertTrue(payload["open_review_dry_run"])
+            self.assertTrue(payload["authority_boundary"]["controlled_git_service_execution"])
+            self.assertTrue(
+                payload["authority_boundary"]["creates_candidate_worktree_or_branch"]
+            )
+            self.assertTrue(payload["authority_boundary"]["creates_candidate_commit"])
+            self.assertFalse(payload["authority_boundary"]["opens_pull_request"])
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["git_service_execution"]["operations"]
+            }
+            self.assertEqual(statuses["prepare_worktree"], "succeeded")
+            self.assertEqual(statuses["commit_candidate"], "succeeded")
+            self.assertEqual(statuses["open_review"], "dry_run")
+            self.assertTrue(output.is_file())
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "git_service_promotion_execution_report.json"
+                ).is_file()
+            )
+            self.assertTrue((workspace_dir / "specs/nodes/SG-SPEC-CANDIDATE.yaml").is_file())
+            subject = self.run_git(
+                workspace_dir,
+                "log",
+                "-1",
+                "--pretty=%s",
+            ).stdout.strip()
+            self.assertEqual(subject, "Promote Idea Alpha candidate spec graph")
+
+    def test_product_candidate_promotion_execute_rejects_truthy_request_authority(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request, approval_decision = (
+                self.build_product_candidate_promotion_request(tmp_root)
+            )
+            request_payload = json.loads(promotion_request.read_text(encoding="utf-8"))
+            request_payload["authority_boundary"]["opens_pull_requests"] = "true"
+            promotion_request.write_text(
+                json.dumps(request_payload),
+                encoding="utf-8",
+            )
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(workspace_dir),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_promotion_request_authority_expanded",
+            codes,
+        )
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["git_service_command_result"])
+
+    def test_product_candidate_promotion_execute_rejects_cross_run_decision(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request = self.build_graph_repository_promotion_request(
+                tmp_root / "plan-b"
+            )
+            approval_decision = self.write_candidate_approval_decision(tmp_root / "plan-a")
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(workspace_dir),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("product_candidate_promotion_source_plan_mismatch", codes)
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["git_service_command_result"])
 
     def test_graph_repository_prepare_local_writes_workspace_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
