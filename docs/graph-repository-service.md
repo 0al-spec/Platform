@@ -229,6 +229,55 @@ requests, accept ontology terms, write Ontology packages, mutate canonical
 specs, or promote a candidate. Those remain separate Git Service and
 candidate-approval boundaries.
 
+## Product Candidate Approval Intent Gate
+
+After a repair session is ready and public-safe rerun artifacts are published,
+SpecSpace may record an operator intent that the candidate is ready for
+promotion review. This intent is still not a final Git Service approval and
+does not create branches, commits, or pull requests.
+
+Platform validates that handoff with `product-candidate-approval gate`. It
+consumes:
+
+- `runs/idea_to_spec_candidate_approval_intents.json`;
+- `runs/idea_to_spec_repair_session.json`;
+- `runs/idea_to_spec_promotion_gate.json`;
+- `runs/platform_product_repair_rerun_execution_report.json`;
+- `runs/platform_product_repair_rerun_publication_report.json`;
+- explicit promotion paths supplied by the operator.
+
+Example:
+
+```bash
+scripts/platform.py product-candidate-approval gate \
+  --specgraph-dir ../SpecGraph \
+  --workspace-id team-decision-log \
+  --path specs/nodes/SG-SPEC-CANDIDATE.yaml \
+  --output ../SpecGraph/runs/platform_candidate_approval_intent_gate_report.json
+```
+
+The gate report is read-only. It checks that the SpecSpace state is owned by
+SpecSpace, the active intent is still `requested`, repair-session readiness is
+`ready_for_candidate_approval`, repair rerun execution/publication are
+successful non-dry-run reports, no ontology/spec/Git authority has expanded,
+and the approved paths are safe relative repository paths.
+
+When the gate is ready, Platform can materialize the narrow handoff artifact
+that the Git Service already expects:
+
+```bash
+scripts/platform.py product-candidate-approval materialize \
+  --gate-report ../SpecGraph/runs/platform_candidate_approval_intent_gate_report.json \
+  --output ../SpecGraph/runs/candidate_approval_decision.json
+```
+
+`candidate_approval_decision.json` is an approval decision for promotion
+review, not a Git operation. It still does not mutate canonical specs, write
+Ontology packages, accept ontology terms, create a branch, open a pull request,
+or publish a read model. Those actions remain under the later
+`graph-repository promotion-request` and `git-service execute-promotion`
+contracts.
+
 ## Validate
 
 ```bash

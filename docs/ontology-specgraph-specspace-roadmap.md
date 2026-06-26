@@ -524,22 +524,26 @@ Completed Git Service foundation:
    durable demo report, verifies refreshed repair-session and rerun-report
    digests, and proves public-safe publication without candidate approval or
    Git Service promotion.
+8. SpecSpace now records a candidate approval intent as SpecSpace-owned state,
+   and Platform validates that intent through `product-candidate-approval gate`
+   before materializing the narrow `candidate_approval_decision.json` handoff.
+   The gate requires an approval-ready repair session plus successful
+   repair-rerun execution/publication reports and still does not start Git
+   Service promotion.
 
 The previous valuable implementation choices have partially landed: active
 candidate source, workspace route selection, controlled promotion UI, deployment
 lane isolation, repair-rerun execution, and a reproducible rerun smoke contract
 are now present. The next valuable implementation choices are:
 
-1. SpecSpace/Platform: add candidate approval intent and validation after a
-   repair session is ready for candidate approval, still without direct Git
-   promotion.
-2. Platform: move Product Repair Rerun and Git Service execution from local
+1. Platform: move Product Repair Rerun, candidate approval validation, and Git
+   Service execution from local
    adapter orchestration toward hosted or queue-backed service implementation
    while preserving the same report contracts.
-3. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
+2. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
    become structured event-storming input without adding a product-specific
    script.
-4. Ontology/SpecGraph: continue compiler-backed applicability profile import
+3. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 
 ## Operating Notes

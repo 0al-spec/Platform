@@ -216,6 +216,97 @@ PRODUCT_REPAIR_RERUN_BOUNDARY_FALSE_FIELDS = (
     "may_execute_specgraph_from_request",
     "may_run_make_target_from_request",
 )
+PRODUCT_CANDIDATE_APPROVAL_GATE_REPORT_KIND = (
+    "platform_candidate_approval_intent_gate_report"
+)
+PRODUCT_CANDIDATE_APPROVAL_INTENT_STATE_KIND = (
+    "specspace_idea_to_spec_candidate_approval_intent_state"
+)
+PRODUCT_CANDIDATE_APPROVAL_INTENT_ACTION = (
+    "approve_candidate_for_promotion_review"
+)
+PRODUCT_CANDIDATE_APPROVAL_DECISION_KIND = "candidate_approval_decision"
+PRODUCT_CANDIDATE_APPROVAL_DECISION_CONTRACT_REF = (
+    "specgraph.idea-to-spec.candidate-approval-decision.v0.1"
+)
+PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS = {
+    "approval_intents": "runs/idea_to_spec_candidate_approval_intents.json",
+    "repair_session": "runs/idea_to_spec_repair_session.json",
+    "promotion_gate": "runs/idea_to_spec_promotion_gate.json",
+    "repair_execution": "runs/platform_product_repair_rerun_execution_report.json",
+    "repair_publication": "runs/platform_product_repair_rerun_publication_report.json",
+}
+PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS = {
+    "gate": "runs/platform_candidate_approval_intent_gate_report.json",
+    "decision": "runs/candidate_approval_decision.json",
+}
+PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS = (
+    "canonical_mutations_allowed",
+    "ontology_writes_allowed",
+    "tracked_artifacts_written",
+)
+PRODUCT_CANDIDATE_APPROVAL_CONSUMER_FALSE_FIELDS = (
+    "may_execute_specgraph",
+    "may_execute_prompt_agent",
+    "may_apply_to_specgraph",
+    "may_mutate_candidate_source_artifacts",
+    "may_mutate_canonical_specs",
+    "may_write_ontology_package",
+    "may_accept_ontology_terms",
+    "may_mark_candidate_accepted",
+    "may_mark_candidate_graph_accepted",
+    "may_create_branch_or_commit",
+    "may_open_pull_request",
+    "may_execute_git_service_operation",
+)
+PRODUCT_CANDIDATE_APPROVAL_AUTHORITY_FALSE_FIELDS = (
+    "approval_intent_state_is_authority",
+    "candidate_approval_intent_state_is_authority",
+    "candidate_approval_authority",
+    "candidate_approval_decision_authority",
+    "specgraph_execution_authority",
+    "specgraph_artifact_authority",
+    "ontology_authority",
+    "git_service_authority",
+    "canonical_mutations_allowed",
+)
+PRODUCT_CANDIDATE_APPROVAL_INTENT_FALSE_FIELDS = (
+    *PRODUCT_CANDIDATE_APPROVAL_CONSUMER_FALSE_FIELDS,
+    "canonical_mutations_allowed",
+    "tracked_artifacts_written",
+)
+PRODUCT_CANDIDATE_APPROVAL_REPORT_AUTHORITY_FALSE_FIELDS = (
+    "executes_specgraph_make_target",
+    "executes_git_commands",
+    "opens_pull_requests",
+    "merges_pull_requests",
+    "writes_ontology_packages",
+    "accepts_ontology_terms",
+    "mutates_canonical_specs",
+    "publishes_private_artifacts",
+)
+PRODUCT_CANDIDATE_APPROVAL_BOUNDARY = {
+    "approval_intent_state_is_authority": False,
+    "candidate_approval_decision_authority": False,
+    "executes_specgraph_make_target": False,
+    "executes_git_commands": False,
+    "opens_pull_requests": False,
+    "merges_pull_requests": False,
+    "writes_ontology_packages": False,
+    "accepts_ontology_terms": False,
+    "mutates_canonical_specs": False,
+    "publishes_private_artifacts": False,
+    "may_execute_prompt_agent": False,
+    "may_mutate_candidate_source_artifacts": False,
+    "may_mutate_canonical_specs": False,
+    "may_write_ontology_package": False,
+    "may_write_ontology_lockfile": False,
+    "may_mark_candidate_graph_accepted": False,
+    "may_create_branch_or_commit": False,
+    "may_open_pull_request": False,
+    "may_publish_read_model": False,
+    "git_service_promotion_started": False,
+}
 GIT_SERVICE_REQUIRED_OPERATIONS = {
     "prepare_worktree": {
         "adapter_command": "graph-repository prepare-worktree",
@@ -4433,6 +4524,1146 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
             )
         )
     return 0 if ok else 1
+
+
+def load_product_candidate_approval_artifact(
+    path: Path,
+    *,
+    label: str,
+    expected_kind: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any], list[Diagnostic]]:
+    subject = label.replace(" ", "_")
+    if not path.is_file():
+        return (
+            None,
+            {
+                "key": subject,
+                "path": str(path),
+                "available": False,
+                "expected_artifact_kind": expected_kind,
+            },
+            [
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_artifact_missing",
+                    subject=subject,
+                    message=f"{label} artifact is required before candidate approval",
+                )
+            ],
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return (
+            None,
+            {
+                "key": subject,
+                "path": str(path),
+                "available": False,
+                "expected_artifact_kind": expected_kind,
+            },
+            [
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_artifact_json_invalid",
+                    subject=subject,
+                    message=f"{label} artifact is not valid JSON: {exc}",
+                )
+            ],
+        )
+    if not isinstance(payload, dict):
+        return (
+            None,
+            {
+                "key": subject,
+                "path": str(path),
+                "available": False,
+                "expected_artifact_kind": expected_kind,
+            },
+            [
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_artifact_shape_invalid",
+                    subject=subject,
+                    message=f"{label} artifact must be a JSON object",
+                )
+            ],
+        )
+
+    diagnostics: list[Diagnostic] = []
+    artifact_kind = payload.get("artifact_kind")
+    if artifact_kind != expected_kind:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_artifact_kind_mismatch",
+                subject=f"{subject}.artifact_kind",
+                message=f"expected {expected_kind}, found {artifact_kind}",
+            )
+        )
+    status = {
+        "key": subject,
+        "path": str(path),
+        "available": True,
+        "artifact_kind": artifact_kind,
+        "expected_artifact_kind": expected_kind,
+        "contract_ref": payload.get("contract_ref"),
+        "sha256": file_sha256(path),
+    }
+    return payload, status, diagnostics
+
+
+def product_candidate_approval_false_field_diagnostics(
+    payload: dict[str, Any],
+    *,
+    fields: tuple[str, ...],
+    subject: str,
+    code: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for field in fields:
+        if payload.get(field) is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code=code,
+                    subject=f"{subject}.{field}",
+                    message=f"{field} must remain false for candidate approval handoff",
+                )
+            )
+    return diagnostics
+
+
+def product_candidate_approval_boundary_diagnostics(
+    payload: dict[str, Any],
+    *,
+    section: str,
+    subject: str,
+    fields: tuple[str, ...],
+) -> list[Diagnostic]:
+    value = payload.get(section)
+    if not isinstance(value, dict):
+        return [
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_boundary_missing",
+                subject=f"{subject}.{section}",
+                message=f"{section} is required for candidate approval handoff",
+            )
+        ]
+    return product_candidate_approval_false_field_diagnostics(
+        value,
+        fields=fields,
+        subject=f"{subject}.{section}",
+        code="product_candidate_approval_authority_expanded",
+    )
+
+
+def product_candidate_approval_deployment_profile_diagnostics(
+    profile: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics = [
+        *validate_deployment_profile_schema(profile),
+        *deployment_profile_semantic_diagnostics(profile),
+    ]
+    if profile.get("profile_id") != "product_idea_to_spec_workbench":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_profile_unsupported",
+                subject="deployment_profile.profile_id",
+                message=(
+                    "candidate approval requires the product_idea_to_spec_workbench "
+                    "deployment profile"
+                ),
+            )
+        )
+    if profile.get("workflow_lane") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_workflow_lane_unsupported",
+                subject="deployment_profile.workflow_lane",
+                message="candidate approval requires product_idea_to_spec",
+            )
+        )
+    return diagnostics
+
+
+def product_candidate_approval_latest_intent(
+    intent_state: dict[str, Any],
+    *,
+    workspace_id: str | None,
+) -> dict[str, Any] | None:
+    intents = [
+        item
+        for item in intent_state.get("intents", [])
+        if isinstance(item, dict)
+        and item.get("status") == "requested"
+        and item.get("requested_action") == PRODUCT_CANDIDATE_APPROVAL_INTENT_ACTION
+        and (workspace_id is None or item.get("workspace_id") == workspace_id)
+    ]
+    if not intents:
+        return None
+    return sorted(
+        intents,
+        key=lambda item: (
+            str(item.get("created_at") or ""),
+            str(item.get("updated_at") or ""),
+            str(item.get("id") or ""),
+        ),
+    )[-1]
+
+
+def product_candidate_approval_intent_state_diagnostics(
+    intent_state: dict[str, Any],
+    *,
+    selected_intent: dict[str, Any] | None,
+    workspace_id: str | None,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if intent_state.get("state_owner") != "SpecSpace":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_state_owner_invalid",
+                subject="approval_intents.state_owner",
+                message="candidate approval intent state must be owned by SpecSpace",
+            )
+        )
+    if intent_state.get("schema_version") != 1:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_schema_unsupported",
+                subject="approval_intents.schema_version",
+                message="candidate approval intent state schema_version must be 1",
+            )
+        )
+    diagnostics.extend(
+        product_candidate_approval_false_field_diagnostics(
+            intent_state,
+            fields=PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS,
+            subject="approval_intents",
+            code="product_candidate_approval_intent_state_authority_expanded",
+        )
+    )
+    diagnostics.extend(
+        product_candidate_approval_boundary_diagnostics(
+            intent_state,
+            section="consumer_boundary",
+            subject="approval_intents",
+            fields=PRODUCT_CANDIDATE_APPROVAL_CONSUMER_FALSE_FIELDS,
+        )
+    )
+    diagnostics.extend(
+        product_candidate_approval_boundary_diagnostics(
+            intent_state,
+            section="authority_boundary",
+            subject="approval_intents",
+            fields=PRODUCT_CANDIDATE_APPROVAL_AUTHORITY_FALSE_FIELDS,
+        )
+    )
+    if selected_intent is None:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_missing",
+                subject="approval_intents.intents",
+                message=(
+                    "candidate approval requires an active requested SpecSpace intent"
+                ),
+            )
+        )
+        return diagnostics
+
+    if workspace_id and selected_intent.get("workspace_id") != workspace_id:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_workspace_mismatch",
+                subject="approval_intents.intents[].workspace_id",
+                message="selected intent must match the requested workspace",
+            )
+        )
+    for field in ("id", "workspace_id", "candidate_id", "created_at", "requested_by"):
+        if not isinstance(selected_intent.get(field), str) or not selected_intent.get(
+            field
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_intent_field_missing",
+                    subject=f"approval_intents.intents[].{field}",
+                    message=f"selected intent must include `{field}`",
+                )
+            )
+    if selected_intent.get("status") != "requested":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_status_unsupported",
+                subject="approval_intents.intents[].status",
+                message="selected candidate approval intent must still be requested",
+            )
+        )
+    if (
+        selected_intent.get("requested_action")
+        != PRODUCT_CANDIDATE_APPROVAL_INTENT_ACTION
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_action_unsupported",
+                subject="approval_intents.intents[].requested_action",
+                message=(
+                    "selected intent must request approve_candidate_for_promotion_review"
+                ),
+            )
+        )
+    if selected_intent.get("ready_for_candidate_approval") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_not_ready",
+                subject="approval_intents.intents[].ready_for_candidate_approval",
+                message="selected intent must be recorded from an approval-ready session",
+            )
+        )
+    if selected_intent.get("ready_for_platform_promotion") is True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_platform_promotion_premature",
+                subject="approval_intents.intents[].ready_for_platform_promotion",
+                message=(
+                    "SpecSpace intent must not claim final Platform promotion readiness"
+                ),
+            )
+        )
+    if string_list(selected_intent.get("blocked_by")):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_blocked",
+                subject="approval_intents.intents[].blocked_by",
+                message="selected intent must not carry unresolved blockers",
+            )
+        )
+    if (
+        selected_intent.get("repair_session_ref")
+        != PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"]
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_repair_session_ref_stale",
+                subject="approval_intents.intents[].repair_session_ref",
+                message="selected intent must reference the current repair session run",
+            )
+        )
+    if (
+        selected_intent.get("promotion_gate_ref")
+        != PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"]
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_intent_promotion_gate_ref_stale",
+                subject="approval_intents.intents[].promotion_gate_ref",
+                message="selected intent must reference the current promotion gate run",
+            )
+        )
+    diagnostics.extend(
+        product_candidate_approval_false_field_diagnostics(
+            selected_intent,
+            fields=PRODUCT_CANDIDATE_APPROVAL_INTENT_FALSE_FIELDS,
+            subject="approval_intents.intents[]",
+            code="product_candidate_approval_intent_authority_expanded",
+        )
+    )
+    return diagnostics
+
+
+def product_candidate_approval_repair_session_diagnostics(
+    repair_session: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics = [*graph_repository_repair_session_diagnostics(repair_session)]
+    if nested_mapping(repair_session, "readiness").get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_repair_session_not_ready",
+                subject="repair_session.readiness.ready",
+                message="repair session journal must be ready before approval",
+            )
+        )
+    if (
+        repair_session_readiness_flag(repair_session, "ready_for_candidate_approval")
+        is not True
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=(
+                    "product_candidate_approval_repair_session_not_ready_for_candidate_approval"
+                ),
+                subject="repair_session.readiness_impact.ready_for_candidate_approval",
+                message="repair session must be ready for candidate approval",
+            )
+        )
+    if repair_session_readiness_flag(repair_session, "ready_for_platform_promotion"):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_repair_session_platform_promotion_premature",
+                subject="repair_session.readiness_impact.ready_for_platform_promotion",
+                message=(
+                    "repair session must not claim Platform promotion readiness before "
+                    "candidate approval decision materialization"
+                ),
+            )
+        )
+    blockers = string_list(nested_mapping(repair_session, "readiness_impact").get("blocked_by"))
+    if blockers:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_repair_session_blocked",
+                subject="repair_session.readiness_impact.blocked_by",
+                message="repair session blockers must be resolved before approval",
+            )
+        )
+    return diagnostics
+
+
+def product_candidate_approval_promotion_gate_diagnostics(
+    promotion_gate: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    diagnostics.extend(
+        product_candidate_approval_false_field_diagnostics(
+            promotion_gate,
+            fields=PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS,
+            subject="promotion_gate",
+            code="product_candidate_approval_promotion_gate_authority_expanded",
+        )
+    )
+    authority_boundary = promotion_gate.get("authority_boundary")
+    if isinstance(authority_boundary, dict):
+        for key, value in sorted(authority_boundary.items()):
+            if value is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_candidate_approval_promotion_gate_authority_expanded",
+                        subject=f"promotion_gate.authority_boundary.{key}",
+                        message="promotion gate must not expand write authority",
+                    )
+                )
+    return diagnostics
+
+
+def product_candidate_approval_publication_report_diagnostics(
+    report: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if report.get("artifact_kind") != PRODUCT_REPAIR_RERUN_PUBLICATION_REPORT_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_publication_report_kind_mismatch",
+                subject="repair_publication.artifact_kind",
+                message=f"expected {PRODUCT_REPAIR_RERUN_PUBLICATION_REPORT_KIND}",
+            )
+        )
+    if report.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_publication_report_not_ok",
+                subject="repair_publication.ok",
+                message="candidate approval requires successful public-safe publication",
+            )
+        )
+    if report.get("dry_run") is True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_publication_report_dry_run",
+                subject="repair_publication.dry_run",
+                message="candidate approval requires non-dry-run publication",
+            )
+        )
+    diagnostics.extend(
+        product_candidate_approval_false_field_diagnostics(
+            report,
+            fields=PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS,
+            subject="repair_publication",
+            code="product_candidate_approval_publication_authority_expanded",
+        )
+    )
+    authority = nested_mapping(report, "authority_boundary")
+    for field in PRODUCT_CANDIDATE_APPROVAL_REPORT_AUTHORITY_FALSE_FIELDS:
+        if field == "executes_specgraph_make_target":
+            continue
+        if authority.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_publication_authority_expanded",
+                    subject=f"repair_publication.authority_boundary.{field}",
+                    message=f"{field} must remain false before candidate approval",
+                )
+            )
+    if nested_mapping(report, "manifest").get("present") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_publication_manifest_missing",
+                subject="repair_publication.manifest.present",
+                message="publication report must prove a public-safe manifest",
+            )
+        )
+    if nested_mapping(report, "summary").get("missing_artifact_count", 0) != 0:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_publication_artifacts_missing",
+                subject="repair_publication.summary.missing_artifact_count",
+                message="publication report must not have missing public artifacts",
+            )
+        )
+    return diagnostics
+
+
+def product_candidate_approval_identity_diagnostics(
+    *,
+    selected_intent: dict[str, Any],
+    repair_session: dict[str, Any],
+    promotion_gate: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    candidate_id = selected_intent.get("candidate_id")
+    workspace_id = selected_intent.get("workspace_id")
+    repair_session_session = nested_mapping(repair_session, "session")
+    repair_session_summary = nested_mapping(repair_session, "summary")
+    promotion_summary = nested_mapping(promotion_gate, "summary")
+    for artifact_name, source in (
+        ("repair_session.session", repair_session_session),
+        ("repair_session.summary", repair_session_summary),
+        ("promotion_gate.summary", promotion_summary),
+    ):
+        actual_candidate = source.get("candidate_id")
+        if actual_candidate and actual_candidate != candidate_id:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_candidate_mismatch",
+                    subject=f"{artifact_name}.candidate_id",
+                    message="all approval handoff artifacts must reference the same candidate",
+                )
+            )
+        actual_workspace = source.get("workspace_id")
+        if actual_workspace and actual_workspace != workspace_id:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_workspace_mismatch",
+                    subject=f"{artifact_name}.workspace_id",
+                    message="all approval handoff artifacts must reference the same workspace",
+                )
+            )
+    intent_session_id = selected_intent.get("repair_session_id")
+    repair_session_id = repair_session_session.get("session_id")
+    if intent_session_id and repair_session_id and intent_session_id != repair_session_id:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_repair_session_mismatch",
+                subject="approval_intents.intents[].repair_session_id",
+                message="selected intent must reference the current repair session",
+            )
+        )
+    return diagnostics
+
+
+def product_candidate_approval_path_diagnostics(paths: list[str]) -> list[Diagnostic]:
+    diagnostics = [*graph_repository_relative_paths_diagnostics(paths)]
+    if not paths:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_paths_missing",
+                subject="path",
+                message="candidate approval materialization requires approved paths",
+            )
+        )
+    for index, raw_path in enumerate(paths):
+        if Path(raw_path).is_absolute() or ".." in Path(raw_path).parts:
+            continue
+        if graph_repository_promotion_path_allowed(raw_path):
+            continue
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_path_not_allowed",
+                subject=f"path[{index}]",
+                message=(
+                    "candidate approval paths must be under specs/, docs/proposals/, "
+                    "or runs/"
+                ),
+            )
+        )
+    return diagnostics
+
+
+def build_product_candidate_approval_gate_report(
+    *,
+    deployment_profile_path: Path,
+    deployment_profile: dict[str, Any],
+    specgraph_dir: Path,
+    intent_state: dict[str, Any] | None,
+    repair_session: dict[str, Any] | None,
+    promotion_gate: dict[str, Any] | None,
+    repair_execution: dict[str, Any] | None,
+    repair_publication: dict[str, Any] | None,
+    selected_intent: dict[str, Any] | None,
+    source_artifacts: list[dict[str, Any]],
+    paths: list[str],
+    extra_diagnostics: list[Diagnostic],
+) -> tuple[dict[str, Any], list[Diagnostic]]:
+    diagnostics: list[Diagnostic] = [
+        *extra_diagnostics,
+        *product_candidate_approval_deployment_profile_diagnostics(
+            deployment_profile
+        ),
+        *product_repair_specgraph_checkout_diagnostics(
+            specgraph_dir,
+            code_prefix="product_candidate_approval",
+            subject="specgraph_dir",
+        ),
+        *product_candidate_approval_path_diagnostics(paths),
+    ]
+    if intent_state is not None:
+        diagnostics.extend(
+            product_candidate_approval_intent_state_diagnostics(
+                intent_state,
+                selected_intent=selected_intent,
+                workspace_id=(
+                    str(selected_intent.get("workspace_id"))
+                    if selected_intent is not None
+                    and isinstance(selected_intent.get("workspace_id"), str)
+                    else None
+                ),
+            )
+        )
+    if repair_session is not None:
+        diagnostics.extend(
+            product_candidate_approval_repair_session_diagnostics(repair_session)
+        )
+    if promotion_gate is not None:
+        diagnostics.extend(
+            product_candidate_approval_promotion_gate_diagnostics(promotion_gate)
+        )
+    if repair_execution is not None:
+        diagnostics.extend(product_repair_execution_report_diagnostics(repair_execution))
+        diagnostics.extend(
+            product_candidate_approval_false_field_diagnostics(
+                repair_execution,
+                fields=PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS,
+                subject="repair_execution",
+                code="product_candidate_approval_execution_authority_expanded",
+            )
+        )
+    if repair_publication is not None:
+        diagnostics.extend(
+            product_candidate_approval_publication_report_diagnostics(
+                repair_publication
+            )
+        )
+    if (
+        selected_intent is not None
+        and repair_session is not None
+        and promotion_gate is not None
+    ):
+        diagnostics.extend(
+            product_candidate_approval_identity_diagnostics(
+                selected_intent=selected_intent,
+                repair_session=repair_session,
+                promotion_gate=promotion_gate,
+            )
+        )
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ready_to_materialize = error_count == 0
+    selected_summary = (
+        {
+            "id": selected_intent.get("id"),
+            "workspace_id": selected_intent.get("workspace_id"),
+            "candidate_id": selected_intent.get("candidate_id"),
+            "repair_session_id": selected_intent.get("repair_session_id"),
+            "repair_session_ref": selected_intent.get("repair_session_ref"),
+            "promotion_gate_ref": selected_intent.get("promotion_gate_ref"),
+            "requested_by": selected_intent.get("requested_by"),
+            "reason": selected_intent.get("reason"),
+            "created_at": selected_intent.get("created_at"),
+        }
+        if selected_intent is not None
+        else None
+    )
+    operations = [
+        product_repair_operation(
+            name="validate_specspace_candidate_approval_intent",
+            status="ready" if ready_to_materialize else "blocked",
+            reason="SpecSpace intent is coherent"
+            if ready_to_materialize
+            else "intent_or_sources_not_ready",
+            evidence=["idea_to_spec_candidate_approval_intents"],
+        ),
+        product_repair_operation(
+            name="validate_repair_session_journal",
+            status="ready" if ready_to_materialize else "blocked",
+            reason="repair session is candidate-approval ready"
+            if ready_to_materialize
+            else "repair_session_not_ready",
+            evidence=["idea_to_spec_repair_session"],
+        ),
+        product_repair_operation(
+            name="validate_platform_rerun_publication",
+            status="ready" if ready_to_materialize else "blocked",
+            reason="repair rerun execution and publication are complete"
+            if ready_to_materialize
+            else "repair_rerun_reports_not_ready",
+            evidence=[
+                "platform_product_repair_rerun_execution_report",
+                "platform_product_repair_rerun_publication_report",
+            ],
+        ),
+        product_repair_operation(
+            name="materialize_candidate_approval_decision",
+            status="ready" if ready_to_materialize else "blocked",
+            reason="candidate approval decision can be materialized"
+            if ready_to_materialize
+            else "approval_gate_not_ready",
+            evidence=["candidate_approval_decision"],
+        ),
+    ]
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_CANDIDATE_APPROVAL_GATE_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "deployment_profile_ref": str(deployment_profile_path),
+        "specgraph_dir": str(specgraph_dir),
+        "ok": error_count == 0,
+        "ready_to_materialize": ready_to_materialize,
+        "canonical_mutations_allowed": False,
+        "ontology_writes_allowed": False,
+        "tracked_artifacts_written": False,
+        "source_artifacts": source_artifacts,
+        "selected_intent": selected_summary,
+        "approved_paths": paths if ready_to_materialize else [],
+        "operations": operations,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "authority_boundary": PRODUCT_CANDIDATE_APPROVAL_BOUNDARY,
+        "recommended_next_action": {
+            "command": "product-candidate-approval materialize",
+            "requires_git_service_execution": False,
+            "next_downstream_gate": "graph-repository promotion-request",
+        },
+        "summary": {
+            "status": "ready_to_materialize" if ready_to_materialize else "blocked",
+            "error_count": error_count,
+            "source_artifact_count": len(source_artifacts),
+            "approved_path_count": len(paths) if ready_to_materialize else 0,
+            "workspace_id": selected_summary.get("workspace_id")
+            if selected_summary
+            else None,
+            "candidate_id": selected_summary.get("candidate_id")
+            if selected_summary
+            else None,
+            "selected_intent_id": selected_summary.get("id")
+            if selected_summary
+            else None,
+        },
+    }
+    return report, diagnostics
+
+
+def product_candidate_approval_gate(args: argparse.Namespace) -> int:
+    deployment_profile_path = Path(args.deployment_profile)
+    specgraph_dir = Path(args.specgraph_dir).resolve()
+    approval_intents_path = path_arg_or_default(
+        args.approval_intents,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["approval_intents"],
+    )
+    repair_session_path = path_arg_or_default(
+        args.repair_session,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
+    )
+    promotion_gate_path = path_arg_or_default(
+        args.promotion_gate,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
+    )
+    repair_execution_path = path_arg_or_default(
+        args.repair_execution,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_execution"],
+    )
+    repair_publication_path = path_arg_or_default(
+        args.repair_publication,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_publication"],
+    )
+    output_path = path_arg_or_default(
+        args.output,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS["gate"],
+    )
+
+    deployment_profile = load_json_mapping(
+        deployment_profile_path,
+        label="deployment profile",
+    )
+    source_artifacts: list[dict[str, Any]] = []
+    intent_state, intent_status, intent_diagnostics = (
+        load_product_candidate_approval_artifact(
+            approval_intents_path,
+            label="idea_to_spec_candidate_approval_intents",
+            expected_kind=PRODUCT_CANDIDATE_APPROVAL_INTENT_STATE_KIND,
+        )
+    )
+    source_artifacts.append(intent_status)
+    repair_session, repair_status, repair_diagnostics = (
+        load_product_candidate_approval_artifact(
+            repair_session_path,
+            label="idea_to_spec_repair_session",
+            expected_kind="idea_to_spec_repair_session_journal",
+        )
+    )
+    source_artifacts.append(repair_status)
+    promotion_gate, promotion_status, promotion_diagnostics = (
+        load_product_candidate_approval_artifact(
+            promotion_gate_path,
+            label="idea_to_spec_promotion_gate",
+            expected_kind="idea_to_spec_promotion_gate",
+        )
+    )
+    source_artifacts.append(promotion_status)
+    repair_execution, execution_status, execution_diagnostics = (
+        load_product_candidate_approval_artifact(
+            repair_execution_path,
+            label="platform_product_repair_rerun_execution_report",
+            expected_kind=PRODUCT_REPAIR_RERUN_EXECUTION_REPORT_KIND,
+        )
+    )
+    source_artifacts.append(execution_status)
+    repair_publication, publication_status, publication_diagnostics = (
+        load_product_candidate_approval_artifact(
+            repair_publication_path,
+            label="platform_product_repair_rerun_publication_report",
+            expected_kind=PRODUCT_REPAIR_RERUN_PUBLICATION_REPORT_KIND,
+        )
+    )
+    source_artifacts.append(publication_status)
+
+    selected_intent = (
+        product_candidate_approval_latest_intent(
+            intent_state,
+            workspace_id=args.workspace_id,
+        )
+        if intent_state is not None
+        else None
+    )
+    report, diagnostics = build_product_candidate_approval_gate_report(
+        deployment_profile_path=deployment_profile_path,
+        deployment_profile=deployment_profile,
+        specgraph_dir=specgraph_dir,
+        intent_state=intent_state,
+        repair_session=repair_session,
+        promotion_gate=promotion_gate,
+        repair_execution=repair_execution,
+        repair_publication=repair_publication,
+        selected_intent=selected_intent,
+        source_artifacts=source_artifacts,
+        paths=list(args.path or []),
+        extra_diagnostics=[
+            *intent_diagnostics,
+            *repair_diagnostics,
+            *promotion_diagnostics,
+            *execution_diagnostics,
+            *publication_diagnostics,
+        ],
+    )
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    if not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": report["summary"]["status"],
+                        "candidate": str(report["summary"]["candidate_id"]),
+                        "paths": str(report["summary"]["approved_path_count"]),
+                    }
+                ],
+                [
+                    ("status", "STATUS"),
+                    ("candidate", "CANDIDATE"),
+                    ("paths", "PATHS"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
+def product_candidate_approval_gate_report_diagnostics(
+    report: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if report.get("artifact_kind") != PRODUCT_CANDIDATE_APPROVAL_GATE_REPORT_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_gate_report_kind_mismatch",
+                subject="gate_report.artifact_kind",
+                message=f"expected {PRODUCT_CANDIDATE_APPROVAL_GATE_REPORT_KIND}",
+            )
+        )
+    if report.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_gate_report_not_ok",
+                subject="gate_report.ok",
+                message="candidate approval gate report must be ok",
+            )
+        )
+    if report.get("ready_to_materialize") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_gate_not_ready",
+                subject="gate_report.ready_to_materialize",
+                message="candidate approval gate must be ready to materialize",
+            )
+        )
+    diagnostics.extend(
+        product_candidate_approval_false_field_diagnostics(
+            report,
+            fields=PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS,
+            subject="gate_report",
+            code="product_candidate_approval_gate_authority_expanded",
+        )
+    )
+    authority = nested_mapping(report, "authority_boundary")
+    for key, value in sorted(authority.items()):
+        if value is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_gate_authority_expanded",
+                    subject=f"gate_report.authority_boundary.{key}",
+                    message="candidate approval gate must not execute write actions",
+                )
+            )
+    if not string_list(report.get("approved_paths")):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_gate_paths_missing",
+                subject="gate_report.approved_paths",
+                message="ready gate report must include approved promotion paths",
+            )
+        )
+    if not isinstance(report.get("selected_intent"), dict):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_gate_intent_missing",
+                subject="gate_report.selected_intent",
+                message="ready gate report must include selected intent metadata",
+            )
+        )
+    return diagnostics
+
+
+def build_candidate_approval_decision(
+    *,
+    gate_report_path: Path,
+    gate_report: dict[str, Any],
+) -> dict[str, Any]:
+    selected_intent = nested_mapping(gate_report, "selected_intent")
+    summary = nested_mapping(gate_report, "summary")
+    candidate_id = str(
+        selected_intent.get("candidate_id") or summary.get("candidate_id") or ""
+    )
+    workspace_id = str(
+        selected_intent.get("workspace_id") or summary.get("workspace_id") or candidate_id
+    )
+    paths = string_list(gate_report.get("approved_paths"))
+    return {
+        "artifact_kind": PRODUCT_CANDIDATE_APPROVAL_DECISION_KIND,
+        "schema_version": 1,
+        "contract_ref": PRODUCT_CANDIDATE_APPROVAL_DECISION_CONTRACT_REF,
+        "generated_at": utc_now_iso(),
+        "gate_report_ref": str(gate_report_path),
+        "canonical_mutations_allowed": False,
+        "ontology_writes_allowed": False,
+        "tracked_artifacts_written": False,
+        "workspace": {
+            "workspace_id": workspace_id,
+            "mode": "product_idea_to_spec",
+            "repository_role": "product_spec_workspace",
+            "public_route": f"/{workspace_id}",
+        },
+        "candidate": {
+            "candidate_id": candidate_id,
+            "display_name": workspace_id.replace("-", " ").title(),
+            "active_candidate_ref": "runs/active_idea_to_spec_candidate.json",
+            "promotion_gate_ref": selected_intent.get("promotion_gate_ref")
+            or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
+        },
+        "decision": {
+            "requested_state": "approved",
+            "state": "approved",
+            "operator_ref": selected_intent.get("requested_by"),
+            "reason": selected_intent.get("reason")
+            or "Approve review-ready candidate promotion.",
+            "conditions": [],
+        },
+        "readiness": {
+            "ready": True,
+            "review_state": "candidate_approval_ready",
+            "blocked_by": [],
+        },
+        "promotion_request": {
+            "platform_artifact_kind": "platform_graph_repository_promotion_request",
+            "paths": paths,
+            "requires_git_service_execution": True,
+        },
+        "source_artifacts": {
+            "candidate_approval_gate": str(gate_report_path),
+            "candidate_approval_intent": selected_intent.get("id"),
+            "repair_session": selected_intent.get("repair_session_ref")
+            or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
+            "promotion_gate": selected_intent.get("promotion_gate_ref")
+            or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
+            "platform_repair_execution": (
+                PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_execution"]
+            ),
+            "platform_repair_publication": (
+                PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_publication"]
+            ),
+        },
+        "authority_boundary": {
+            "may_execute_prompt_agent": False,
+            "may_mutate_candidate_source_artifacts": False,
+            "may_mutate_canonical_specs": False,
+            "may_write_ontology_package": False,
+            "may_write_ontology_lockfile": False,
+            "may_mark_candidate_graph_accepted": False,
+            "may_create_branch_or_commit": False,
+            "may_open_pull_request": False,
+            "may_publish_read_model": False,
+            "may_execute_git_service_operation": False,
+        },
+    }
+
+
+def product_candidate_approval_materialize(args: argparse.Namespace) -> int:
+    gate_report_path = Path(args.gate_report)
+    gate_report = load_json_mapping(
+        gate_report_path,
+        label="candidate approval gate report",
+    )
+    diagnostics = product_candidate_approval_gate_report_diagnostics(gate_report)
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    decision = (
+        build_candidate_approval_decision(
+            gate_report_path=gate_report_path,
+            gate_report=gate_report,
+        )
+        if error_count == 0
+        else {
+            "artifact_kind": PRODUCT_CANDIDATE_APPROVAL_DECISION_KIND,
+            "schema_version": 1,
+            "contract_ref": PRODUCT_CANDIDATE_APPROVAL_DECISION_CONTRACT_REF,
+            "generated_at": utc_now_iso(),
+            "gate_report_ref": str(gate_report_path),
+            "canonical_mutations_allowed": False,
+            "ontology_writes_allowed": False,
+            "tracked_artifacts_written": False,
+            "readiness": {
+                "ready": False,
+                "review_state": "candidate_approval_blocked",
+                "blocked_by": [
+                    diagnostic.code
+                    for diagnostic in diagnostics
+                    if diagnostic.level == "ERROR"
+                ],
+            },
+            "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+            "authority_boundary": PRODUCT_CANDIDATE_APPROVAL_BOUNDARY,
+        }
+    )
+    output_path = (
+        Path(args.output)
+        if args.output
+        else gate_report_path.parent / "candidate_approval_decision.json"
+    )
+    if error_count == 0 or not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(decision, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(decision, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": decision["readiness"]["review_state"],
+                        "candidate": nested_mapping(decision, "candidate").get(
+                            "candidate_id",
+                            "",
+                        ),
+                        "paths": str(
+                            len(
+                                string_list(
+                                    nested_mapping(
+                                        decision,
+                                        "promotion_request",
+                                    ).get("paths")
+                                )
+                            )
+                        ),
+                    }
+                ],
+                [
+                    ("status", "STATUS"),
+                    ("candidate", "CANDIDATE"),
+                    ("paths", "PATHS"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
 
 
 def run_platform_json_subcommand(command_args: list[str]) -> tuple[
@@ -8885,6 +10116,140 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     product_repair_smoke_parser.set_defaults(func=product_repair_rerun_smoke)
+
+    product_candidate_approval_parser = subcommands.add_parser(
+        "product-candidate-approval",
+        help="Validate SpecSpace candidate approval intents and materialize approval decisions.",
+    )
+    product_candidate_approval_subcommands = (
+        product_candidate_approval_parser.add_subparsers(
+            dest="product_candidate_approval_command",
+            required=True,
+        )
+    )
+    product_candidate_approval_gate_parser = (
+        product_candidate_approval_subcommands.add_parser(
+            "gate",
+            help="Build a read-only gate report for a SpecSpace candidate approval intent.",
+        )
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--deployment-profile",
+        default=str(DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE),
+        help=(
+            "Path to a platform_deployment_profile artifact. Defaults to the "
+            "product idea-to-spec workbench profile."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--specgraph-dir",
+        default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
+        help="Local SpecGraph checkout that owns product idea-to-spec runs.",
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--approval-intents",
+        help=(
+            "SpecSpace-owned candidate approval intent state. Defaults to "
+            "runs/idea_to_spec_candidate_approval_intents.json under --specgraph-dir."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--repair-session",
+        help=(
+            "Idea-to-spec repair session journal. Defaults to "
+            "runs/idea_to_spec_repair_session.json under --specgraph-dir."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--promotion-gate",
+        help=(
+            "Idea-to-spec promotion gate artifact. Defaults to "
+            "runs/idea_to_spec_promotion_gate.json under --specgraph-dir."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--repair-execution",
+        help=(
+            "Platform product repair rerun execution report. Defaults to "
+            "runs/platform_product_repair_rerun_execution_report.json under "
+            "--specgraph-dir."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--repair-publication",
+        help=(
+            "Platform product repair rerun publication report. Defaults to "
+            "runs/platform_product_repair_rerun_publication_report.json under "
+            "--specgraph-dir."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--workspace-id",
+        help="Optional workspace id used to select the active SpecSpace intent.",
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        help=(
+            "Materialized candidate path approved for future Git Service promotion. "
+            "May be provided multiple times."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path where the gate report JSON should be written. Defaults to "
+            "runs/platform_candidate_approval_intent_gate_report.json."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the gate report.",
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_candidate_approval_gate_parser.set_defaults(
+        func=product_candidate_approval_gate
+    )
+
+    product_candidate_approval_materialize_parser = (
+        product_candidate_approval_subcommands.add_parser(
+            "materialize",
+            help="Materialize a candidate_approval_decision from a ready gate report.",
+        )
+    )
+    product_candidate_approval_materialize_parser.add_argument(
+        "--gate-report",
+        required=True,
+        help="Path to a platform_candidate_approval_intent_gate_report artifact.",
+    )
+    product_candidate_approval_materialize_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path where candidate_approval_decision JSON should be written. "
+            "Defaults to candidate_approval_decision.json next to the gate report."
+        ),
+    )
+    product_candidate_approval_materialize_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist a blocked decision report when the gate is not ready.",
+    )
+    product_candidate_approval_materialize_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_candidate_approval_materialize_parser.set_defaults(
+        func=product_candidate_approval_materialize
+    )
 
     deploy_parser = subcommands.add_parser(
         "deploy",
