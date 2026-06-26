@@ -7018,10 +7018,10 @@ def product_candidate_promotion_operation(
 
 
 def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
-    contract_path = Path(args.contract)
-    promotion_request_path = Path(args.promotion_request)
-    approval_decision_path = Path(args.approval_decision)
-    deployment_profile_path = Path(args.deployment_profile)
+    contract_path = Path(args.contract).resolve()
+    promotion_request_path = Path(args.promotion_request).resolve()
+    approval_decision_path = Path(args.approval_decision).resolve()
+    deployment_profile_path = Path(args.deployment_profile).resolve()
     repository_dir = Path(args.repository_dir).resolve()
     workspace_dir = Path(args.workspace_dir).resolve()
     contract = load_json_mapping(contract_path, label="git service contract")
@@ -7088,14 +7088,16 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
         )
 
     output_path = (
-        Path(args.output)
+        Path(args.output).resolve()
         if args.output
         else promotion_request_path.parent
         / Path(PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS["execution"]).name
     )
     git_service_output_path = (
-        Path(args.git_service_output)
+        Path(args.git_service_output).resolve()
         if args.git_service_output
+        else output_path.parent / "git_service_promotion_execution_report.json"
+        if args.dry_run
         else workspace_dir / ".platform" / "git_service_promotion_execution_report.json"
     )
     candidate_id = str(promotion_request.get("candidate_id") or "")
@@ -7262,7 +7264,7 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
                 not args.dry_run and worktree_prepared
             ),
             "creates_candidate_commit": not args.dry_run and commit_created,
-            "opens_pull_request": (
+            "opens_pull_requests": (
                 not args.dry_run and not args.open_review_dry_run and review_opened
             ),
             "merges_pull_requests": False,
@@ -11360,8 +11362,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--git-service-output",
         help=(
             "Optional path for the inner Git Service execution report. Defaults "
-            "to .platform/git_service_promotion_execution_report.json in the "
-            "candidate worktree."
+            "to a sibling report beside the product execution report in dry-run "
+            "mode and to .platform/git_service_promotion_execution_report.json "
+            "in the candidate worktree otherwise."
         ),
     )
     product_candidate_promotion_execute_parser.add_argument(

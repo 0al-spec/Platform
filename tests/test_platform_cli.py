@@ -3919,7 +3919,6 @@ workspaces:
             repository_dir = self.create_graph_repository_checkout(tmp_root)
             workspace_dir = tmp_root / "candidate-worktree"
             output = tmp_root / "product_candidate_promotion_execution_report.json"
-            git_service_output = tmp_root / "git_service_promotion_execution_report.json"
 
             result = self.run_cli(
                 "product-candidate-promotion",
@@ -3935,8 +3934,6 @@ workspaces:
                 "--dry-run",
                 "--output",
                 str(output),
-                "--git-service-output",
-                str(git_service_output),
                 "--format",
                 "json",
             )
@@ -3952,6 +3949,7 @@ workspaces:
             self.assertEqual(payload["summary"]["status"], "dry_run")
             self.assertFalse(workspace_dir.exists())
             self.assertTrue(output.is_file())
+            git_service_output = tmp_root / "git_service_promotion_execution_report.json"
             self.assertTrue(git_service_output.is_file())
             self.assertTrue(payload["git_service_execution"]["ok"])
             statuses = {
@@ -3960,7 +3958,43 @@ workspaces:
             }
             self.assertEqual(statuses["prepare_worktree"], "dry_run")
             self.assertEqual(statuses["commit_candidate"], "skipped_dry_run")
-            self.assertFalse(payload["authority_boundary"]["opens_pull_request"])
+            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_candidate_promotion_execute_resolves_relative_child_inputs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request, approval_decision = (
+                self.build_product_candidate_promotion_request(tmp_root)
+            )
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+            operator_cwd = tmp_root / "operator"
+            operator_cwd.mkdir()
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                os.path.relpath(promotion_request, operator_cwd),
+                "--approval-decision",
+                os.path.relpath(approval_decision, operator_cwd),
+                "--repository-dir",
+                os.path.relpath(repository_dir, operator_cwd),
+                "--workspace-dir",
+                os.path.relpath(workspace_dir, operator_cwd),
+                "--dry-run",
+                "--format",
+                "json",
+                cwd=operator_cwd,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"], payload["diagnostics"])
+        self.assertTrue(payload["git_service_execution"]["ok"])
+        self.assertFalse(workspace_dir.exists())
 
     def test_product_candidate_promotion_execute_runs_controlled_local_adapter(
         self,
@@ -4013,7 +4047,7 @@ workspaces:
                 payload["authority_boundary"]["creates_candidate_worktree_or_branch"]
             )
             self.assertTrue(payload["authority_boundary"]["creates_candidate_commit"])
-            self.assertFalse(payload["authority_boundary"]["opens_pull_request"])
+            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
             statuses = {
                 operation["name"]: operation["status"]
                 for operation in payload["git_service_execution"]["operations"]
