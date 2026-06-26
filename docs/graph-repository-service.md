@@ -278,6 +278,47 @@ or publish a read model. Those actions remain under the later
 `graph-repository promotion-request` and `git-service execute-promotion`
 contracts.
 
+## Product Promotion Request Handoff
+
+After `candidate_approval_decision.json` exists, Platform can build the
+Graph Repository promotion request without requiring the operator to retype the
+candidate id or approved materialized paths:
+
+```bash
+scripts/platform.py product-candidate-promotion request \
+  --plan ../SpecGraph/runs/graph_repository_execution_plan.json \
+  --approval-decision ../SpecGraph/runs/candidate_approval_decision.json \
+  --output ../SpecGraph/runs/graph_repository_promotion_request.json
+```
+
+This command is a product-aware wrapper around the generic
+`graph-repository promotion-request` contract. It derives:
+
+- `candidate_id` from `candidate_approval_decision.candidate.candidate_id`;
+- `workflow_lane` from `candidate_approval_decision.workspace.mode`;
+- `target_repository_role` from
+  `candidate_approval_decision.workspace.repository_role`;
+- `commit_paths` from `candidate_approval_decision.promotion_request.paths`;
+- review title/body from CLI overrides or approval-decision metadata.
+
+The wrapper rejects the handoff when:
+
+- the Graph Repository plan is not `ok` or not `ready_for_branch`;
+- the approval decision is not `approved` and ready;
+- approval-decision authority flags are missing or not literally `false`;
+- the workflow lane or repository role is not product-scoped;
+- approved paths are unsafe or outside the supported promotion roots;
+- the derived request would not match the approval decision expected by the
+  Git Service validator.
+
+The output remains report-only:
+
+- no Git branch or worktree is created;
+- no commit is created;
+- no pull request is opened;
+- no read model is published;
+- no SpecGraph or Ontology canonical state is mutated.
+
 ## Validate
 
 ```bash

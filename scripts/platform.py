@@ -240,6 +240,9 @@ PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS = {
     "gate": "runs/platform_candidate_approval_intent_gate_report.json",
     "decision": "runs/candidate_approval_decision.json",
 }
+PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS = {
+    "request": "runs/graph_repository_promotion_request.json",
+}
 PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS = (
     "canonical_mutations_allowed",
     "ontology_writes_allowed",
@@ -307,6 +310,18 @@ PRODUCT_CANDIDATE_APPROVAL_BOUNDARY = {
     "may_publish_read_model": False,
     "git_service_promotion_started": False,
 }
+PRODUCT_CANDIDATE_PROMOTION_AUTHORITY_FALSE_FIELDS = (
+    "may_execute_prompt_agent",
+    "may_mutate_candidate_source_artifacts",
+    "may_mutate_canonical_specs",
+    "may_write_ontology_package",
+    "may_write_ontology_lockfile",
+    "may_mark_candidate_graph_accepted",
+    "may_create_branch_or_commit",
+    "may_open_pull_request",
+    "may_publish_read_model",
+    "may_execute_git_service_operation",
+)
 GIT_SERVICE_REQUIRED_OPERATIONS = {
     "prepare_worktree": {
         "adapter_command": "graph-repository prepare-worktree",
@@ -6395,6 +6410,363 @@ def graph_repository_prepare_local(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
+def product_candidate_promotion_decision_diagnostics(
+    approval_decision: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if approval_decision.get("artifact_kind") != PRODUCT_CANDIDATE_APPROVAL_DECISION_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_approval_kind_mismatch",
+                subject="approval_decision.artifact_kind",
+                message="expected candidate_approval_decision",
+            )
+        )
+    if approval_decision.get("contract_ref") != (
+        PRODUCT_CANDIDATE_APPROVAL_DECISION_CONTRACT_REF
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_approval_contract_mismatch",
+                subject="approval_decision.contract_ref",
+                message="expected candidate approval decision contract v0.1",
+            )
+        )
+    for field in (
+        "canonical_mutations_allowed",
+        "ontology_writes_allowed",
+        "tracked_artifacts_written",
+    ):
+        if approval_decision.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_approval_authority_expanded",
+                    subject=f"approval_decision.{field}",
+                    message=f"{field} must be exactly false before promotion handoff",
+                )
+            )
+    authority_boundary = approval_decision.get("authority_boundary")
+    if not isinstance(authority_boundary, dict):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_approval_authority_missing",
+                subject="approval_decision.authority_boundary",
+                message="candidate approval decision must declare authority boundary",
+            )
+        )
+    else:
+        for field in PRODUCT_CANDIDATE_PROMOTION_AUTHORITY_FALSE_FIELDS:
+            if authority_boundary.get(field) is not False:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code=(
+                            "product_candidate_promotion_approval_authority_expanded"
+                        ),
+                        subject=f"approval_decision.authority_boundary.{field}",
+                        message=(
+                            f"{field} must be exactly false before promotion handoff"
+                        ),
+                    )
+                )
+
+    decision = nested_mapping(approval_decision, "decision")
+    if decision.get("state") != "approved":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_approval_not_approved",
+                subject="approval_decision.decision.state",
+                message="promotion request handoff requires approved candidate decision",
+            )
+        )
+    readiness = nested_mapping(approval_decision, "readiness")
+    if readiness.get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_approval_not_ready",
+                subject="approval_decision.readiness.ready",
+                message="promotion request handoff requires ready candidate decision",
+            )
+        )
+    workspace = nested_mapping(approval_decision, "workspace")
+    if workspace.get("mode") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_workflow_mismatch",
+                subject="approval_decision.workspace.mode",
+                message="promotion request handoff requires product_idea_to_spec",
+            )
+        )
+    if workspace.get("repository_role") != "product_spec_workspace":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_repository_role_mismatch",
+                subject="approval_decision.workspace.repository_role",
+                message="promotion request handoff requires product_spec_workspace",
+            )
+        )
+    candidate = nested_mapping(approval_decision, "candidate")
+    if not isinstance(candidate.get("candidate_id"), str) or not candidate.get(
+        "candidate_id"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_candidate_missing",
+                subject="approval_decision.candidate.candidate_id",
+                message="candidate approval decision must include candidate id",
+            )
+        )
+    promotion_request = nested_mapping(approval_decision, "promotion_request")
+    if promotion_request.get("platform_artifact_kind") != (
+        "platform_graph_repository_promotion_request"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_request_kind_mismatch",
+                subject="approval_decision.promotion_request.platform_artifact_kind",
+                message=(
+                    "candidate approval must target "
+                    "platform_graph_repository_promotion_request"
+                ),
+            )
+        )
+    if promotion_request.get("requires_git_service_execution") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_git_service_requirement_missing",
+                subject="approval_decision.promotion_request.requires_git_service_execution",
+                message="candidate approval must explicitly require later Git Service execution",
+            )
+        )
+    if not string_list(promotion_request.get("paths")):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_paths_missing",
+                subject="approval_decision.promotion_request.paths",
+                message="candidate approval must include approved promotion paths",
+            )
+        )
+    return diagnostics
+
+
+def build_graph_repository_promotion_request_payload(
+    *,
+    plan_path: Path,
+    plan: dict[str, Any],
+    contract: dict[str, Any],
+    candidate_id: str,
+    paths: list[str],
+    title: str,
+    body: str,
+    base: str,
+    workflow_lane: str,
+    deployment_profile_id: str,
+    target_repository_role: str,
+    authority_profile: str,
+    output_path: Path | None,
+    dry_run: bool,
+    diagnostics: list[Diagnostic],
+) -> dict[str, Any]:
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    branch_name = graph_repository_candidate_branch(contract, candidate_id)
+    local_files_written = (
+        [str(output_path)]
+        if output_path is not None and error_count == 0 and not dry_run
+        else []
+    )
+    return {
+        "schema_version": 1,
+        "artifact_kind": "platform_graph_repository_promotion_request",
+        "generated_at": utc_now_iso(),
+        "plan_ref": str(plan_path),
+        "ok": error_count == 0,
+        "dry_run": dry_run,
+        "workflow_lane": workflow_lane,
+        "deployment_profile_id": deployment_profile_id,
+        "target_repository_role": target_repository_role,
+        "authority_profile": authority_profile,
+        "candidate_id": candidate_id,
+        "candidate_branch": branch_name,
+        "commit_paths": paths if error_count == 0 else [],
+        "review": {
+            "title": title.strip(),
+            "body": body.strip(),
+            "base_branch": base,
+        },
+        "requested_operations": [
+            "prepare_branch",
+            "create_commit",
+            "open_review",
+        ],
+        "source_artifacts": plan.get("source_artifacts", []),
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "write_actions_executed": [],
+        "git_commands_executed": [],
+        "pull_requests_opened": [],
+        "merges_performed": [],
+        "read_models_published": [],
+        "local_files_written": local_files_written,
+        "authority_boundary": {
+            "executes_git_commands": False,
+            "creates_commits": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "mutates_canonical_specs": False,
+            "publishes_read_models": False,
+        },
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "error_count": error_count,
+            "commit_path_count": len(paths) if error_count == 0 else 0,
+            "promotion_ready": error_count == 0,
+        },
+    }
+
+
+def product_candidate_promotion_request(args: argparse.Namespace) -> int:
+    plan_path = Path(args.plan)
+    approval_decision_path = Path(args.approval_decision)
+    plan = load_json_mapping(plan_path, label="graph repository execution plan")
+    approval_decision = load_json_mapping(
+        approval_decision_path,
+        label="candidate approval decision",
+    )
+    contract_ref = plan.get("contract_ref")
+    contract_path = Path(contract_ref) if isinstance(contract_ref, str) else None
+    contract = (
+        load_json_mapping(contract_path, label="graph repository contract")
+        if contract_path is not None and contract_path.is_file()
+        else {}
+    )
+    candidate = nested_mapping(approval_decision, "candidate")
+    workspace = nested_mapping(approval_decision, "workspace")
+    decision = nested_mapping(approval_decision, "decision")
+    promotion_request = nested_mapping(approval_decision, "promotion_request")
+    candidate_id = str(candidate.get("candidate_id") or "")
+    paths = string_list(promotion_request.get("paths"))
+    branch_name = graph_repository_candidate_branch(contract, candidate_id)
+    display_name = str(candidate.get("display_name") or candidate_id).strip()
+    title = (
+        args.title
+        if args.title is not None
+        else f"Promote {display_name or candidate_id} candidate spec graph"
+    )
+    body = (
+        args.body
+        if args.body is not None
+        else (
+            str(decision.get("reason") or "").strip()
+            or "Review materialized candidate graph from the idea-to-spec flow."
+        )
+    )
+    workflow_lane = str(workspace.get("mode") or "product_idea_to_spec")
+    target_repository_role = str(
+        workspace.get("repository_role") or "product_spec_workspace"
+    )
+    deployment_profile_id = args.deployment_profile_id
+    authority_profile = args.authority_profile
+    diagnostics = [
+        *product_candidate_promotion_decision_diagnostics(approval_decision),
+        *graph_repository_promotion_request_diagnostics(
+            plan,
+            candidate_id=candidate_id,
+            candidate_branch=branch_name,
+            paths=paths,
+            title=title,
+            body=body,
+        ),
+    ]
+    provisional_request = build_graph_repository_promotion_request_payload(
+        plan_path=plan_path,
+        plan=plan,
+        contract=contract,
+        candidate_id=candidate_id,
+        paths=paths,
+        title=title,
+        body=body,
+        base=args.base,
+        workflow_lane=workflow_lane,
+        deployment_profile_id=deployment_profile_id,
+        target_repository_role=target_repository_role,
+        authority_profile=authority_profile,
+        output_path=None,
+        dry_run=True,
+        diagnostics=diagnostics,
+    )
+    diagnostics.extend(
+        git_service_candidate_approval_diagnostics(
+            approval_decision=approval_decision,
+            promotion_request=provisional_request,
+        )
+    )
+    output_path = (
+        Path(args.output)
+        if args.output
+        else plan_path.parent / Path(PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS["request"]).name
+    )
+    request = build_graph_repository_promotion_request_payload(
+        plan_path=plan_path,
+        plan=plan,
+        contract=contract,
+        candidate_id=candidate_id,
+        paths=paths,
+        title=title,
+        body=body,
+        base=args.base,
+        workflow_lane=workflow_lane,
+        deployment_profile_id=deployment_profile_id,
+        target_repository_role=target_repository_role,
+        authority_profile=authority_profile,
+        output_path=output_path,
+        dry_run=args.dry_run,
+        diagnostics=diagnostics,
+    )
+    error_count = request["summary"]["error_count"]
+    if error_count == 0 and not args.dry_run:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(request, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(request, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "candidate_id": candidate_id,
+                        "branch": request["candidate_branch"],
+                        "paths": str(len(paths)),
+                    }
+                ],
+                [
+                    ("candidate_id", "CANDIDATE"),
+                    ("branch", "BRANCH"),
+                    ("paths", "PATHS"),
+                ],
+            )
+        )
+    return 0 if error_count == 0 else 1
+
+
 def graph_repository_promotion_path_allowed(raw_path: str) -> bool:
     normalized = raw_path.replace("\\", "/")
     return any(
@@ -10285,6 +10657,91 @@ def build_parser() -> argparse.ArgumentParser:
     )
     product_candidate_approval_materialize_parser.set_defaults(
         func=product_candidate_approval_materialize
+    )
+
+    product_candidate_promotion_parser = subcommands.add_parser(
+        "product-candidate-promotion",
+        help="Build product idea-to-spec promotion request handoff artifacts.",
+    )
+    product_candidate_promotion_subcommands = (
+        product_candidate_promotion_parser.add_subparsers(
+            dest="product_candidate_promotion_command",
+            required=True,
+        )
+    )
+    product_candidate_promotion_request_parser = (
+        product_candidate_promotion_subcommands.add_parser(
+            "request",
+            help=(
+                "Build a graph repository promotion request from a ready "
+                "candidate approval decision."
+            ),
+        )
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--plan",
+        required=True,
+        help="Path to a platform_graph_repository_execution_plan artifact.",
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--approval-decision",
+        required=True,
+        help="Path to a candidate_approval_decision artifact.",
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--deployment-profile-id",
+        default="product_idea_to_spec_workbench",
+        help="Deployment profile id expected to authorize this request.",
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--authority-profile",
+        default="workspace_owner_controlled",
+        choices=[
+            "workspace_owner_controlled",
+            "maintainer_bootstrap_controlled",
+            "self_evolution",
+        ],
+        help="Authority profile expected to authorize this request.",
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--base",
+        default="main",
+        help="Base branch for the future review pull request.",
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--title",
+        help=(
+            "Optional review title. Defaults to a title derived from the "
+            "candidate approval decision."
+        ),
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--body",
+        help=(
+            "Optional review body. Defaults to the candidate approval decision "
+            "reason."
+        ),
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path where the promotion request JSON should be written. "
+            "Defaults to graph_repository_promotion_request.json next to --plan."
+        ),
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the promotion request without writing files.",
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_candidate_promotion_request_parser.set_defaults(
+        func=product_candidate_promotion_request
     )
 
     deploy_parser = subcommands.add_parser(
