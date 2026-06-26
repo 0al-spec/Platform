@@ -3306,6 +3306,34 @@ def product_repair_deployment_profile_diagnostics(
     return diagnostics
 
 
+def product_repair_specgraph_checkout_diagnostics(
+    specgraph_dir: Path,
+    *,
+    code_prefix: str,
+    subject: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if not specgraph_dir.is_dir():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=f"{code_prefix}_specgraph_dir_missing",
+                subject=subject,
+                message="SpecGraph directory must exist before product repair rerun",
+            )
+        )
+    elif not (specgraph_dir / "Makefile").is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=f"{code_prefix}_specgraph_makefile_missing",
+                subject=subject,
+                message="SpecGraph directory must contain a Makefile",
+            )
+        )
+    return diagnostics
+
+
 def product_repair_import_preview_diagnostics(
     import_preview: dict[str, Any],
 ) -> list[Diagnostic]:
@@ -3592,26 +3620,17 @@ def build_product_repair_rerun_execution_plan(
     request_gate: dict[str, Any] | None,
     source_artifacts: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], list[Diagnostic]]:
-    diagnostics = product_repair_deployment_profile_diagnostics(deployment_profile)
-
-    if not specgraph_dir.is_dir():
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="product_repair_rerun_specgraph_dir_missing",
-                subject="specgraph_dir",
-                message="SpecGraph directory must exist before product repair rerun",
-            )
+    deployment_profile_diagnostics = product_repair_deployment_profile_diagnostics(
+        deployment_profile
+    )
+    diagnostics = [*deployment_profile_diagnostics]
+    diagnostics.extend(
+        product_repair_specgraph_checkout_diagnostics(
+            specgraph_dir,
+            code_prefix="product_repair_rerun",
+            subject="specgraph_dir",
         )
-    elif not (specgraph_dir / "Makefile").is_file():
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="product_repair_rerun_specgraph_makefile_missing",
-                subject="specgraph_dir",
-                message="SpecGraph directory must contain a Makefile",
-            )
-        )
+    )
 
     selected_request_id = ""
     if request_gate is not None:
@@ -3657,10 +3676,10 @@ def build_product_repair_rerun_execution_plan(
     operations = [
         product_repair_operation(
             name="validate_deployment_profile",
-            status="ready" if not product_repair_deployment_profile_diagnostics(deployment_profile) else "blocked",
+            status="ready" if not deployment_profile_diagnostics else "blocked",
             reason=(
                 "product idea-to-spec deployment profile allows controlled rerun execution"
-                if not product_repair_deployment_profile_diagnostics(deployment_profile)
+                if not deployment_profile_diagnostics
                 else "deployment_profile_invalid"
             ),
             evidence=["deployment_profile"],
@@ -3902,6 +3921,34 @@ def product_repair_plan_diagnostics(plan: dict[str, Any]) -> list[Diagnostic]:
                 message="execution plan must be ready_to_execute",
             )
         )
+    target_make = nested_mapping(plan, "target_make")
+    if target_make.get("target") != PRODUCT_REPAIR_RERUN_MAKE_TARGET:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_plan_make_target_unsupported",
+                subject="target_make.target",
+                message=f"expected {PRODUCT_REPAIR_RERUN_MAKE_TARGET}",
+            )
+        )
+    specgraph_dir = Path(str(plan.get("specgraph_dir") or ".")).resolve()
+    target_cwd = target_make.get("cwd")
+    if not isinstance(target_cwd, str) or Path(target_cwd).resolve() != specgraph_dir:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_plan_cwd_mismatch",
+                subject="target_make.cwd",
+                message="target_make.cwd must match plan specgraph_dir",
+            )
+        )
+    diagnostics.extend(
+        product_repair_specgraph_checkout_diagnostics(
+            specgraph_dir,
+            code_prefix="product_repair_rerun_plan",
+            subject="specgraph_dir",
+        )
+    )
     authority = nested_mapping(plan, "authority_boundary")
     for field in (
         "executes_git_commands",
@@ -3930,7 +3977,7 @@ def product_repair_make_command(
     python: str | None = None,
 ) -> list[str]:
     target_make = nested_mapping(plan, "target_make")
-    command = ["make", str(target_make.get("target") or PRODUCT_REPAIR_RERUN_MAKE_TARGET)]
+    command = ["make", PRODUCT_REPAIR_RERUN_MAKE_TARGET]
     variables = nested_mapping(target_make, "variables")
     for key in sorted(variables):
         value = variables.get(key)
@@ -4181,6 +4228,15 @@ def product_repair_execution_report_diagnostics(
                 message="publication requires a successful repair rerun execution report",
             )
         )
+    if report.get("dry_run") is True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_execution_report_dry_run",
+                subject="dry_run",
+                message="publication requires a non-dry-run repair rerun execution report",
+            )
+        )
     authority = nested_mapping(report, "authority_boundary")
     for field in (
         "executes_git_commands",
@@ -4210,7 +4266,16 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         label="product repair rerun execution report",
     )
     diagnostics = product_repair_execution_report_diagnostics(execution_report)
-    specgraph_dir = Path(args.specgraph_dir or execution_report.get("specgraph_dir") or ".").resolve()
+    specgraph_dir = Path(
+        args.specgraph_dir or execution_report.get("specgraph_dir") or "."
+    ).resolve()
+    diagnostics.extend(
+        product_repair_specgraph_checkout_diagnostics(
+            specgraph_dir,
+            code_prefix="product_repair_rerun_publish",
+            subject="specgraph_dir",
+        )
+    )
     output_path = (
         Path(args.output)
         if args.output
