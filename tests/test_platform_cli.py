@@ -2943,6 +2943,105 @@ workspaces:
                 ).is_file()
             )
 
+    def test_product_repair_rerun_smoke_resolves_caller_relative_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            caller_dir = tmp_root / "caller"
+            caller_dir.mkdir()
+            specgraph_dir = tmp_root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            profile_path = caller_dir / "profile.json"
+            profile_path.write_text(
+                (
+                    REPO_ROOT / "deployment-profile.product-idea-to-spec.example.json"
+                ).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            inputs_dir = caller_dir / "inputs"
+            inputs_dir.mkdir()
+            for filename in (
+                "idea_to_spec_repair_rerun_requests.json",
+                "specspace_repair_draft_import_preview.json",
+                "idea_to_spec_repair_session.json",
+                "specspace_repair_rerun_request_gate.json",
+            ):
+                (inputs_dir / filename).write_text(
+                    (specgraph_dir / "runs" / filename).read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--deployment-profile",
+                "profile.json",
+                "--specgraph-dir",
+                os.path.relpath(specgraph_dir, caller_dir),
+                "--rerun-request",
+                "inputs/idea_to_spec_repair_rerun_requests.json",
+                "--import-preview",
+                "inputs/specspace_repair_draft_import_preview.json",
+                "--repair-session",
+                "inputs/idea_to_spec_repair_session.json",
+                "--request-gate",
+                "inputs/specspace_repair_rerun_request_gate.json",
+                "--format",
+                "json",
+                cwd=caller_dir,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            plan_ref = Path(payload["phase_reports"]["plan"]["path"])
+            plan = json.loads(plan_ref.read_text(encoding="utf-8"))
+            source_paths = {
+                Path(source["path"])
+                for source in plan["source_artifacts"]
+                if source.get("key")
+            }
+            self.assertTrue(
+                all(
+                    path.resolve().is_relative_to(inputs_dir.resolve())
+                    for path in source_paths
+                )
+            )
+
+    def test_product_repair_rerun_smoke_keeps_execute_authority_after_publish_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            makefile_path = specgraph_dir / "Makefile"
+            makefile = makefile_path.read_text(encoding="utf-8")
+            makefile_path.write_text(
+                makefile.split("\npublish-bundle:\n", 1)[0],
+                encoding="utf-8",
+            )
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertTrue(payload["summary"]["execution_ok"])
+            self.assertFalse(payload["summary"]["publication_ok"])
+            self.assertTrue(
+                payload["authority_boundary"]["executes_specgraph_make_target"]
+            )
+
     def test_product_repair_rerun_smoke_stops_when_plan_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             specgraph_dir = Path(tmp_dir) / "SpecGraph"

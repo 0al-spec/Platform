@@ -2453,6 +2453,12 @@ def path_arg_or_default(
     return (base_dir / default_rel).resolve()
 
 
+def resolve_optional_path_arg(value: str | None) -> str | None:
+    if not value:
+        return None
+    return str(Path(value).resolve())
+
+
 def graph_repository_run_artifact_status(
     *,
     runs_dir: Path,
@@ -4582,6 +4588,7 @@ def product_repair_smoke_report_ref(path: Path) -> dict[str, Any]:
 
 def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
     specgraph_dir = Path(args.specgraph_dir).resolve()
+    deployment_profile_path = Path(args.deployment_profile).resolve()
     plan_path = path_arg_or_default(
         args.plan_output,
         base_dir=specgraph_dir,
@@ -4611,7 +4618,7 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
         "product-repair-rerun",
         "plan",
         "--deployment-profile",
-        args.deployment_profile,
+        str(deployment_profile_path),
         "--specgraph-dir",
         str(specgraph_dir),
         "--output",
@@ -4620,10 +4627,10 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
         "json",
     ]
     optional_plan_inputs = (
-        ("--rerun-request", args.rerun_request),
-        ("--import-preview", args.import_preview),
-        ("--repair-session", args.repair_session),
-        ("--request-gate", args.request_gate),
+        ("--rerun-request", resolve_optional_path_arg(args.rerun_request)),
+        ("--import-preview", resolve_optional_path_arg(args.import_preview)),
+        ("--repair-session", resolve_optional_path_arg(args.repair_session)),
+        ("--request-gate", resolve_optional_path_arg(args.request_gate)),
     )
     for flag, value in optional_plan_inputs:
         if value:
@@ -4642,6 +4649,7 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
             product_repair_smoke_authority_diagnostics(payload, subject="plan")
         )
 
+    executes_specgraph_make_target = False
     if not diagnostics and payload and payload.get("ready_to_execute") is True:
         execute_command = [
             "product-repair-rerun",
@@ -4664,6 +4672,12 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
         diagnostics.extend(phase_diagnostics)
         if payload is not None:
             phase_payloads["execution"] = payload
+            executes_specgraph_make_target = (
+                nested_mapping(payload, "authority_boundary").get(
+                    "executes_specgraph_make_target"
+                )
+                is True
+            )
             diagnostics.extend(
                 product_repair_smoke_authority_diagnostics(
                     payload,
@@ -4792,7 +4806,7 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
         "canonical_mutations_allowed": False,
         "tracked_artifacts_written": False,
         "authority_boundary": {
-            "executes_specgraph_make_target": ok,
+            "executes_specgraph_make_target": executes_specgraph_make_target,
             "executes_git_commands": False,
             "opens_pull_requests": False,
             "merges_pull_requests": False,
