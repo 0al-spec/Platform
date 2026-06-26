@@ -208,6 +208,21 @@ scripts/platform.py product-repair-rerun publish \
   --output ../SpecGraph/runs/platform_product_repair_rerun_publication_report.json
 ```
 
+For demos and CI smoke checks, Platform can run the whole repair rerun boundary
+as one end-to-end contract:
+
+```bash
+scripts/platform.py product-repair-rerun smoke \
+  --specgraph-dir ../SpecGraph \
+  --output ../SpecGraph/runs/platform_product_repair_rerun_smoke_report.json
+```
+
+The smoke command performs `plan -> execute -> publish`, writes the intermediate
+reports, and then emits `platform_product_repair_rerun_smoke_report`. It proves
+that the selected SpecSpace draft request can be validated, executed through the
+single approved SpecGraph make target, published as public-safe artifacts, and
+observed without starting candidate approval or Git Service promotion.
+
 This adapter may execute the controlled SpecGraph rerun make target and
 `make publish-bundle`. It still must not create Git branches, commits, pull
 requests, accept ontology terms, write Ontology packages, mutate canonical

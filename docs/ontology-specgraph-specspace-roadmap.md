@@ -519,15 +519,20 @@ Completed Git Service foundation:
    approved SpecGraph rerun make target, then verifies public-safe bundle
    publication. It does not create branches, commits, pull requests, ontology
    writes, or canonical spec mutations.
+7. Platform now exposes an end-to-end Product Repair Rerun smoke contract:
+   `product-repair-rerun smoke` runs `plan -> execute -> publish`, emits one
+   durable demo report, verifies refreshed repair-session and rerun-report
+   digests, and proves public-safe publication without candidate approval or
+   Git Service promotion.
 
 The previous valuable implementation choices have partially landed: active
-candidate source, workspace route selection, controlled promotion UI, and
-deployment lane isolation are now present. The next valuable implementation
-choices are:
+candidate source, workspace route selection, controlled promotion UI, deployment
+lane isolation, repair-rerun execution, and a reproducible rerun smoke contract
+are now present. The next valuable implementation choices are:
 
-1. SpecSpace: show Product Repair Rerun execution/publication status alongside
-   the existing draft request, import preview, rerun report, repair session,
-   promotion gate, and Git Service handoff surfaces.
+1. SpecSpace/Platform: add candidate approval intent and validation after a
+   repair session is ready for candidate approval, still without direct Git
+   promotion.
 2. Platform: move Product Repair Rerun and Git Service execution from local
    adapter orchestration toward hosted or queue-backed service implementation
    while preserving the same report contracts.
