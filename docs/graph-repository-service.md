@@ -169,6 +169,51 @@ SpecSpace and operators can inspect the post-review step as part of the same
 promotion lifecycle. It does not merge reviews, auto-accept specs, write
 Ontology packages, or publish read models from an unmerged review.
 
+## Product Repair Rerun Execution
+
+Before Git Service promotion, a product workspace may need one more controlled
+repair rerun from SpecSpace-owned draft answers. The `product-repair-rerun`
+adapter is the Platform-owned execution boundary for that step.
+
+It consumes:
+
+- `runs/idea_to_spec_repair_rerun_requests.json`;
+- `runs/specspace_repair_draft_import_preview.json`;
+- `runs/specspace_repair_rerun_request_gate.json`;
+- `runs/idea_to_spec_repair_session.json`;
+- `deployment-profile.product-idea-to-spec.example.json`.
+
+The plan step validates the handoff and writes a durable execution plan:
+
+```bash
+scripts/platform.py product-repair-rerun plan \
+  --specgraph-dir ../SpecGraph \
+  --output ../SpecGraph/runs/platform_product_repair_rerun_execution_plan.json
+```
+
+The execute step runs only the make target selected by the SpecGraph request
+gate:
+
+```bash
+scripts/platform.py product-repair-rerun execute \
+  --plan ../SpecGraph/runs/platform_product_repair_rerun_execution_plan.json \
+  --output ../SpecGraph/runs/platform_product_repair_rerun_execution_report.json
+```
+
+The publish step refreshes and verifies the public-safe SpecGraph bundle:
+
+```bash
+scripts/platform.py product-repair-rerun publish \
+  --execution-report ../SpecGraph/runs/platform_product_repair_rerun_execution_report.json \
+  --output ../SpecGraph/runs/platform_product_repair_rerun_publication_report.json
+```
+
+This adapter may execute the controlled SpecGraph rerun make target and
+`make publish-bundle`. It still must not create Git branches, commits, pull
+requests, accept ontology terms, write Ontology packages, mutate canonical
+specs, or promote a candidate. Those remain separate Git Service and
+candidate-approval boundaries.
+
 ## Validate
 
 ```bash
