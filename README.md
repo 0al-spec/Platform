@@ -242,15 +242,18 @@ answers, product ontology gap decisions, rerun input, rerun preview, and rerun
 materialization artifacts; unresolved ontology gaps keep branch preparation
 blocked.
 
-`product-repair-rerun plan|execute|publish` is the Platform adapter between a
-SpecSpace repair rerun request and the next SpecGraph repair-chain artifacts.
-It validates the SpecSpace-owned request state, SpecGraph import preview,
-request gate, repair session journal, and product deployment profile before it
-can run the controlled SpecGraph
-`product-workspace-requested-repair-draft-rerun` make target. The adapter may
-refresh public-safe `runs/*.json` and the static bundle, but it does not create
-Git branches or commits, open pull requests, accept ontology terms, write
-Ontology packages, or mutate canonical specs.
+`product-repair-rerun plan|execute|publish|smoke` is the Platform adapter
+between a SpecSpace repair rerun request and the next SpecGraph repair-chain
+artifacts. It validates the SpecSpace-owned request state, SpecGraph import
+preview, request gate, repair session journal, and product deployment profile
+before it can run the controlled SpecGraph
+`product-workspace-requested-repair-draft-rerun` make target. With
+`--build-repaired-handoff`, execute/smoke also run the fixed repaired handoff
+target and verify repaired candidate approval readiness through a read-only
+gate. The adapter may refresh public-safe `runs/*.json` and the static bundle,
+but it does not create Git branches or commits, open pull requests, accept
+ontology terms, write Ontology packages, materialize approval decisions, or
+mutate canonical specs.
 
 `graph-repository prepare-local` validates a ready execution plan and writes a
 local candidate workspace manifest/report. It calculates the candidate branch
