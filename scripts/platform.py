@@ -11167,7 +11167,7 @@ def render_timeweb_compose(
         "  app:\n"
         f"    image: \"{ui_image_ref}\"\n"
         "    ports:\n"
-        "      - \"80\"\n"
+        "      - \"8080:80\"\n"
         "    depends_on:\n"
         "      - specspace-api\n\n"
         "  specspace-api:\n"
@@ -11417,13 +11417,19 @@ def list_values_for_service_section(
     return values
 
 
-def compose_port_publishes_host_port(port: str) -> bool:
+def compose_port_host_part(port: str) -> str | None:
     value = port.strip().strip('"').strip("'")
-    if not value or value.startswith("["):
-        return ":" in value
-    if value.startswith("${"):
-        return True
-    return ":" in value
+    if not value or ":" not in value:
+        return None
+    env_default_match = re.match(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]+)\}:", value)
+    if env_default_match:
+        return env_default_match.group(1)
+    if value.startswith("["):
+        after_bracket = value.split("]", 1)[-1].lstrip(":")
+        parts = after_bracket.split(":")
+        return parts[-2] if len(parts) > 1 else None
+    parts = value.split(":")
+    return parts[-2] if len(parts) > 1 else None
 
 
 def validate_timeweb_manifest_tree(
@@ -11568,18 +11574,24 @@ def validate_timeweb_manifest_tree(
     if "8001" not in api_expose:
         errors.append(f"{target_file} specspace-api must expose internal port 8001")
     app_ports = list_values_for_service_section(blocks, "app", "ports")
-    if "80" not in app_ports:
+    if "8080:80" not in app_ports:
         errors.append(
-            f"{target_file} app must publish container port 80 without a fixed "
-            "host port for Timeweb rolling deploys"
+            f"{target_file} app must publish container port 80 on host port "
+            "8080 for Timeweb"
         )
-    fixed_app_ports = [
-        port for port in app_ports if compose_port_publishes_host_port(port)
+    reserved_app_ports = [
+        port for port in app_ports if compose_port_host_part(port) in {"80", "443"}
     ]
-    if fixed_app_ports:
+    if reserved_app_ports:
         errors.append(
-            f"{target_file} app must not publish fixed host ports in Timeweb "
-            f"deploy: {', '.join(fixed_app_ports)}"
+            f"{target_file} app must not publish Timeweb-reserved host ports: "
+            f"{', '.join(reserved_app_ports)}"
+        )
+    old_app_ports = [port for port in app_ports if compose_port_host_part(port) == "5173"]
+    if old_app_ports:
+        errors.append(
+            f"{target_file} app must not publish old conflicting host port 5173: "
+            f"{', '.join(old_app_ports)}"
         )
 
     return errors
