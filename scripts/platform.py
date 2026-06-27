@@ -147,6 +147,9 @@ PRODUCT_REPAIR_RERUN_REPORT_CONTRACT_REF = (
     "specgraph.idea-to-spec.specspace-repair-draft-rerun.v0.1"
 )
 PRODUCT_REPAIR_RERUN_MAKE_TARGET = "product-workspace-requested-repair-draft-rerun"
+PRODUCT_REPAIR_RERUN_REPAIRED_HANDOFF_MAKE_TARGET = (
+    "product-workspace-repaired-promotion-handoff"
+)
 PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS = {
     "request_gate": "runs/specspace_repair_rerun_request_gate.json",
     "rerun_report": "runs/specspace_repair_draft_rerun_report.json",
@@ -154,6 +157,21 @@ PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS = {
     "rerun_preview": "runs/idea_to_spec_rerun_preview.json",
     "rerun_materialization": "runs/idea_to_spec_rerun_materialization.json",
 }
+PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS = {
+    "repaired_handoff": "runs/repaired_candidate_promotion_handoff_report.json",
+    "repaired_active_candidate": "runs/repaired_active_idea_to_spec_candidate.json",
+    "repaired_repair_session": "runs/repaired_idea_to_spec_repair_session.json",
+    "repaired_promotion_gate": "runs/repaired_idea_to_spec_promotion_gate.json",
+}
+PRODUCT_REPAIR_RERUN_PUBLIC_PATHS = (
+    "runs/idea_to_spec_repair_session.json",
+    "runs/specspace_repair_draft_rerun_report.json",
+    "runs/idea_to_spec_rerun_preview.json",
+    "runs/idea_to_spec_rerun_materialization.json",
+)
+PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS = tuple(
+    PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.values()
+)
 PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS = {
     "rerun_request": "runs/idea_to_spec_repair_rerun_requests.json",
     "import_preview": "runs/specspace_repair_draft_import_preview.json",
@@ -165,6 +183,9 @@ PRODUCT_REPAIR_RERUN_DEFAULT_REPORTS = {
     "execution": "runs/platform_product_repair_rerun_execution_report.json",
     "publication": "runs/platform_product_repair_rerun_publication_report.json",
     "smoke": "runs/platform_product_repair_rerun_smoke_report.json",
+    "candidate_approval_gate": (
+        "runs/platform_candidate_approval_intent_gate_report.json"
+    ),
 }
 PRODUCT_REPAIR_RERUN_FALSE_TOP_LEVEL_FIELDS = (
     "canonical_mutations_allowed",
@@ -4184,6 +4205,16 @@ def product_repair_make_command(
     return command
 
 
+def product_repair_repaired_handoff_make_command(
+    *,
+    python: str | None = None,
+) -> list[str]:
+    command = ["make", PRODUCT_REPAIR_RERUN_REPAIRED_HANDOFF_MAKE_TARGET]
+    if python:
+        command.append(f"PYTHON={python}")
+    return command
+
+
 def product_repair_output_record(path: Path) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if path.is_file():
@@ -4259,6 +4290,76 @@ def product_repair_output_diagnostics(
     return diagnostics
 
 
+def product_repair_repaired_output_diagnostics(
+    output_records: dict[str, dict[str, Any]],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    handoff = output_records.get("repaired_handoff", {})
+    if handoff.get("present") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_repaired_handoff_missing",
+                subject="outputs.repaired_handoff",
+                message="SpecGraph repaired handoff target must produce a handoff report",
+            )
+        )
+    elif handoff.get("artifact_kind") != PRODUCT_CANDIDATE_APPROVAL_REPAIRED_HANDOFF_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_repaired_handoff_kind_mismatch",
+                subject="outputs.repaired_handoff.artifact_kind",
+                message=f"expected {PRODUCT_CANDIDATE_APPROVAL_REPAIRED_HANDOFF_KIND}",
+            )
+        )
+    elif handoff.get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_repaired_handoff_not_ready",
+                subject="outputs.repaired_handoff.readiness.ready",
+                message="SpecGraph repaired handoff report must be ready",
+            )
+        )
+
+    expected = (
+        ("repaired_active_candidate", "active_idea_to_spec_candidate"),
+        ("repaired_repair_session", "idea_to_spec_repair_session_journal"),
+        ("repaired_promotion_gate", "idea_to_spec_promotion_gate"),
+    )
+    for key, artifact_kind in expected:
+        record = output_records.get(key, {})
+        if record.get("present") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_repaired_output_missing",
+                    subject=f"outputs.{key}",
+                    message=f"SpecGraph repaired handoff target must produce {key}",
+                )
+            )
+        elif record.get("artifact_kind") != artifact_kind:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_repaired_output_kind_mismatch",
+                    subject=f"outputs.{key}.artifact_kind",
+                    message=f"expected {artifact_kind}",
+                )
+            )
+        elif record.get("ready") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_repaired_output_not_ready",
+                    subject=f"outputs.{key}.readiness.ready",
+                    message=f"SpecGraph repaired handoff output {key} must be ready",
+                )
+            )
+    return diagnostics
+
+
 def product_repair_rerun_execute(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan)
     plan = load_json_mapping(plan_path, label="product repair rerun execution plan")
@@ -4270,7 +4371,11 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
         else specgraph_dir / "runs" / "platform_product_repair_rerun_execution_report.json"
     )
     command = product_repair_make_command(plan, python=args.python)
+    repaired_handoff_command = product_repair_repaired_handoff_make_command(
+        python=args.python,
+    )
     command_result: dict[str, Any] | None = None
+    repaired_handoff_command_result: dict[str, Any] | None = None
     execution_started_at = utc_now_iso()
     if not diagnostics and not args.dry_run:
         completed = subprocess.run(
@@ -4300,6 +4405,34 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
                     ),
                 )
             )
+        if not diagnostics and args.build_repaired_handoff:
+            repaired_completed = subprocess.run(
+                repaired_handoff_command,
+                cwd=specgraph_dir,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            repaired_handoff_command_result = {
+                "command": repaired_handoff_command,
+                "cwd": str(specgraph_dir),
+                "returncode": repaired_completed.returncode,
+                "stdout": repaired_completed.stdout[-4000:],
+                "stderr": repaired_completed.stderr[-4000:],
+            }
+            if repaired_completed.returncode != 0:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_repaired_handoff_make_failed",
+                        subject=PRODUCT_REPAIR_RERUN_REPAIRED_HANDOFF_MAKE_TARGET,
+                        message=(
+                            "SpecGraph repaired promotion handoff target failed with "
+                            f"exit code {repaired_completed.returncode}"
+                        ),
+                    )
+                )
     elif args.dry_run:
         command_result = {
             "command": command,
@@ -4309,35 +4442,90 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
             "stderr": "",
             "dry_run": True,
         }
+        if args.build_repaired_handoff:
+            repaired_handoff_command_result = {
+                "command": repaired_handoff_command,
+                "cwd": str(specgraph_dir),
+                "returncode": None,
+                "stdout": "",
+                "stderr": "",
+                "dry_run": True,
+            }
 
     expected_outputs = nested_mapping(plan, "expected_outputs")
-    output_records = {
+    expected_output_paths = {
         key: product_repair_output_record(Path(value))
         for key, value in expected_outputs.items()
         if isinstance(value, str)
     }
+    if args.build_repaired_handoff:
+        expected_output_paths.update(
+            {
+                key: product_repair_output_record(specgraph_dir / rel_path)
+                for key, rel_path in PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.items()
+            }
+        )
+    output_records = expected_output_paths
     if not diagnostics and not args.dry_run:
         diagnostics.extend(product_repair_output_diagnostics(output_records))
+        if args.build_repaired_handoff:
+            diagnostics.extend(product_repair_repaired_output_diagnostics(output_records))
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0 and (args.dry_run or command_result is not None)
+    requested_operation_status = "failed"
+    requested_operation_reason = "execution_failed"
+    if args.dry_run:
+        requested_operation_status = "dry_run"
+        requested_operation_reason = "dry_run"
+    elif command_result is None:
+        requested_operation_status = "skipped"
+        requested_operation_reason = "execution_not_started"
+    elif command_result.get("returncode") == 0:
+        requested_operation_status = "succeeded"
+        requested_operation_reason = "SpecGraph requested rerun target executed"
+    repaired_operation: dict[str, Any] | None = None
+    if args.build_repaired_handoff:
+        repaired_operation_status = "failed"
+        repaired_operation_reason = "repaired_handoff_execution_failed"
+        if args.dry_run:
+            repaired_operation_status = "dry_run"
+            repaired_operation_reason = "dry_run"
+        elif command_result is None:
+            repaired_operation_status = "skipped"
+            repaired_operation_reason = "requested_rerun_not_started"
+        elif command_result.get("returncode") != 0:
+            repaired_operation_status = "skipped"
+            repaired_operation_reason = "requested_rerun_failed"
+        elif repaired_handoff_command_result is None:
+            repaired_operation_status = "skipped"
+            repaired_operation_reason = "repaired_handoff_not_started"
+        elif repaired_handoff_command_result.get("returncode") == 0:
+            repaired_operation_status = "succeeded"
+            repaired_operation_reason = "SpecGraph repaired handoff target executed"
+        repaired_operation = product_repair_operation(
+            name="execute_specgraph_repaired_promotion_handoff",
+            status=repaired_operation_status,
+            reason=repaired_operation_reason,
+            evidence=[PRODUCT_REPAIR_RERUN_REPAIRED_HANDOFF_MAKE_TARGET],
+        )
     operations = [
         product_repair_operation(
             name="execute_specgraph_requested_rerun",
-            status="dry_run" if args.dry_run else "succeeded" if ok else "failed",
-            reason="SpecGraph requested rerun target executed"
-            if ok and not args.dry_run
-            else "dry_run"
-            if args.dry_run
-            else "execution_failed",
+            status=requested_operation_status,
+            reason=requested_operation_reason,
             evidence=[PRODUCT_REPAIR_RERUN_MAKE_TARGET],
         ),
+    ]
+    if repaired_operation is not None:
+        operations.append(repaired_operation)
+    operations.append(
         product_repair_operation(
             name="publish_public_safe_bundle",
             status="blocked_until_publication",
             reason="run product-repair-rerun publish after successful execution",
             evidence=["make publish-bundle"],
-        ),
-    ]
+        )
+    )
     report = {
         "schema_version": 1,
         "artifact_kind": PRODUCT_REPAIR_RERUN_EXECUTION_REPORT_KIND,
@@ -4361,6 +4549,10 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
         },
         "command": command,
         "command_result": command_result,
+        "repaired_handoff_command": repaired_handoff_command
+        if args.build_repaired_handoff
+        else None,
+        "repaired_handoff_command_result": repaired_handoff_command_result,
         "operations": operations,
         "output_artifacts": output_records,
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
@@ -4368,12 +4560,24 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
             "status": "completed" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
             "error_count": error_count,
             "output_artifact_count": len(output_records),
+            "repaired_handoff_requested": args.build_repaired_handoff,
+            "repaired_handoff_built": (
+                bool(args.build_repaired_handoff and ok and not args.dry_run)
+            ),
             "rerun_report_digest": nested_mapping(output_records, "rerun_report").get(
                 "sha256"
             ),
             "repair_session_digest": nested_mapping(
                 output_records,
                 "repair_session",
+            ).get("sha256"),
+            "repaired_handoff_digest": nested_mapping(
+                output_records,
+                "repaired_handoff",
+            ).get("sha256"),
+            "repaired_repair_session_digest": nested_mapping(
+                output_records,
+                "repaired_repair_session",
             ).get("sha256"),
         },
     }
@@ -4529,12 +4733,15 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
                 message="publish-bundle must produce a public artifact manifest",
             )
         )
-    public_paths = [
-        "runs/idea_to_spec_repair_session.json",
-        "runs/specspace_repair_draft_rerun_report.json",
-        "runs/idea_to_spec_rerun_preview.json",
-        "runs/idea_to_spec_rerun_materialization.json",
-    ]
+    execution_outputs = nested_mapping(execution_report, "output_artifacts")
+    repaired_handoff_requested = (
+        nested_mapping(execution_report, "summary").get("repaired_handoff_requested")
+        is True
+        or "repaired_handoff" in execution_outputs
+    )
+    public_paths = list(PRODUCT_REPAIR_RERUN_PUBLIC_PATHS)
+    if repaired_handoff_requested:
+        public_paths.extend(PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS)
     present_public_paths = []
     missing_public_paths = []
     for rel_path in public_paths:
@@ -6330,6 +6537,20 @@ def product_repair_smoke_report_ref(path: Path) -> dict[str, Any]:
     }
 
 
+def product_repair_repaired_promotion_paths(specgraph_dir: Path) -> list[str]:
+    promotion_gate_path = (
+        specgraph_dir
+        / PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS["repaired_promotion_gate"]
+    )
+    if not promotion_gate_path.is_file():
+        return []
+    try:
+        payload = json.loads(promotion_gate_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    return string_list(nested_mapping(payload, "promotion_request").get("paths"))
+
+
 def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
     specgraph_dir = Path(args.specgraph_dir).resolve()
     deployment_profile_path = Path(args.deployment_profile).resolve()
@@ -6347,6 +6568,11 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
         args.publication_output,
         base_dir=specgraph_dir,
         default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_REPORTS["publication"],
+    )
+    candidate_approval_gate_path = path_arg_or_default(
+        args.candidate_approval_output,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_REPORTS["candidate_approval_gate"],
     )
     output_path = path_arg_or_default(
         args.output,
@@ -6407,6 +6633,8 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
         ]
         if args.python:
             execute_command.extend(["--python", args.python])
+        if args.build_repaired_handoff:
+            execute_command.append("--build-repaired-handoff")
         operation, payload, phase_diagnostics = product_repair_smoke_phase(
             name="execute_specgraph_requested_rerun",
             command_args=execute_command,
@@ -6486,7 +6714,7 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
                         subject="publication.dry_run",
                         message="end-to-end repair rerun smoke requires real publication",
                     )
-                )
+            )
     else:
         operations.append(
             product_repair_operation(
@@ -6497,9 +6725,93 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
             )
         )
 
+    publication_payload = phase_payloads.get("publication")
+    if (
+        args.build_repaired_handoff
+        and not diagnostics
+        and publication_payload
+        and publication_payload.get("ok") is True
+    ):
+        approval_command = [
+            "product-candidate-approval",
+            "gate",
+            "--deployment-profile",
+            str(deployment_profile_path),
+            "--specgraph-dir",
+            str(specgraph_dir),
+            "--active-candidate",
+            PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS["repaired_active_candidate"],
+            "--repair-session",
+            PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS["repaired_repair_session"],
+            "--promotion-gate",
+            PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS["repaired_promotion_gate"],
+            "--repaired-handoff",
+            PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS["repaired_handoff"],
+            "--repair-execution",
+            str(execution_report_path),
+            "--repair-publication",
+            str(publication_report_path),
+            "--output",
+            str(candidate_approval_gate_path),
+            "--format",
+            "json",
+        ]
+        approval_intents = resolve_optional_path_arg(args.approval_intents)
+        if approval_intents:
+            approval_command.extend(["--approval-intents", approval_intents])
+        if args.workspace_id:
+            approval_command.extend(["--workspace-id", args.workspace_id])
+        candidate_approval_paths = list(args.candidate_approval_path or [])
+        if not candidate_approval_paths:
+            candidate_approval_paths = product_repair_repaired_promotion_paths(
+                specgraph_dir
+            )
+        for candidate_path in candidate_approval_paths:
+            approval_command.extend(["--path", candidate_path])
+        operation, payload, phase_diagnostics = product_repair_smoke_phase(
+            name="validate_candidate_approval_gate",
+            command_args=approval_command,
+            output_path=candidate_approval_gate_path,
+        )
+        operations.append(operation)
+        diagnostics.extend(phase_diagnostics)
+        if payload is not None:
+            phase_payloads["candidate_approval_gate"] = payload
+            diagnostics.extend(
+                product_repair_smoke_authority_diagnostics(
+                    payload,
+                    subject="candidate_approval_gate",
+                )
+            )
+            if payload.get("ready_to_materialize") is not True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_smoke_candidate_approval_not_ready",
+                        subject="candidate_approval_gate.ready_to_materialize",
+                        message=(
+                            "repaired repair rerun smoke must produce an approval-ready "
+                            "candidate gate"
+                        ),
+                    )
+                )
+    elif args.build_repaired_handoff:
+        operations.append(
+            product_repair_operation(
+                name="validate_candidate_approval_gate",
+                status="skipped",
+                reason="publication_not_ready",
+                evidence=[str(candidate_approval_gate_path)],
+            )
+        )
+
     execution_summary = nested_mapping(phase_payloads.get("execution") or {}, "summary")
     publication_summary = nested_mapping(
         phase_payloads.get("publication") or {},
+        "summary",
+    )
+    candidate_approval_summary = nested_mapping(
+        phase_payloads.get("candidate_approval_gate") or {},
         "summary",
     )
     if phase_payloads.get("execution") and not execution_summary.get(
@@ -6524,22 +6836,33 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
                 message="smoke execution must capture refreshed repair session digest",
             )
         )
-    if phase_payloads.get("publication") and publication_summary.get(
-        "published_artifact_count"
-    ) != 4:
+    expected_public_artifact_count = len(PRODUCT_REPAIR_RERUN_PUBLIC_PATHS)
+    if args.build_repaired_handoff:
+        expected_public_artifact_count += len(PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS)
+    if (
+        phase_payloads.get("publication")
+        and publication_summary.get("published_artifact_count")
+        != expected_public_artifact_count
+    ):
         diagnostics.append(
             Diagnostic(
                 level="ERROR",
                 code="product_repair_rerun_smoke_public_artifact_count_mismatch",
                 subject="publication.summary.published_artifact_count",
-                message="smoke publication must verify four public repair rerun artifacts",
+                message=(
+                    "smoke publication must verify the expected public repair "
+                    "rerun artifacts"
+                ),
             )
         )
 
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    expected_phase_keys = ["plan", "execution", "publication"]
+    if args.build_repaired_handoff:
+        expected_phase_keys.append("candidate_approval_gate")
     ok = error_count == 0 and all(
         phase_payloads.get(key, {}).get("ok") is True
-        for key in ("plan", "execution", "publication")
+        for key in expected_phase_keys
     )
     report = {
         "schema_version": 1,
@@ -6565,6 +6888,14 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
             "plan": product_repair_smoke_report_ref(plan_path),
             "execution": product_repair_smoke_report_ref(execution_report_path),
             "publication": product_repair_smoke_report_ref(publication_report_path),
+            "candidate_approval_gate": product_repair_smoke_report_ref(
+                candidate_approval_gate_path
+            )
+            if args.build_repaired_handoff
+            else {
+                "path": str(candidate_approval_gate_path),
+                "present": False,
+            },
         },
         "operations": operations,
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
@@ -6574,14 +6905,37 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
             "plan_ok": phase_payloads.get("plan", {}).get("ok") is True,
             "execution_ok": phase_payloads.get("execution", {}).get("ok") is True,
             "publication_ok": phase_payloads.get("publication", {}).get("ok") is True,
+            "candidate_approval_gate_ok": (
+                phase_payloads.get("candidate_approval_gate", {}).get("ok") is True
+            )
+            if args.build_repaired_handoff
+            else None,
+            "ready_to_materialize": (
+                phase_payloads.get("candidate_approval_gate", {}).get(
+                    "ready_to_materialize"
+                )
+                is True
+            )
+            if args.build_repaired_handoff
+            else None,
             "rerun_report_digest": execution_summary.get("rerun_report_digest"),
             "repair_session_digest": execution_summary.get("repair_session_digest"),
+            "repaired_handoff_digest": execution_summary.get(
+                "repaired_handoff_digest"
+            ),
+            "repaired_repair_session_digest": execution_summary.get(
+                "repaired_repair_session_digest"
+            ),
             "manifest_digest": nested_mapping(
                 phase_payloads.get("publication") or {},
                 "manifest",
             ).get("sha256"),
             "published_artifact_count": publication_summary.get(
                 "published_artifact_count",
+                0,
+            ),
+            "candidate_approval_approved_path_count": candidate_approval_summary.get(
+                "approved_path_count",
                 0,
             ),
         },
@@ -12017,6 +12371,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate and render the make invocation without executing it.",
     )
     product_repair_execute_parser.add_argument(
+        "--build-repaired-handoff",
+        action="store_true",
+        help=(
+            "After the requested rerun target succeeds, run the fixed "
+            "product-workspace-repaired-promotion-handoff target and verify "
+            "approval-ready repaired outputs."
+        ),
+    )
+    product_repair_execute_parser.add_argument(
         "--output",
         help="Optional path where the execution report JSON should be written.",
     )
@@ -12125,6 +12488,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional PYTHON make variable passed to SpecGraph targets.",
     )
     product_repair_smoke_parser.add_argument(
+        "--build-repaired-handoff",
+        action="store_true",
+        help=(
+            "Include the repaired promotion handoff target, public artifact "
+            "verification, and candidate approval gate check in the smoke."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--approval-intents",
+        help=(
+            "Optional SpecSpace candidate approval intent state used when "
+            "--build-repaired-handoff validates the candidate approval gate. "
+            "Defaults to runs/idea_to_spec_candidate_approval_intents.json "
+            "under --specgraph-dir."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--workspace-id",
+        help=(
+            "Optional workspace id passed to product-candidate-approval gate "
+            "when --build-repaired-handoff is set."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--candidate-approval-path",
+        action="append",
+        default=[],
+        help=(
+            "Promotion path approved for the candidate approval gate. May be "
+            "provided multiple times. When omitted, paths are read from the "
+            "repaired promotion gate."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
         "--plan-output",
         help=(
             "Optional path for the intermediate product repair rerun execution "
@@ -12143,6 +12540,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Optional path for the intermediate product repair rerun publication "
             "report. Defaults to runs/platform_product_repair_rerun_publication_report.json."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--candidate-approval-output",
+        help=(
+            "Optional path for the candidate approval gate report produced by "
+            "--build-repaired-handoff. Defaults to "
+            "runs/platform_candidate_approval_intent_gate_report.json."
         ),
     )
     product_repair_smoke_parser.add_argument(

@@ -200,6 +200,24 @@ scripts/platform.py product-repair-rerun execute \
   --output ../SpecGraph/runs/platform_product_repair_rerun_execution_report.json
 ```
 
+When the operator wants the repaired candidate to become approval-reviewable in
+the same controlled run, execute can also run the fixed SpecGraph repaired
+handoff target:
+
+```bash
+scripts/platform.py product-repair-rerun execute \
+  --plan ../SpecGraph/runs/platform_product_repair_rerun_execution_plan.json \
+  --build-repaired-handoff \
+  --output ../SpecGraph/runs/platform_product_repair_rerun_execution_report.json
+```
+
+That mode verifies these additional SpecGraph outputs:
+
+- `runs/repaired_candidate_promotion_handoff_report.json`;
+- `runs/repaired_active_idea_to_spec_candidate.json`;
+- `runs/repaired_idea_to_spec_repair_session.json`;
+- `runs/repaired_idea_to_spec_promotion_gate.json`.
+
 The publish step refreshes and verifies the public-safe SpecGraph bundle:
 
 ```bash
@@ -222,6 +240,23 @@ reports, and then emits `platform_product_repair_rerun_smoke_report`. It proves
 that the selected SpecSpace draft request can be validated, executed through the
 single approved SpecGraph make target, published as public-safe artifacts, and
 observed without starting candidate approval or Git Service promotion.
+
+The smoke can also include the repaired handoff and candidate approval gate:
+
+```bash
+scripts/platform.py product-repair-rerun smoke \
+  --specgraph-dir ../SpecGraph \
+  --build-repaired-handoff \
+  --output ../SpecGraph/runs/platform_product_repair_rerun_smoke_report.json
+```
+
+With `--build-repaired-handoff`, the smoke performs
+`plan -> execute -> publish -> product-candidate-approval gate`. This validates
+that the repaired candidate artifacts are public-safe and ready for later
+`candidate_approval_decision.json` materialization. It still does not
+materialize that decision, create a branch, open a pull request, publish a read
+model, accept ontology terms, write Ontology packages, or mutate canonical
+specs.
 
 This adapter may execute the controlled SpecGraph rerun make target and
 `make publish-bundle`. It still must not create Git branches, commits, pull

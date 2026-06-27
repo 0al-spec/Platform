@@ -505,6 +505,98 @@ class PlatformCliTests(unittest.TestCase):
         for filename, payload in artifacts.items():
             (runs_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
 
+    def write_product_candidate_approval_intent_state(
+        self,
+        specgraph_dir: Path,
+    ) -> None:
+        runs_dir = specgraph_dir / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        intent_state = {
+            "artifact_kind": "specspace_idea_to_spec_candidate_approval_intent_state",
+            "schema_version": 1,
+            "state_owner": "SpecSpace",
+            "canonical_mutations_allowed": False,
+            "tracked_artifacts_written": False,
+            "source_artifacts": {
+                "idea_to_spec_repair_session": (
+                    "runs/repaired_idea_to_spec_repair_session.json"
+                ),
+                "idea_to_spec_promotion_gate": (
+                    "runs/repaired_idea_to_spec_promotion_gate.json"
+                ),
+            },
+            "intents": [
+                {
+                    "id": "candidate-approval-intent.idea-alpha.20260627T100000Z",
+                    "status": "requested",
+                    "requested_action": "approve_candidate_for_promotion_review",
+                    "workspace_id": "idea-alpha",
+                    "candidate_id": "idea-alpha",
+                    "repair_session_id": "repair-session.idea-alpha",
+                    "repair_session_ref": (
+                        "runs/repaired_idea_to_spec_repair_session.json"
+                    ),
+                    "promotion_gate_ref": (
+                        "runs/repaired_idea_to_spec_promotion_gate.json"
+                    ),
+                    "requested_by": "operator://specspace-local",
+                    "reason": "Ready for promotion review.",
+                    "created_at": "2026-06-27T10:00:00Z",
+                    "updated_at": "2026-06-27T10:00:00Z",
+                    "ready_for_candidate_approval": True,
+                    "ready_for_platform_promotion": False,
+                    "blocked_by": [],
+                    "canonical_mutations_allowed": False,
+                    "tracked_artifacts_written": False,
+                    "may_execute_specgraph": False,
+                    "may_execute_prompt_agent": False,
+                    "may_apply_to_specgraph": False,
+                    "may_mutate_candidate_source_artifacts": False,
+                    "may_mutate_canonical_specs": False,
+                    "may_write_ontology_package": False,
+                    "may_accept_ontology_terms": False,
+                    "may_mark_candidate_accepted": False,
+                    "may_mark_candidate_graph_accepted": False,
+                    "may_create_branch_or_commit": False,
+                    "may_open_pull_request": False,
+                    "may_execute_git_service_operation": False,
+                }
+            ],
+            "summary": {
+                "status": "candidate_approval_intent_recorded",
+                "intent_count": 1,
+                "active_intent_count": 1,
+                "workspace_count": 1,
+            },
+            "consumer_boundary": {
+                "specspace_owned_state": True,
+                "for_product_approval_workflow": True,
+                "may_execute_specgraph": False,
+                "may_execute_prompt_agent": False,
+                "may_apply_to_specgraph": False,
+                "may_mutate_candidate_source_artifacts": False,
+                "may_mutate_canonical_specs": False,
+                "may_write_ontology_package": False,
+                "may_accept_ontology_terms": False,
+                "may_mark_candidate_graph_accepted": False,
+                "may_create_branch_or_commit": False,
+                "may_open_pull_request": False,
+                "may_execute_git_service_operation": False,
+            },
+            "authority_boundary": {
+                "candidate_approval_intent_state_is_authority": False,
+                "candidate_approval_decision_authority": False,
+                "specgraph_artifact_authority": False,
+                "ontology_authority": False,
+                "git_service_authority": False,
+                "canonical_mutations_allowed": False,
+            },
+        }
+        (runs_dir / "idea_to_spec_candidate_approval_intents.json").write_text(
+            json.dumps(intent_state),
+            encoding="utf-8",
+        )
+
     def write_product_candidate_approval_artifacts(
         self,
         specgraph_dir: Path,
@@ -817,6 +909,13 @@ product-workspace-requested-repair-draft-rerun:
 \t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_preview"}' > runs/idea_to_spec_rerun_preview.json
 \t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_materialization"}' > runs/idea_to_spec_rerun_materialization.json
 
+product-workspace-repaired-promotion-handoff:
+\t@mkdir -p runs
+\t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","contract_ref":"specgraph.idea-to-spec.active-candidate-source.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"active_candidate_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > runs/repaired_active_idea_to_spec_candidate.json
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_promotion_gate","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"ready_for_platform_promotion_request","blocked_by":[]},"promotion_request":{"paths":["specs/nodes/SG-SPEC-CANDIDATE.yaml"]},"summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_open_pull_request":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false}}' > runs/repaired_idea_to_spec_promotion_gate.json
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/repaired_active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/repaired_idea_to_spec_promotion_gate.json"}}}' > runs/repaired_idea_to_spec_repair_session.json
+\t@printf '%s\\n' '{"artifact_kind":"repaired_candidate_promotion_handoff_report","contract_ref":"specgraph.idea-to-spec.repaired-candidate-promotion-handoff.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repaired_candidate_promotion_handoff_ready","blocked_by":[]},"summary":{"status":"repaired_candidate_promotion_handoff_ready","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_candidate_gap_count":0,"unresolved_ontology_gap_count":0,"resolved_candidate_gap_count":1,"resolved_ontology_gap_count":1,"removed_gap_count":2},"output_artifacts":{"repaired_active_candidate":{"artifact_kind":"active_idea_to_spec_candidate","source_ref":"runs/repaired_active_idea_to_spec_candidate.json","summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1}},"repaired_repair_session":{"artifact_kind":"idea_to_spec_repair_session_journal","source_ref":"runs/repaired_idea_to_spec_repair_session.json","summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0}},"repaired_promotion_gate":{"artifact_kind":"idea_to_spec_promotion_gate","source_ref":"runs/repaired_idea_to_spec_promotion_gate.json","summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1}}},"authority_boundary":{"may_accept_ontology_terms":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_materialize_candidate_approval_decision":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > runs/repaired_candidate_promotion_handoff_report.json
+
 publish-bundle:
 \t@mkdir -p dist/specgraph-public/runs
 \t@printf '%s\\n' '{"artifact_kind":"artifact_manifest"}' > dist/specgraph-public/artifact_manifest.json
@@ -824,6 +923,10 @@ publish-bundle:
 \t@cp runs/specspace_repair_draft_rerun_report.json dist/specgraph-public/runs/specspace_repair_draft_rerun_report.json
 \t@cp runs/idea_to_spec_rerun_preview.json dist/specgraph-public/runs/idea_to_spec_rerun_preview.json
 \t@cp runs/idea_to_spec_rerun_materialization.json dist/specgraph-public/runs/idea_to_spec_rerun_materialization.json
+\t@test ! -f runs/repaired_candidate_promotion_handoff_report.json || cp runs/repaired_candidate_promotion_handoff_report.json dist/specgraph-public/runs/repaired_candidate_promotion_handoff_report.json
+\t@test ! -f runs/repaired_active_idea_to_spec_candidate.json || cp runs/repaired_active_idea_to_spec_candidate.json dist/specgraph-public/runs/repaired_active_idea_to_spec_candidate.json
+\t@test ! -f runs/repaired_idea_to_spec_repair_session.json || cp runs/repaired_idea_to_spec_repair_session.json dist/specgraph-public/runs/repaired_idea_to_spec_repair_session.json
+\t@test ! -f runs/repaired_idea_to_spec_promotion_gate.json || cp runs/repaired_idea_to_spec_promotion_gate.json dist/specgraph-public/runs/repaired_idea_to_spec_promotion_gate.json
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
 
@@ -3004,6 +3107,85 @@ workspaces:
             self.assertTrue(payload["output_artifacts"]["rerun_report"]["ready"])
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
 
+    def test_product_repair_rerun_execute_builds_repaired_handoff(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            execution_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_execution.json"
+            )
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--output",
+                str(execution_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(
+                payload["repaired_handoff_command_result"]["returncode"],
+                0,
+            )
+            self.assertTrue(payload["summary"]["repaired_handoff_requested"])
+            self.assertTrue(payload["summary"]["repaired_handoff_built"])
+            self.assertIsInstance(
+                payload["summary"]["repaired_handoff_digest"],
+                str,
+            )
+            self.assertIsInstance(
+                payload["summary"]["repaired_repair_session_digest"],
+                str,
+            )
+            self.assertTrue(
+                payload["output_artifacts"]["repaired_handoff"]["ready"]
+            )
+            self.assertTrue(
+                payload["output_artifacts"]["repaired_repair_session"]["ready"]
+            )
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(
+                statuses["execute_specgraph_requested_rerun"],
+                "succeeded",
+            )
+            self.assertEqual(
+                statuses["execute_specgraph_repaired_promotion_handoff"],
+                "succeeded",
+            )
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "repaired_candidate_promotion_handoff_report.json"
+                ).is_file()
+            )
+
     def test_product_repair_rerun_execute_rejects_tampered_plan_target(
         self,
     ) -> None:
@@ -3184,6 +3366,79 @@ workspaces:
             self.assertEqual(payload["summary"]["published_artifact_count"], 4)
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
 
+    def test_product_repair_rerun_publish_verifies_repaired_bundle(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            execution_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_execution.json"
+            )
+            publication_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_publication.json"
+            )
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+            execute_result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--output",
+                str(execution_report_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(execute_result.returncode, 0, execute_result.stderr)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "publish",
+                "--execution-report",
+                str(execution_report_path),
+                "--output",
+                str(publication_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["summary"]["published_artifact_count"], 8)
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "dist"
+                    / "specgraph-public"
+                    / "runs"
+                    / "repaired_candidate_promotion_handoff_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "dist"
+                    / "specgraph-public"
+                    / "runs"
+                    / "repaired_idea_to_spec_repair_session.json"
+                ).is_file()
+            )
+
     def test_product_repair_rerun_publish_rejects_dry_run_execution_report(
         self,
     ) -> None:
@@ -3358,6 +3613,88 @@ workspaces:
                     / "specgraph-public"
                     / "runs"
                     / "idea_to_spec_repair_session.json"
+                ).is_file()
+            )
+
+    def test_product_repair_rerun_smoke_builds_repaired_handoff_and_gate(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            self.write_product_candidate_approval_intent_state(specgraph_dir)
+            smoke_report_path = (
+                specgraph_dir / "runs" / "platform_product_repair_rerun_smoke.json"
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--build-repaired-handoff",
+                "--output",
+                str(smoke_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["summary"]["status"], "passed")
+            self.assertTrue(payload["summary"]["candidate_approval_gate_ok"])
+            self.assertTrue(payload["summary"]["ready_to_materialize"])
+            self.assertIsInstance(
+                payload["summary"]["repaired_handoff_digest"],
+                str,
+            )
+            self.assertIsInstance(
+                payload["summary"]["repaired_repair_session_digest"],
+                str,
+            )
+            self.assertEqual(payload["summary"]["published_artifact_count"], 8)
+            self.assertEqual(
+                payload["summary"]["candidate_approval_approved_path_count"],
+                1,
+            )
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(statuses["plan_product_repair_rerun"], "succeeded")
+            self.assertEqual(statuses["execute_specgraph_requested_rerun"], "succeeded")
+            self.assertEqual(statuses["publish_public_safe_bundle"], "succeeded")
+            self.assertEqual(statuses["validate_candidate_approval_gate"], "succeeded")
+            execution_report = json.loads(
+                Path(payload["phase_reports"]["execution"]["path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            execution_statuses = {
+                operation["name"]: operation["status"]
+                for operation in execution_report["operations"]
+            }
+            self.assertEqual(
+                execution_statuses["execute_specgraph_repaired_promotion_handoff"],
+                "succeeded",
+            )
+            self.assertTrue(payload["phase_reports"]["candidate_approval_gate"]["present"])
+            self.assertFalse(
+                payload["authority_boundary"]["candidate_approval_performed"]
+            )
+            self.assertFalse(
+                payload["authority_boundary"]["git_service_promotion_started"]
+            )
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "dist"
+                    / "specgraph-public"
+                    / "runs"
+                    / "repaired_candidate_promotion_handoff_report.json"
                 ).is_file()
             )
 

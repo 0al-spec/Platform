@@ -524,7 +524,10 @@ Completed Git Service foundation:
    `product-repair-rerun smoke` runs `plan -> execute -> publish`, emits one
    durable demo report, verifies refreshed repair-session and rerun-report
    digests, and proves public-safe publication without candidate approval or
-   Git Service promotion.
+   Git Service promotion. With `--build-repaired-handoff`, the same smoke also
+   runs the fixed repaired handoff target, verifies repaired public artifacts,
+   and validates `product-candidate-approval gate` as a read-only readiness
+   check without materializing `candidate_approval_decision.json`.
 8. SpecSpace now records a candidate approval intent as SpecSpace-owned state,
    and Platform validates that intent through `product-candidate-approval gate`
    before materializing the narrow `candidate_approval_decision.json` handoff.
