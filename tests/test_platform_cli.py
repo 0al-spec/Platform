@@ -4335,6 +4335,7 @@ workspaces:
         self.assertIn("product_candidate_promotion_execution_dry_run", codes)
         self.assertFalse(payload["ok"])
         self.assertIsNone(payload["graph_repository_command_result"])
+        self.assertIsNone(payload["graph_repository_review_status_report_ref"])
 
     def test_product_candidate_promotion_review_status_resolves_relative_open_review_ref(
         self,
@@ -4528,6 +4529,7 @@ workspaces:
         self.assertIn("product_candidate_promotion_review_not_merged", codes)
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["summary"]["read_model_published"])
+        self.assertIsNone(payload["graph_repository_publish_read_model_report_ref"])
         self.assertFalse(output_dir.exists())
 
     def test_product_candidate_promotion_publish_read_model_rejects_non_product_lane(
@@ -4595,6 +4597,7 @@ workspaces:
             codes,
         )
         self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["graph_repository_publish_read_model_report_ref"])
         self.assertFalse(output_dir.exists())
 
     def test_graph_repository_prepare_local_writes_workspace_manifest(self) -> None:

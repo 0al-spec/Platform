@@ -7050,15 +7050,14 @@ def product_candidate_promotion_child_report_path(
     child_payload: dict[str, Any] | None,
     *,
     base_dir: Path,
-    fallback: Path,
-) -> Path:
+) -> Path | None:
     if isinstance(child_payload, dict):
         local_files = string_list(child_payload.get("local_files_written"))
         if local_files:
             resolved = resolve_artifact_path(local_files[0], base_dir=base_dir)
             if resolved is not None:
                 return resolved
-    return fallback
+    return None
 
 
 def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
@@ -7614,7 +7613,7 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         else execution_report_path.parent
         / Path(PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS["review_status"]).name
     )
-    graph_repository_report_path = (
+    expected_graph_repository_report_path = (
         workspace_dir
         / ".platform"
         / "graph_repository_review_status_report.json"
@@ -7655,7 +7654,6 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
     graph_repository_report_path = product_candidate_promotion_child_report_path(
         child_payload,
         base_dir=workspace_dir,
-        fallback=graph_repository_report_path,
     )
     review_merged = review_state == "merged"
     operations = [
@@ -7695,7 +7693,7 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
                 if review_merged
                 else "read-model publication waits for merged review"
             ),
-            evidence=[str(graph_repository_report_path)],
+            evidence=[str(graph_repository_report_path or expected_graph_repository_report_path)],
         ),
     ]
     report = {
@@ -7703,9 +7701,9 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         "artifact_kind": PRODUCT_CANDIDATE_PROMOTION_REVIEW_STATUS_REPORT_KIND,
         "generated_at": utc_now_iso(),
         "promotion_execution_report_ref": str(execution_report_path),
-        "graph_repository_review_status_report_ref": str(
-            graph_repository_report_path
-        ),
+        "graph_repository_review_status_report_ref": None
+        if graph_repository_report_path is None
+        else str(graph_repository_report_path),
         "ok": ok,
         "workflow_lane": execution_report.get("workflow_lane"),
         "candidate_id": execution_report.get("candidate_id"),
@@ -7819,11 +7817,6 @@ def product_candidate_promotion_publish_read_model(
             ]
         ).name
     )
-    graph_repository_publish_report_path = (
-        output_dir
-        / ".platform"
-        / "graph_repository_publish_read_model_report.json"
-    )
     child_payload: dict[str, Any] | None = None
     child_result: dict[str, Any] | None = None
     child_diagnostic: Diagnostic | None = None
@@ -7861,7 +7854,6 @@ def product_candidate_promotion_publish_read_model(
     graph_repository_publish_report_path = product_candidate_promotion_child_report_path(
         child_payload,
         base_dir=output_dir,
-        fallback=graph_repository_publish_report_path,
     )
     ok = error_count == 0 and child_ok
     operations = [
@@ -7906,9 +7898,9 @@ def product_candidate_promotion_publish_read_model(
         "graph_repository_review_status_report_ref": None
         if graph_repository_report_path is None
         else str(graph_repository_report_path),
-        "graph_repository_publish_read_model_report_ref": str(
-            graph_repository_publish_report_path
-        ),
+        "graph_repository_publish_read_model_report_ref": None
+        if graph_repository_publish_report_path is None or not published
+        else str(graph_repository_publish_report_path),
         "ok": ok,
         "dry_run": args.dry_run,
         "workflow_lane": review_status_report.get("workflow_lane"),
