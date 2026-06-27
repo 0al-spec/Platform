@@ -11394,6 +11394,13 @@ def list_values_for_service_section(
     values: list[str] = []
     in_section = False
     for line in blocks.get(service_name, []):
+        inline_match = re.match(rf"^    {re.escape(section_name)}:\s*\[(.*?)\]\s*$", line)
+        if inline_match:
+            return [
+                item.strip().strip('"').strip("'")
+                for item in inline_match.group(1).split(",")
+                if item.strip()
+            ]
         if re.match(rf"^    {re.escape(section_name)}:\s*$", line):
             in_section = True
             continue
