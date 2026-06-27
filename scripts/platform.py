@@ -243,9 +243,19 @@ PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS = {
 PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS = {
     "request": "runs/graph_repository_promotion_request.json",
     "execution": "runs/product_candidate_promotion_execution_report.json",
+    "review_status": "runs/product_candidate_promotion_review_status_report.json",
+    "read_model_publication": (
+        "runs/product_candidate_promotion_read_model_publication_report.json"
+    ),
 }
 PRODUCT_CANDIDATE_PROMOTION_EXECUTION_REPORT_KIND = (
     "platform_product_candidate_promotion_execution_report"
+)
+PRODUCT_CANDIDATE_PROMOTION_REVIEW_STATUS_REPORT_KIND = (
+    "platform_product_candidate_promotion_review_status_report"
+)
+PRODUCT_CANDIDATE_PROMOTION_READ_MODEL_PUBLICATION_REPORT_KIND = (
+    "platform_product_candidate_promotion_read_model_publication_report"
 )
 PRODUCT_CANDIDATE_PROMOTION_REQUEST_AUTHORITY_FALSE_FIELDS = (
     "executes_git_commands",
@@ -334,6 +344,25 @@ PRODUCT_CANDIDATE_PROMOTION_AUTHORITY_FALSE_FIELDS = (
     "may_open_pull_request",
     "may_publish_read_model",
     "may_execute_git_service_operation",
+)
+PRODUCT_CANDIDATE_PROMOTION_EXECUTION_AUTHORITY_FALSE_FIELDS = (
+    "merges_pull_requests",
+    "publishes_read_models",
+    "canonical_spec_mutation_without_review",
+    "ontology_package_write",
+    "ontology_term_acceptance",
+    "private_artifact_publication",
+)
+PRODUCT_CANDIDATE_PROMOTION_REVIEW_AUTHORITY_FALSE_FIELDS = (
+    "specspace_direct_git_write",
+    "executes_git_commands",
+    "opens_pull_requests",
+    "merges_pull_requests",
+    "publishes_read_models",
+    "canonical_spec_mutation_without_review",
+    "ontology_package_write",
+    "ontology_term_acceptance",
+    "private_artifact_publication",
 )
 GIT_SERVICE_REQUIRED_OPERATIONS = {
     "prepare_worktree": {
@@ -7017,6 +7046,20 @@ def product_candidate_promotion_operation(
     }
 
 
+def product_candidate_promotion_child_report_path(
+    child_payload: dict[str, Any] | None,
+    *,
+    base_dir: Path,
+) -> Path | None:
+    if isinstance(child_payload, dict):
+        local_files = string_list(child_payload.get("local_files_written"))
+        if local_files:
+            resolved = resolve_artifact_path(local_files[0], base_dir=base_dir)
+            if resolved is not None:
+                return resolved
+    return None
+
+
 def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
     contract_path = Path(args.contract).resolve()
     promotion_request_path = Path(args.promotion_request).resolve()
@@ -7313,6 +7356,631 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
                     ("candidate_id", "CANDIDATE"),
                     ("status", "STATUS"),
                     ("branch", "BRANCH"),
+                ],
+            )
+        )
+    return 0 if ok else 1
+
+
+def product_candidate_promotion_execution_report_diagnostics(
+    execution_report: dict[str, Any],
+    *,
+    base_dir: Path,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if execution_report.get("artifact_kind") != (
+        PRODUCT_CANDIDATE_PROMOTION_EXECUTION_REPORT_KIND
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_execution_kind_mismatch",
+                subject="execution_report.artifact_kind",
+                message=(
+                    "expected "
+                    f"{PRODUCT_CANDIDATE_PROMOTION_EXECUTION_REPORT_KIND}"
+                ),
+            )
+        )
+    if execution_report.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_execution_not_ok",
+                subject="execution_report.ok",
+                message="product promotion execution must be ok before review status",
+            )
+        )
+    if execution_report.get("dry_run") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_execution_dry_run",
+                subject="execution_report.dry_run",
+                message="post-review status requires non-dry-run promotion execution",
+            )
+        )
+    if execution_report.get("open_review_dry_run") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_open_review_dry_run",
+                subject="execution_report.open_review_dry_run",
+                message="post-review status requires a real opened review",
+            )
+        )
+    if execution_report.get("workflow_lane") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_execution_workflow_mismatch",
+                subject="execution_report.workflow_lane",
+                message="post-review publication requires product_idea_to_spec",
+            )
+        )
+    summary = nested_mapping(execution_report, "summary")
+    if summary.get("review_opened") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_not_opened",
+                subject="execution_report.summary.review_opened",
+                message="review status requires a previously opened review",
+            )
+        )
+    workspace_dir = execution_report.get("workspace_dir")
+    if not isinstance(workspace_dir, str) or not workspace_dir.strip():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_workspace_missing",
+                subject="execution_report.workspace_dir",
+                message="execution report must include candidate workspace_dir",
+            )
+        )
+    elif not Path(workspace_dir).is_dir():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_workspace_missing",
+                subject="execution_report.workspace_dir",
+                message="candidate workspace_dir must exist for review status output",
+            )
+        )
+    git_service_execution = nested_mapping(execution_report, "git_service_execution")
+    report_refs = nested_mapping(git_service_execution, "report_refs")
+    open_review_ref = report_refs.get("open_review")
+    if not isinstance(open_review_ref, str) or not open_review_ref.strip():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_open_review_ref_missing",
+                subject="execution_report.git_service_execution.report_refs.open_review",
+                message="execution report must reference the open review report",
+            )
+        )
+    else:
+        open_review_path = resolve_artifact_path(open_review_ref, base_dir=base_dir)
+        if open_review_path is None or not open_review_path.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_open_review_report_missing",
+                    subject="execution_report.git_service_execution.report_refs.open_review",
+                    message="open review report ref must point at an existing file",
+                )
+            )
+    authority_boundary = execution_report.get("authority_boundary")
+    if not isinstance(authority_boundary, dict):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_execution_authority_missing",
+                subject="execution_report.authority_boundary",
+                message="execution report must declare authority boundary",
+            )
+        )
+        return diagnostics
+    for field in PRODUCT_CANDIDATE_PROMOTION_EXECUTION_AUTHORITY_FALSE_FIELDS:
+        if authority_boundary.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_execution_authority_expanded",
+                    subject=f"execution_report.authority_boundary.{field}",
+                    message=f"{field} must be exactly false before review status",
+                )
+            )
+    return diagnostics
+
+
+def product_candidate_promotion_review_status_report_diagnostics(
+    review_status_report: dict[str, Any],
+    *,
+    base_dir: Path,
+    require_merged: bool,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if review_status_report.get("artifact_kind") != (
+        PRODUCT_CANDIDATE_PROMOTION_REVIEW_STATUS_REPORT_KIND
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_status_kind_mismatch",
+                subject="review_status_report.artifact_kind",
+                message=(
+                    "expected "
+                    f"{PRODUCT_CANDIDATE_PROMOTION_REVIEW_STATUS_REPORT_KIND}"
+                ),
+            )
+        )
+    if review_status_report.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_status_not_ok",
+                subject="review_status_report.ok",
+                message="product review status must be ok before read-model publish",
+            )
+        )
+    if review_status_report.get("workflow_lane") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_status_workflow_mismatch",
+                subject="review_status_report.workflow_lane",
+                message="read-model publication requires product_idea_to_spec",
+            )
+        )
+    if require_merged and review_status_report.get("review_state") != "merged":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_not_merged",
+                subject="review_status_report.review_state",
+                message="read-model publication requires a merged product review",
+            )
+        )
+    graph_report_ref = review_status_report.get("graph_repository_review_status_report_ref")
+    if not isinstance(graph_report_ref, str) or not graph_report_ref.strip():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_graph_review_status_ref_missing",
+                subject="review_status_report.graph_repository_review_status_report_ref",
+                message="product review status must reference the generic review status report",
+            )
+        )
+    else:
+        graph_report_path = resolve_artifact_path(graph_report_ref, base_dir=base_dir)
+        if graph_report_path is None or not graph_report_path.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_graph_review_status_report_missing",
+                    subject="review_status_report.graph_repository_review_status_report_ref",
+                    message="generic graph repository review status report must exist",
+                )
+            )
+    authority_boundary = review_status_report.get("authority_boundary")
+    if not isinstance(authority_boundary, dict):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_authority_missing",
+                subject="review_status_report.authority_boundary",
+                message="product review status must declare authority boundary",
+            )
+        )
+        return diagnostics
+    for field in PRODUCT_CANDIDATE_PROMOTION_REVIEW_AUTHORITY_FALSE_FIELDS:
+        if authority_boundary.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_review_authority_expanded",
+                    subject=f"review_status_report.authority_boundary.{field}",
+                    message=f"{field} must be exactly false before read-model publish",
+                )
+            )
+    return diagnostics
+
+
+def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
+    execution_report_path = Path(args.execution_report).resolve()
+    execution_report = load_json_mapping(
+        execution_report_path,
+        label="product candidate promotion execution report",
+    )
+    diagnostics = product_candidate_promotion_execution_report_diagnostics(
+        execution_report,
+        base_dir=execution_report_path.parent,
+    )
+    preflight_error_count = sum(
+        1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+    )
+    git_service_execution = nested_mapping(execution_report, "git_service_execution")
+    report_refs = nested_mapping(git_service_execution, "report_refs")
+    open_review_report_path = resolve_artifact_path(
+        report_refs.get("open_review"),
+        base_dir=execution_report_path.parent,
+    )
+    workspace_dir = Path(str(execution_report.get("workspace_dir") or "")).resolve()
+    output_path = (
+        Path(args.output).resolve()
+        if args.output
+        else execution_report_path.parent
+        / Path(PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS["review_status"]).name
+    )
+    expected_graph_repository_report_path = (
+        workspace_dir
+        / ".platform"
+        / "graph_repository_review_status_report.json"
+    )
+    child_payload: dict[str, Any] | None = None
+    child_result: dict[str, Any] | None = None
+    child_diagnostic: Diagnostic | None = None
+    command: list[str] = []
+    if preflight_error_count == 0 and open_review_report_path is not None:
+        command = [
+            "graph-repository",
+            "review-status",
+            "--open-review-report",
+            str(open_review_report_path),
+            "--worktree-dir",
+            str(workspace_dir),
+            "--gh-bin",
+            args.gh_bin,
+            "--format",
+            "json",
+        ]
+        if args.repo:
+            command.extend(["--repo", args.repo])
+        child_payload, child_result, child_diagnostic = run_platform_json_command(
+            command
+        )
+        if child_diagnostic is not None:
+            diagnostics.append(child_diagnostic)
+
+    child_ok = child_payload is not None and child_payload.get("ok") is True
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and child_ok
+    review_state = (
+        child_payload.get("review_state")
+        if isinstance(child_payload, dict)
+        else "unknown"
+    )
+    graph_repository_report_path = product_candidate_promotion_child_report_path(
+        child_payload,
+        base_dir=workspace_dir,
+    )
+    review_merged = review_state == "merged"
+    operations = [
+        product_candidate_promotion_operation(
+            name="validate_product_promotion_execution",
+            status="ready" if preflight_error_count == 0 else "blocked",
+            reason=(
+                "product promotion execution is ready for review status"
+                if preflight_error_count == 0
+                else "product promotion execution validation failed"
+            ),
+            evidence=[str(execution_report_path)],
+        ),
+        product_candidate_promotion_operation(
+            name="inspect_review_status",
+            status=(
+                "succeeded"
+                if child_ok
+                else "skipped_preflight_failed"
+                if preflight_error_count > 0
+                else "failed"
+            ),
+            reason=(
+                "graph repository review status inspected"
+                if child_ok
+                else "validation failed before review status inspection"
+                if preflight_error_count > 0
+                else "graph repository review status inspection failed"
+            ),
+            evidence=command or ["graph-repository review-status"],
+        ),
+        product_candidate_promotion_operation(
+            name="publish_read_model",
+            status="ready" if review_merged else "blocked_until_review_merge",
+            reason=(
+                "review is merged and read-model publication may be requested"
+                if review_merged
+                else "read-model publication waits for merged review"
+            ),
+            evidence=[str(graph_repository_report_path or expected_graph_repository_report_path)],
+        ),
+    ]
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_CANDIDATE_PROMOTION_REVIEW_STATUS_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "promotion_execution_report_ref": str(execution_report_path),
+        "graph_repository_review_status_report_ref": None
+        if graph_repository_report_path is None
+        else str(graph_repository_report_path),
+        "ok": ok,
+        "workflow_lane": execution_report.get("workflow_lane"),
+        "candidate_id": execution_report.get("candidate_id"),
+        "candidate_branch": execution_report.get("candidate_branch"),
+        "workspace_dir": str(workspace_dir),
+        "review_state": review_state,
+        "review_decision": child_payload.get("review_decision")
+        if isinstance(child_payload, dict)
+        else None,
+        "pull_request": child_payload.get("pull_request")
+        if isinstance(child_payload, dict)
+        else {},
+        "graph_repository_command": command,
+        "graph_repository_command_result": child_result,
+        "graph_repository_review_status": {
+            "artifact_kind": child_payload.get("artifact_kind")
+            if isinstance(child_payload, dict)
+            else None,
+            "ok": child_payload.get("ok") if isinstance(child_payload, dict) else None,
+            "review_url": child_payload.get("review_url")
+            if isinstance(child_payload, dict)
+            else None,
+            "review_state": review_state,
+            "summary": child_payload.get("summary")
+            if isinstance(child_payload, dict)
+            else {},
+        },
+        "operations": operations,
+        "authority_boundary": {
+            "specspace_direct_git_write": False,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "publishes_read_models": False,
+            "canonical_spec_mutation_without_review": False,
+            "ontology_package_write": False,
+            "ontology_term_acceptance": False,
+            "private_artifact_publication": False,
+        },
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "ready_for_read_model_publication"
+            if ok and review_merged
+            else "waiting_for_review_merge"
+            if ok
+            else "failed",
+            "error_count": error_count,
+            "review_merged": review_merged,
+            "read_model_published": False,
+        },
+    }
+    if not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "candidate_id": str(report["candidate_id"] or ""),
+                        "review_state": str(review_state),
+                        "status": str(report["summary"]["status"]),
+                    }
+                ],
+                [
+                    ("candidate_id", "CANDIDATE"),
+                    ("review_state", "REVIEW"),
+                    ("status", "STATUS"),
+                ],
+            )
+        )
+    return 0 if ok else 1
+
+
+def product_candidate_promotion_publish_read_model(
+    args: argparse.Namespace,
+) -> int:
+    review_status_report_path = Path(args.review_status_report).resolve()
+    review_status_report = load_json_mapping(
+        review_status_report_path,
+        label="product candidate promotion review status report",
+    )
+    diagnostics = product_candidate_promotion_review_status_report_diagnostics(
+        review_status_report,
+        base_dir=review_status_report_path.parent,
+        require_merged=True,
+    )
+    preflight_error_count = sum(
+        1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+    )
+    graph_repository_report_path = resolve_artifact_path(
+        review_status_report.get("graph_repository_review_status_report_ref"),
+        base_dir=review_status_report_path.parent,
+    )
+    bundle_dir = Path(args.bundle_dir).resolve()
+    output_dir = Path(args.output_dir).resolve()
+    output_path = (
+        Path(args.output).resolve()
+        if args.output
+        else review_status_report_path.parent
+        / Path(
+            PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS[
+                "read_model_publication"
+            ]
+        ).name
+    )
+    child_payload: dict[str, Any] | None = None
+    child_result: dict[str, Any] | None = None
+    child_diagnostic: Diagnostic | None = None
+    command: list[str] = []
+    if preflight_error_count == 0 and graph_repository_report_path is not None:
+        command = [
+            "graph-repository",
+            "publish-read-model",
+            "--review-status-report",
+            str(graph_repository_report_path),
+            "--bundle-dir",
+            str(bundle_dir),
+            "--output-dir",
+            str(output_dir),
+            "--manifest-name",
+            args.manifest_name,
+            "--format",
+            "json",
+        ]
+        if args.dry_run:
+            command.append("--dry-run")
+        child_payload, child_result, child_diagnostic = run_platform_json_command(
+            command
+        )
+        if child_diagnostic is not None:
+            diagnostics.append(child_diagnostic)
+
+    child_ok = child_payload is not None and child_payload.get("ok") is True
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    published = (
+        child_ok
+        and not args.dry_run
+        and nested_mapping(child_payload, "summary").get("published") is True
+    )
+    graph_repository_publish_report_path = product_candidate_promotion_child_report_path(
+        child_payload,
+        base_dir=output_dir,
+    )
+    ok = error_count == 0 and child_ok
+    operations = [
+        product_candidate_promotion_operation(
+            name="validate_product_review_status",
+            status="ready" if preflight_error_count == 0 else "blocked",
+            reason=(
+                "product review is merged and ready for read-model publication"
+                if preflight_error_count == 0
+                else "product review status validation failed"
+            ),
+            evidence=[str(review_status_report_path)],
+        ),
+        product_candidate_promotion_operation(
+            name="publish_read_model",
+            status=(
+                "dry_run"
+                if child_ok and args.dry_run
+                else "succeeded"
+                if published
+                else "skipped_preflight_failed"
+                if preflight_error_count > 0
+                else "failed"
+            ),
+            reason=(
+                "public-safe read model published"
+                if published
+                else "dry_run"
+                if child_ok and args.dry_run
+                else "validation failed before read-model publication"
+                if preflight_error_count > 0
+                else "read-model publication failed"
+            ),
+            evidence=command or ["graph-repository publish-read-model"],
+        ),
+    ]
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_CANDIDATE_PROMOTION_READ_MODEL_PUBLICATION_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "product_review_status_report_ref": str(review_status_report_path),
+        "graph_repository_review_status_report_ref": None
+        if graph_repository_report_path is None
+        else str(graph_repository_report_path),
+        "graph_repository_publish_read_model_report_ref": None
+        if graph_repository_publish_report_path is None or not published
+        else str(graph_repository_publish_report_path),
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "workflow_lane": review_status_report.get("workflow_lane"),
+        "candidate_id": review_status_report.get("candidate_id"),
+        "candidate_branch": review_status_report.get("candidate_branch"),
+        "review_state": review_status_report.get("review_state"),
+        "bundle_dir": str(bundle_dir),
+        "output_dir": str(output_dir),
+        "manifest_name": args.manifest_name,
+        "graph_repository_command": command,
+        "graph_repository_command_result": child_result,
+        "graph_repository_publish_read_model": {
+            "artifact_kind": child_payload.get("artifact_kind")
+            if isinstance(child_payload, dict)
+            else None,
+            "ok": child_payload.get("ok") if isinstance(child_payload, dict) else None,
+            "dry_run": child_payload.get("dry_run")
+            if isinstance(child_payload, dict)
+            else None,
+            "review_state": child_payload.get("review_state")
+            if isinstance(child_payload, dict)
+            else review_status_report.get("review_state"),
+            "read_models_published": child_payload.get("read_models_published")
+            if isinstance(child_payload, dict)
+            else [],
+            "summary": child_payload.get("summary")
+            if isinstance(child_payload, dict)
+            else {},
+        },
+        "operations": operations,
+        "authority_boundary": {
+            "specspace_direct_git_write": False,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "publishes_read_models": published,
+            "canonical_spec_mutation_without_review": False,
+            "ontology_package_write": False,
+            "ontology_term_acceptance": False,
+            "private_artifact_publication": False,
+        },
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "published"
+            if published
+            else "dry_run"
+            if ok and args.dry_run
+            else "failed",
+            "error_count": error_count,
+            "review_merged": review_status_report.get("review_state") == "merged",
+            "read_model_published": published,
+            "published_manifest": (
+                str(output_dir / args.manifest_name) if published else None
+            ),
+        },
+    }
+    if not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "candidate_id": str(report["candidate_id"] or ""),
+                        "status": str(report["summary"]["status"]),
+                        "manifest": str(report["summary"]["published_manifest"] or ""),
+                    }
+                ],
+                [
+                    ("candidate_id", "CANDIDATE"),
+                    ("status", "STATUS"),
+                    ("manifest", "MANIFEST"),
                 ],
             )
         )
@@ -11399,6 +12067,115 @@ def build_parser() -> argparse.ArgumentParser:
     )
     product_candidate_promotion_execute_parser.set_defaults(
         func=product_candidate_promotion_execute
+    )
+
+    product_candidate_promotion_review_status_parser = (
+        product_candidate_promotion_subcommands.add_parser(
+            "review-status",
+            help=(
+                "Inspect post-review status for a product candidate promotion "
+                "execution."
+            ),
+        )
+    )
+    product_candidate_promotion_review_status_parser.add_argument(
+        "--execution-report",
+        required=True,
+        help=(
+            "Path to platform_product_candidate_promotion_execution_report."
+        ),
+    )
+    product_candidate_promotion_review_status_parser.add_argument(
+        "--repo",
+        help="Optional GitHub repository passed to gh as owner/name.",
+    )
+    product_candidate_promotion_review_status_parser.add_argument(
+        "--gh-bin",
+        default="gh",
+        help="GitHub CLI executable to use for review status inspection.",
+    )
+    product_candidate_promotion_review_status_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path where the product review status report JSON should "
+            "be written. Defaults to "
+            "product_candidate_promotion_review_status_report.json beside the "
+            "execution report."
+        ),
+    )
+    product_candidate_promotion_review_status_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the product review status report.",
+    )
+    product_candidate_promotion_review_status_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_candidate_promotion_review_status_parser.set_defaults(
+        func=product_candidate_promotion_review_status
+    )
+
+    product_candidate_promotion_publish_parser = (
+        product_candidate_promotion_subcommands.add_parser(
+            "publish-read-model",
+            help=(
+                "Publish a public-safe read model after the product candidate "
+                "review is merged."
+            ),
+        )
+    )
+    product_candidate_promotion_publish_parser.add_argument(
+        "--review-status-report",
+        required=True,
+        help=(
+            "Path to platform_product_candidate_promotion_review_status_report."
+        ),
+    )
+    product_candidate_promotion_publish_parser.add_argument(
+        "--bundle-dir",
+        required=True,
+        help="Public-safe bundle directory to publish as the read model.",
+    )
+    product_candidate_promotion_publish_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Target directory for the published read model.",
+    )
+    product_candidate_promotion_publish_parser.add_argument(
+        "--manifest-name",
+        default="artifact_manifest.json",
+        help="Manifest name inside the bundle and published output.",
+    )
+    product_candidate_promotion_publish_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate publication without copying the read model.",
+    )
+    product_candidate_promotion_publish_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path where the product read-model publication report JSON "
+            "should be written. Defaults to "
+            "product_candidate_promotion_read_model_publication_report.json "
+            "beside the review status report."
+        ),
+    )
+    product_candidate_promotion_publish_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the product read-model publication report.",
+    )
+    product_candidate_promotion_publish_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_candidate_promotion_publish_parser.set_defaults(
+        func=product_candidate_promotion_publish_read_model
     )
 
     deploy_parser = subcommands.add_parser(

@@ -225,15 +225,16 @@ The current execution order is:
 
 1. **SpecSpace product workspace workflow lane.** Show a compact read-only
    chain for intake, candidate graph, pre-SIB, repair session journal,
-   materialization, promotion gate, Platform promotion request, and Git Service
-   execution. The surface should answer "where are we and what is the next
-   handoff?" without granting write authority.
+   materialization, promotion gate, Platform promotion request, Git Service
+   execution, review status, and read-model publication. The surface should
+   answer "where are we and what is the next handoff?" without granting write
+   authority.
 2. **Git Service post-review and read-model orchestration.** Require the
    `idea_to_spec_repair_session` journal as the durable readiness handoff before
-   branch preparation, then extend the current
-   local executor path beyond `prepare-worktree`, `commit-worktree`, and
-   `open-review` so review status and read-model publication become explicit
-   service operations rather than separate operator knowledge.
+   branch preparation. The current local executor path now treats review status
+   and read-model publication as explicit service operations; the remaining
+   direction is hosted/queue-backed orchestration rather than separate operator
+   knowledge.
 3. **Real idea intake / event-storming entry point.** Add a user-facing intake
    source where a raw idea becomes structured actors, events, commands,
    policies, constraints, vocabulary questions, and context-completion
@@ -539,8 +540,13 @@ Completed Git Service foundation:
    request, candidate approval decision, deployment profile, and Git Service
    operation contract before preparing the candidate worktree/branch, creating
    the candidate commit, and optionally opening the review pull request.
-   Auto-merge and read-model publication remain separate post-review
-   operations.
+10. Platform now exposes product-aware post-review operations:
+   `product-candidate-promotion review-status` inspects a real review opened by
+   the controlled promotion execution, and
+   `product-candidate-promotion publish-read-model` publishes only the
+   public-safe read model after the review is merged. Auto-merge, Ontology
+   writes, accepted ontology terms, and private artifact publication remain out
+   of scope.
 
 The previous valuable implementation choices have partially landed: active
 candidate source, workspace route selection, controlled promotion UI, deployment
