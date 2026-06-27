@@ -11167,7 +11167,7 @@ def render_timeweb_compose(
         "  app:\n"
         f"    image: \"{ui_image_ref}\"\n"
         "    ports:\n"
-        "      - \"${SPECSPACE_UI_PORT:-5173}:80\"\n"
+        "      - \"80\"\n"
         "    depends_on:\n"
         "      - specspace-api\n\n"
         "  specspace-api:\n"
@@ -11417,6 +11417,15 @@ def list_values_for_service_section(
     return values
 
 
+def compose_port_publishes_host_port(port: str) -> bool:
+    value = port.strip().strip('"').strip("'")
+    if not value or value.startswith("["):
+        return ":" in value
+    if value.startswith("${"):
+        return True
+    return ":" in value
+
+
 def validate_timeweb_manifest_tree(
     root: Path,
     *,
@@ -11558,6 +11567,20 @@ def validate_timeweb_manifest_tree(
     api_expose = list_values_for_service_section(blocks, "specspace-api", "expose")
     if "8001" not in api_expose:
         errors.append(f"{target_file} specspace-api must expose internal port 8001")
+    app_ports = list_values_for_service_section(blocks, "app", "ports")
+    if "80" not in app_ports:
+        errors.append(
+            f"{target_file} app must publish container port 80 without a fixed "
+            "host port for Timeweb rolling deploys"
+        )
+    fixed_app_ports = [
+        port for port in app_ports if compose_port_publishes_host_port(port)
+    ]
+    if fixed_app_ports:
+        errors.append(
+            f"{target_file} app must not publish fixed host ports in Timeweb "
+            f"deploy: {', '.join(fixed_app_ports)}"
+        )
 
     return errors
 
