@@ -2604,6 +2604,23 @@ def path_arg_or_default(
     return (base_dir / default_rel).resolve()
 
 
+def input_path_arg_or_default(
+    value: str | None,
+    *,
+    base_dir: Path,
+    default_rel: str,
+) -> Path:
+    if value:
+        path = Path(value)
+        return path.resolve() if path.is_absolute() else (base_dir / path).resolve()
+    return (base_dir / default_rel).resolve()
+
+
+def input_path_arg(value: str, *, base_dir: Path) -> Path:
+    path = Path(value)
+    return path.resolve() if path.is_absolute() else (base_dir / path).resolve()
+
+
 def resolve_optional_path_arg(value: str | None) -> str | None:
     if not value:
         return None
@@ -4797,10 +4814,12 @@ def product_candidate_approval_expected_refs(
     default_rel: str | None,
     specgraph_dir: Path,
 ) -> tuple[str, ...]:
-    refs = {default_rel} if default_rel else set()
+    refs: set[str] = set()
     if raw_arg:
         refs.add(raw_arg)
         refs.add(str(resolved_path))
+    elif default_rel:
+        refs.add(default_rel)
     try:
         refs.add(resolved_path.relative_to(specgraph_dir).as_posix())
     except ValueError:
@@ -5188,7 +5207,21 @@ def product_candidate_approval_repaired_handoff_diagnostics(
         )
     for key in ("unresolved_ontology_gap_count", "unresolved_candidate_gap_count"):
         value = summary.get(key)
-        if isinstance(value, int) and value > 0:
+        if type(value) is not int or value < 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code=(
+                        "product_candidate_approval_repaired_handoff_gap_count_invalid"
+                    ),
+                    subject=f"repaired_handoff.summary.{key}",
+                    message=(
+                        "repaired handoff unresolved gap counts must be "
+                        "non-negative integers"
+                    ),
+                )
+            )
+        elif value > 0:
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
@@ -5499,8 +5532,12 @@ def build_product_candidate_approval_gate_report(
         diagnostics.extend(
             product_candidate_approval_repair_session_diagnostics(
                 repair_session,
-                expected_active_candidate_refs=expected_active_candidate_refs,
-                expected_promotion_gate_refs=expected_promotion_gate_refs,
+                expected_active_candidate_refs=(
+                    expected_active_candidate_refs if active_candidate is not None else ()
+                ),
+                expected_promotion_gate_refs=(
+                    expected_promotion_gate_refs if active_candidate is not None else ()
+                ),
             )
         )
     if promotion_gate is not None:
@@ -5703,33 +5740,37 @@ def build_product_candidate_approval_gate_report(
 def product_candidate_approval_gate(args: argparse.Namespace) -> int:
     deployment_profile_path = Path(args.deployment_profile)
     specgraph_dir = Path(args.specgraph_dir).resolve()
-    approval_intents_path = path_arg_or_default(
+    approval_intents_path = input_path_arg_or_default(
         args.approval_intents,
         base_dir=specgraph_dir,
         default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["approval_intents"],
     )
-    repair_session_path = path_arg_or_default(
+    repair_session_path = input_path_arg_or_default(
         args.repair_session,
         base_dir=specgraph_dir,
         default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
     )
     active_candidate_path = (
-        Path(args.active_candidate).resolve() if args.active_candidate else None
+        input_path_arg(args.active_candidate, base_dir=specgraph_dir)
+        if args.active_candidate
+        else None
     )
-    promotion_gate_path = path_arg_or_default(
+    promotion_gate_path = input_path_arg_or_default(
         args.promotion_gate,
         base_dir=specgraph_dir,
         default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
     )
     repaired_handoff_path = (
-        Path(args.repaired_handoff).resolve() if args.repaired_handoff else None
+        input_path_arg(args.repaired_handoff, base_dir=specgraph_dir)
+        if args.repaired_handoff
+        else None
     )
-    repair_execution_path = path_arg_or_default(
+    repair_execution_path = input_path_arg_or_default(
         args.repair_execution,
         base_dir=specgraph_dir,
         default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_execution"],
     )
-    repair_publication_path = path_arg_or_default(
+    repair_publication_path = input_path_arg_or_default(
         args.repair_publication,
         base_dir=specgraph_dir,
         default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_publication"],

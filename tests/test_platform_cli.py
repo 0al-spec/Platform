@@ -516,6 +516,7 @@ class PlatformCliTests(unittest.TestCase):
         repair_session_ready_for_candidate_approval: bool = True,
         include_repaired_handoff: bool = False,
         repaired_handoff_stale_ref: bool = False,
+        repaired_handoff_stale_repair_session_ref: bool = False,
         execution_ok: bool = True,
         execution_dry_run: bool = False,
         publication_ok: bool = True,
@@ -769,7 +770,11 @@ class PlatformCliTests(unittest.TestCase):
                     },
                     "repaired_repair_session": {
                         "artifact_kind": "idea_to_spec_repair_session_journal",
-                        "source_ref": "runs/repaired_idea_to_spec_repair_session.json",
+                        "source_ref": (
+                            "runs/idea_to_spec_repair_session.json"
+                            if repaired_handoff_stale_repair_session_ref
+                            else "runs/repaired_idea_to_spec_repair_session.json"
+                        ),
                         "summary": repaired_repair_session["summary"],
                     },
                     "repaired_promotion_gate": {
@@ -3822,7 +3827,6 @@ workspaces:
                 "specs/nodes/SG-SPEC-CANDIDATE.yaml",
                 "--format",
                 "json",
-                cwd=specgraph_dir,
             )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -3897,6 +3901,14 @@ workspaces:
             payload["source_refs"]["promotion_gate"],
             "runs/repaired_idea_to_spec_promotion_gate.json",
         )
+        self.assertEqual(
+            payload["source_refs"]["active_candidate"],
+            "runs/repaired_active_idea_to_spec_candidate.json",
+        )
+        self.assertEqual(
+            payload["source_refs"]["repaired_handoff"],
+            "runs/repaired_candidate_promotion_handoff_report.json",
+        )
 
     def test_product_candidate_approval_gate_rejects_stale_repaired_handoff_ref(
         self,
@@ -3944,6 +3956,117 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn(
             "product_candidate_approval_repaired_handoff_ref_stale",
+            codes,
+        )
+        self.assertFalse(payload["ready_to_materialize"])
+
+    def test_product_candidate_approval_gate_rejects_stale_handoff_repair_session_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+                repaired_handoff_stale_repair_session_ref=True,
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--active-candidate",
+                "runs/repaired_active_idea_to_spec_candidate.json",
+                "--repair-session",
+                "runs/repaired_idea_to_spec_repair_session.json",
+                "--promotion-gate",
+                "runs/repaired_idea_to_spec_promotion_gate.json",
+                "--repaired-handoff",
+                "runs/repaired_candidate_promotion_handoff_report.json",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_approval_repaired_handoff_ref_stale",
+            codes,
+        )
+        subjects = {diagnostic["subject"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            (
+                "repaired_handoff.output_artifacts."
+                "repaired_repair_session.source_ref"
+            ),
+            subjects,
+        )
+        self.assertFalse(payload["ready_to_materialize"])
+
+    def test_product_candidate_approval_gate_rejects_invalid_handoff_gap_count(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+            )
+            handoff_path = (
+                specgraph_dir / "runs" / "repaired_candidate_promotion_handoff_report.json"
+            )
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            handoff["summary"]["unresolved_candidate_gap_count"] = "0"
+            handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--active-candidate",
+                "runs/repaired_active_idea_to_spec_candidate.json",
+                "--repair-session",
+                "runs/repaired_idea_to_spec_repair_session.json",
+                "--promotion-gate",
+                "runs/repaired_idea_to_spec_promotion_gate.json",
+                "--repaired-handoff",
+                "runs/repaired_candidate_promotion_handoff_report.json",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_approval_repaired_handoff_gap_count_invalid",
             codes,
         )
         self.assertFalse(payload["ready_to_materialize"])

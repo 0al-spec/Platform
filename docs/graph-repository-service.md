@@ -258,7 +258,9 @@ scripts/platform.py product-candidate-approval gate \
 
 When SpecGraph has produced the repaired promotion handoff from proposal `0177`,
 the gate can validate that repaired chain directly instead of comparing the
-SpecSpace intent against the default active-candidate and promotion-gate refs:
+SpecSpace intent against the default active-candidate and promotion-gate refs.
+Relative artifact paths in this invocation are resolved under `--specgraph-dir`,
+so the command can be run from the Platform checkout:
 
 ```bash
 scripts/platform.py product-candidate-approval gate \
