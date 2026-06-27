@@ -242,7 +242,20 @@ PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS = {
 }
 PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS = {
     "request": "runs/graph_repository_promotion_request.json",
+    "execution": "runs/product_candidate_promotion_execution_report.json",
 }
+PRODUCT_CANDIDATE_PROMOTION_EXECUTION_REPORT_KIND = (
+    "platform_product_candidate_promotion_execution_report"
+)
+PRODUCT_CANDIDATE_PROMOTION_REQUEST_AUTHORITY_FALSE_FIELDS = (
+    "executes_git_commands",
+    "creates_commits",
+    "opens_pull_requests",
+    "merges_pull_requests",
+    "writes_ontology_packages",
+    "mutates_canonical_specs",
+    "publishes_read_models",
+)
 PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS = (
     "canonical_mutations_allowed",
     "ontology_writes_allowed",
@@ -6561,6 +6574,91 @@ def product_candidate_promotion_decision_diagnostics(
     return diagnostics
 
 
+def product_candidate_promotion_request_execution_diagnostics(
+    promotion_request: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if promotion_request.get("artifact_kind") != (
+        "platform_graph_repository_promotion_request"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_request_kind_mismatch",
+                subject="promotion_request.artifact_kind",
+                message="expected platform_graph_repository_promotion_request",
+            )
+        )
+    if promotion_request.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_request_not_ok",
+                subject="promotion_request.ok",
+                message="promotion request must be ok before product execution",
+            )
+        )
+    if promotion_request.get("workflow_lane") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_request_workflow_mismatch",
+                subject="promotion_request.workflow_lane",
+                message="product promotion execution requires product_idea_to_spec",
+            )
+        )
+    if promotion_request.get("target_repository_role") != "product_spec_workspace":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_request_repository_role_mismatch",
+                subject="promotion_request.target_repository_role",
+                message="product promotion execution requires product_spec_workspace",
+            )
+        )
+    if promotion_request.get("authority_profile") != "workspace_owner_controlled":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_request_authority_profile_mismatch",
+                subject="promotion_request.authority_profile",
+                message="product promotion execution requires workspace_owner_controlled",
+            )
+        )
+    for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
+        if promotion_request.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_request_authority_expanded",
+                    subject=f"promotion_request.{field}",
+                    message=f"{field} must be exactly false before execution",
+                )
+            )
+    authority_boundary = promotion_request.get("authority_boundary")
+    if not isinstance(authority_boundary, dict):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_request_authority_missing",
+                subject="promotion_request.authority_boundary",
+                message="promotion request must declare authority boundary",
+            )
+        )
+        return diagnostics
+    for field in PRODUCT_CANDIDATE_PROMOTION_REQUEST_AUTHORITY_FALSE_FIELDS:
+        if authority_boundary.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_request_authority_expanded",
+                    subject=f"promotion_request.authority_boundary.{field}",
+                    message=f"{field} must be exactly false before execution",
+                )
+            )
+    return diagnostics
+
+
 def product_candidate_promotion_plan_runs_dir(
     *,
     plan_path: Path,
@@ -6883,6 +6981,342 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
             )
         )
     return 0 if error_count == 0 else 1
+
+
+def product_candidate_promotion_materialized_source_dir(
+    *,
+    explicit: str | None,
+    plan_path: Path | None,
+    plan: dict[str, Any],
+) -> Path | None:
+    if explicit:
+        return Path(explicit).resolve()
+    if plan_path is None:
+        return None
+    runs_dir = product_candidate_promotion_plan_runs_dir(
+        plan_path=plan_path,
+        plan=plan,
+    )
+    if runs_dir is None:
+        return None
+    return runs_dir / "materialized_candidate_specs"
+
+
+def product_candidate_promotion_operation(
+    *,
+    name: str,
+    status: str,
+    reason: str,
+    evidence: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "reason": reason,
+        "evidence": evidence or [],
+    }
+
+
+def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
+    contract_path = Path(args.contract).resolve()
+    promotion_request_path = Path(args.promotion_request).resolve()
+    approval_decision_path = Path(args.approval_decision).resolve()
+    deployment_profile_path = Path(args.deployment_profile).resolve()
+    repository_dir = Path(args.repository_dir).resolve()
+    workspace_dir = Path(args.workspace_dir).resolve()
+    contract = load_json_mapping(contract_path, label="git service contract")
+    promotion_request = load_json_mapping(
+        promotion_request_path,
+        label="graph repository promotion request",
+    )
+    approval_decision = load_json_mapping(
+        approval_decision_path,
+        label="candidate approval decision",
+    )
+    deployment_profile = load_json_mapping(
+        deployment_profile_path,
+        label="deployment profile",
+    )
+    plan_path = resolve_artifact_path(
+        promotion_request.get("plan_ref"),
+        base_dir=promotion_request_path.parent,
+    )
+    plan: dict[str, Any] = {}
+    if plan_path is not None and plan_path.is_file():
+        plan = load_json_mapping(plan_path, label="graph repository execution plan")
+    materialized_source_dir = product_candidate_promotion_materialized_source_dir(
+        explicit=args.materialized_source_dir,
+        plan_path=plan_path,
+        plan=plan,
+    )
+    diagnostics = [
+        *product_candidate_promotion_request_execution_diagnostics(
+            promotion_request,
+        ),
+        *product_candidate_promotion_decision_diagnostics(approval_decision),
+        *git_service_promotion_request_diagnostics(
+            contract=contract,
+            promotion_request=promotion_request,
+        ),
+        *git_service_candidate_approval_diagnostics(
+            approval_decision=approval_decision,
+            promotion_request=promotion_request,
+        ),
+        *git_service_deployment_profile_diagnostics(
+            profile=deployment_profile,
+            promotion_request=promotion_request,
+            dry_run=args.dry_run,
+        ),
+    ]
+    if plan_path is None or not plan_path.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_plan_missing",
+                subject="promotion_request.plan_ref",
+                message="promotion request plan_ref must point at an execution plan",
+            )
+        )
+    else:
+        diagnostics.extend(
+            product_candidate_promotion_plan_source_diagnostics(
+                plan_path=plan_path,
+                plan=plan,
+                approval_decision_path=approval_decision_path,
+                approval_decision=approval_decision,
+            )
+        )
+
+    output_path = (
+        Path(args.output).resolve()
+        if args.output
+        else promotion_request_path.parent
+        / Path(PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS["execution"]).name
+    )
+    git_service_output_path = (
+        Path(args.git_service_output).resolve()
+        if args.git_service_output
+        else output_path.parent / "git_service_promotion_execution_report.json"
+        if args.dry_run
+        else workspace_dir / ".platform" / "git_service_promotion_execution_report.json"
+    )
+    candidate_id = str(promotion_request.get("candidate_id") or "")
+    child_payload: dict[str, Any] | None = None
+    child_result: dict[str, Any] | None = None
+    child_diagnostic: Diagnostic | None = None
+    preflight_error_count = sum(
+        1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+    )
+    git_service_command = [
+        "git-service",
+        "execute-promotion",
+        "--contract",
+        str(contract_path),
+        "--promotion-request",
+        str(promotion_request_path),
+        "--approval-decision",
+        str(approval_decision_path),
+        "--deployment-profile",
+        str(deployment_profile_path),
+        "--repository-dir",
+        str(repository_dir),
+        "--workspace-dir",
+        str(workspace_dir),
+        "--output",
+        str(git_service_output_path),
+        "--format",
+        "json",
+    ]
+    if materialized_source_dir is not None:
+        git_service_command.extend(
+            ["--materialized-source-dir", str(materialized_source_dir)]
+        )
+    if args.message:
+        git_service_command.extend(["--message", args.message])
+    if args.repo:
+        git_service_command.extend(["--repo", args.repo])
+    if args.gh_bin:
+        git_service_command.extend(["--gh-bin", args.gh_bin])
+    if args.open_review_dry_run:
+        git_service_command.append("--open-review-dry-run")
+    if args.dry_run:
+        git_service_command.append("--dry-run")
+
+    if preflight_error_count == 0:
+        child_payload, child_result, child_diagnostic = run_platform_json_command(
+            git_service_command
+        )
+        if child_diagnostic is not None:
+            diagnostics.append(child_diagnostic)
+
+    child_ok = child_payload is not None and child_payload.get("ok") is True
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and child_ok
+    child_operations = []
+    if isinstance(child_payload, dict) and isinstance(child_payload.get("operations"), list):
+        child_operations = [
+            operation
+            for operation in child_payload.get("operations", [])
+            if isinstance(operation, dict)
+        ]
+    statuses = {
+        str(operation.get("name")): str(operation.get("status"))
+        for operation in child_operations
+    }
+    worktree_prepared = statuses.get("prepare_worktree") in {"succeeded", "dry_run"}
+    commit_created = statuses.get("commit_candidate") == "succeeded"
+    review_opened = statuses.get("open_review") == "succeeded"
+    operations = [
+        product_candidate_promotion_operation(
+            name="validate_product_promotion_handoff",
+            status="ready" if preflight_error_count == 0 else "blocked",
+            reason=(
+                "promotion request and candidate approval decision are valid"
+                if preflight_error_count == 0
+                else "promotion handoff validation failed"
+            ),
+            evidence=[
+                str(promotion_request_path),
+                str(approval_decision_path),
+            ],
+        ),
+        product_candidate_promotion_operation(
+            name="execute_git_service_promotion",
+            status=(
+                "dry_run"
+                if child_ok and args.dry_run
+                else "succeeded"
+                if child_ok
+                else "skipped_preflight_failed"
+                if preflight_error_count > 0
+                else "failed"
+            ),
+            reason=(
+                "Git Service promotion executor completed"
+                if child_ok and not args.dry_run
+                else "dry_run"
+                if child_ok and args.dry_run
+                else "validation failed before Git Service execution"
+                if preflight_error_count > 0
+                else "Git Service promotion executor failed"
+            ),
+            evidence=["git-service execute-promotion"],
+        ),
+        product_candidate_promotion_operation(
+            name="publish_read_model",
+            status="blocked_until_review_merge",
+            reason=(
+                "read model publication is a separate post-review step after PR merge"
+            ),
+            evidence=["git-service finalize-promotion"],
+        ),
+    ]
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_CANDIDATE_PROMOTION_EXECUTION_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "promotion_request_ref": str(promotion_request_path),
+        "approval_decision_ref": str(approval_decision_path),
+        "deployment_profile_ref": str(deployment_profile_path),
+        "contract_ref": str(contract_path),
+        "graph_repository_plan_ref": None if plan_path is None else str(plan_path),
+        "git_service_execution_report_ref": str(git_service_output_path),
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "open_review_dry_run": args.open_review_dry_run,
+        "workflow_lane": promotion_request.get("workflow_lane"),
+        "candidate_id": candidate_id,
+        "candidate_branch": promotion_request.get("candidate_branch"),
+        "repository_dir": str(repository_dir),
+        "workspace_dir": str(workspace_dir),
+        "materialized_source_dir": (
+            None if materialized_source_dir is None else str(materialized_source_dir)
+        ),
+        "git_service_command": git_service_command,
+        "git_service_command_result": child_result,
+        "git_service_execution": {
+            "artifact_kind": child_payload.get("artifact_kind")
+            if isinstance(child_payload, dict)
+            else None,
+            "ok": child_payload.get("ok") if isinstance(child_payload, dict) else None,
+            "dry_run": child_payload.get("dry_run")
+            if isinstance(child_payload, dict)
+            else None,
+            "open_review_dry_run": child_payload.get("open_review_dry_run")
+            if isinstance(child_payload, dict)
+            else None,
+            "candidate_ref": child_payload.get("candidate_ref")
+            if isinstance(child_payload, dict)
+            else None,
+            "report_refs": child_payload.get("report_refs")
+            if isinstance(child_payload, dict)
+            else {},
+            "operations": child_operations,
+            "copied_materialized_files": child_payload.get("copied_materialized_files")
+            if isinstance(child_payload, dict)
+            else [],
+        },
+        "operations": operations,
+        "authority_boundary": {
+            "specspace_direct_git_write": False,
+            "controlled_git_service_execution": not args.dry_run and child_ok,
+            "creates_candidate_worktree_or_branch": (
+                not args.dry_run and worktree_prepared
+            ),
+            "creates_candidate_commit": not args.dry_run and commit_created,
+            "opens_pull_requests": (
+                not args.dry_run and not args.open_review_dry_run and review_opened
+            ),
+            "merges_pull_requests": False,
+            "publishes_read_models": False,
+            "canonical_spec_mutation_without_review": False,
+            "ontology_package_write": False,
+            "ontology_term_acceptance": False,
+            "private_artifact_publication": False,
+        },
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "completed"
+            if ok and not args.dry_run
+            else "dry_run"
+            if ok and args.dry_run
+            else "failed",
+            "error_count": error_count,
+            "child_operation_count": len(child_operations),
+            "worktree_prepared": worktree_prepared,
+            "commit_created": commit_created,
+            "review_opened": review_opened,
+            "read_model_published": False,
+        },
+    }
+    if not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "candidate_id": candidate_id,
+                        "status": report["summary"]["status"],
+                        "branch": str(promotion_request.get("candidate_branch") or ""),
+                    }
+                ],
+                [
+                    ("candidate_id", "CANDIDATE"),
+                    ("status", "STATUS"),
+                    ("branch", "BRANCH"),
+                ],
+            )
+        )
+    return 0 if ok else 1
 
 
 def graph_repository_promotion_path_allowed(raw_path: str) -> bool:
@@ -10860,6 +11294,111 @@ def build_parser() -> argparse.ArgumentParser:
     )
     product_candidate_promotion_request_parser.set_defaults(
         func=product_candidate_promotion_request
+    )
+
+    product_candidate_promotion_execute_parser = (
+        product_candidate_promotion_subcommands.add_parser(
+            "execute",
+            help=(
+                "Run controlled Git Service promotion execution from a ready "
+                "product promotion request."
+            ),
+        )
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--contract",
+        default=str(REPO_ROOT / "git-service-operation-contract.example.json"),
+        help="Path to a Git Service operation contract JSON artifact.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--promotion-request",
+        required=True,
+        help="Path to a platform_graph_repository_promotion_request artifact.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--approval-decision",
+        required=True,
+        help="Path to a candidate_approval_decision artifact.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--deployment-profile",
+        default=str(DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE),
+        help=(
+            "Path to a platform_deployment_profile artifact. Defaults to the "
+            "product idea-to-spec workbench profile."
+        ),
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--repository-dir",
+        required=True,
+        help="Local Git checkout that owns the candidate worktree.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--workspace-dir",
+        required=True,
+        help="Target directory for the candidate Git worktree.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--materialized-source-dir",
+        help=(
+            "Directory containing materialized candidate files. Defaults to "
+            "runs/materialized_candidate_specs beside the execution plan runs_dir."
+        ),
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--message",
+        help="Commit message. Defaults to the promotion request review title.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--repo",
+        help="Optional GitHub repository passed to gh as owner/name.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--gh-bin",
+        default="gh",
+        help="GitHub CLI executable to use for open-review.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--git-service-output",
+        help=(
+            "Optional path for the inner Git Service execution report. Defaults "
+            "to a sibling report beside the product execution report in dry-run "
+            "mode and to .platform/git_service_promotion_execution_report.json "
+            "in the candidate worktree otherwise."
+        ),
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--open-review-dry-run",
+        action="store_true",
+        help="Validate commit/open-review flow without pushing or creating a PR.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate inputs and render the planned execution without Git writes.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path where the product promotion execution report JSON "
+            "should be written. Defaults to "
+            "product_candidate_promotion_execution_report.json next to the "
+            "promotion request."
+        ),
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the product promotion execution report.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_candidate_promotion_execute_parser.set_defaults(
+        func=product_candidate_promotion_execute
     )
 
     deploy_parser = subcommands.add_parser(

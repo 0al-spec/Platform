@@ -534,6 +534,13 @@ Completed Git Service foundation:
    The gate requires an approval-ready repair session plus successful
    repair-rerun execution/publication reports and still does not start Git
    Service promotion.
+9. Platform now exposes `product-candidate-promotion execute`, a product-aware
+   wrapper over `git-service execute-promotion`. It revalidates the promotion
+   request, candidate approval decision, deployment profile, and Git Service
+   operation contract before preparing the candidate worktree/branch, creating
+   the candidate commit, and optionally opening the review pull request.
+   Auto-merge and read-model publication remain separate post-review
+   operations.
 
 The previous valuable implementation choices have partially landed: active
 candidate source, workspace route selection, controlled promotion UI, deployment
