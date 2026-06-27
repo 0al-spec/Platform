@@ -514,6 +514,9 @@ class PlatformCliTests(unittest.TestCase):
         intent_repair_session_ref: str = "runs/idea_to_spec_repair_session.json",
         intent_promotion_gate_ref: str = "runs/idea_to_spec_promotion_gate.json",
         repair_session_ready_for_candidate_approval: bool = True,
+        include_repaired_handoff: bool = False,
+        repaired_handoff_stale_ref: bool = False,
+        repaired_handoff_stale_repair_session_ref: bool = False,
         execution_ok: bool = True,
         execution_dry_run: bool = False,
         publication_ok: bool = True,
@@ -682,6 +685,126 @@ class PlatformCliTests(unittest.TestCase):
             "platform_product_repair_rerun_execution_report.json": execution_report,
             "platform_product_repair_rerun_publication_report.json": publication_report,
         }
+        if include_repaired_handoff:
+            active_candidate = {
+                "artifact_kind": "active_idea_to_spec_candidate",
+                "schema_version": 1,
+                "contract_ref": "specgraph.idea-to-spec.active-candidate-source.v0.1",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "authority_boundary": {
+                    "may_create_branch_or_commit": False,
+                    "may_execute_prompt_agent": False,
+                    "may_mark_candidate_graph_accepted": False,
+                    "may_mutate_candidate_source_artifacts": False,
+                    "may_mutate_canonical_specs": False,
+                    "may_open_pull_request": False,
+                    "may_publish_read_model": False,
+                    "may_write_ontology_lockfile": False,
+                    "may_write_ontology_package": False,
+                },
+                "readiness": {
+                    "ready": True,
+                    "review_state": "active_candidate_ready",
+                    "blocked_by": [],
+                },
+                "summary": {
+                    "candidate_id": candidate_id,
+                    "workspace_route": f"/{workspace_id}",
+                    "status": "active_candidate_ready",
+                    "promotion_path_count": 1,
+                },
+            }
+            repaired_promotion_gate = {
+                **promotion_gate,
+                "readiness": {
+                    "ready": True,
+                    "review_state": "ready_for_platform_promotion_request",
+                    "blocked_by": [],
+                },
+            }
+            repaired_repair_session = json.loads(
+                (runs_dir / "idea_to_spec_repair_session.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            repaired_repair_session["source_artifacts"]["active_candidate"] = {
+                "source_ref": "runs/repaired_active_idea_to_spec_candidate.json"
+            }
+            repaired_repair_session["source_artifacts"]["promotion_gate"] = {
+                "source_ref": "runs/repaired_idea_to_spec_promotion_gate.json"
+            }
+            handoff_active_ref = (
+                "runs/active_idea_to_spec_candidate.json"
+                if repaired_handoff_stale_ref
+                else "runs/repaired_active_idea_to_spec_candidate.json"
+            )
+            repaired_handoff = {
+                "artifact_kind": "repaired_candidate_promotion_handoff_report",
+                "schema_version": 1,
+                "contract_ref": (
+                    "specgraph.idea-to-spec.repaired-candidate-promotion-handoff.v0.1"
+                ),
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "readiness": {
+                    "ready": True,
+                    "review_state": "repaired_candidate_promotion_handoff_ready",
+                    "blocked_by": [],
+                },
+                "summary": {
+                    "status": "repaired_candidate_promotion_handoff_ready",
+                    "ready_for_candidate_approval": True,
+                    "ready_for_platform_promotion": False,
+                    "unresolved_candidate_gap_count": 0,
+                    "unresolved_ontology_gap_count": 0,
+                    "resolved_candidate_gap_count": 1,
+                    "resolved_ontology_gap_count": 1,
+                    "removed_gap_count": 2,
+                },
+                "output_artifacts": {
+                    "repaired_active_candidate": {
+                        "artifact_kind": "active_idea_to_spec_candidate",
+                        "source_ref": handoff_active_ref,
+                        "summary": active_candidate["summary"],
+                    },
+                    "repaired_repair_session": {
+                        "artifact_kind": "idea_to_spec_repair_session_journal",
+                        "source_ref": (
+                            "runs/idea_to_spec_repair_session.json"
+                            if repaired_handoff_stale_repair_session_ref
+                            else "runs/repaired_idea_to_spec_repair_session.json"
+                        ),
+                        "summary": repaired_repair_session["summary"],
+                    },
+                    "repaired_promotion_gate": {
+                        "artifact_kind": "idea_to_spec_promotion_gate",
+                        "source_ref": "runs/repaired_idea_to_spec_promotion_gate.json",
+                        "summary": repaired_promotion_gate["summary"],
+                    },
+                },
+                "authority_boundary": {
+                    "may_accept_ontology_terms": False,
+                    "may_create_branch_or_commit": False,
+                    "may_execute_prompt_agent": False,
+                    "may_mark_candidate_graph_accepted": False,
+                    "may_materialize_candidate_approval_decision": False,
+                    "may_mutate_candidate_source_artifacts": False,
+                    "may_mutate_canonical_specs": False,
+                    "may_open_pull_request": False,
+                    "may_publish_read_model": False,
+                    "may_write_ontology_lockfile": False,
+                    "may_write_ontology_package": False,
+                },
+            }
+            artifacts.update(
+                {
+                    "repaired_active_idea_to_spec_candidate.json": active_candidate,
+                    "repaired_idea_to_spec_promotion_gate.json": repaired_promotion_gate,
+                    "repaired_idea_to_spec_repair_session.json": repaired_repair_session,
+                    "repaired_candidate_promotion_handoff_report.json": repaired_handoff,
+                }
+            )
         for filename, payload in artifacts.items():
             (runs_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
 
@@ -3704,7 +3827,6 @@ workspaces:
                 "specs/nodes/SG-SPEC-CANDIDATE.yaml",
                 "--format",
                 "json",
-                cwd=specgraph_dir,
             )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -3718,6 +3840,236 @@ workspaces:
             payload["selected_intent"]["promotion_gate_ref"],
             "inputs/idea_to_spec_promotion_gate.json",
         )
+
+    def test_product_candidate_approval_gate_accepts_repaired_handoff_inputs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--active-candidate",
+                "runs/repaired_active_idea_to_spec_candidate.json",
+                "--repair-session",
+                "runs/repaired_idea_to_spec_repair_session.json",
+                "--promotion-gate",
+                "runs/repaired_idea_to_spec_promotion_gate.json",
+                "--repaired-handoff",
+                "runs/repaired_candidate_promotion_handoff_report.json",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+                cwd=specgraph_dir,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ready_to_materialize"])
+        self.assertEqual(payload["summary"]["candidate_id"], "idea-alpha")
+        source_keys = {item["key"] for item in payload["source_artifacts"]}
+        self.assertIn("active_idea_to_spec_candidate", source_keys)
+        self.assertIn("repaired_candidate_promotion_handoff_report", source_keys)
+        operations = {item["name"]: item for item in payload["operations"]}
+        self.assertEqual(
+            operations["validate_repaired_candidate_handoff"]["status"],
+            "ready",
+        )
+        self.assertEqual(
+            payload["source_refs"]["repair_session"],
+            "runs/repaired_idea_to_spec_repair_session.json",
+        )
+        self.assertEqual(
+            payload["source_refs"]["promotion_gate"],
+            "runs/repaired_idea_to_spec_promotion_gate.json",
+        )
+        self.assertEqual(
+            payload["source_refs"]["active_candidate"],
+            "runs/repaired_active_idea_to_spec_candidate.json",
+        )
+        self.assertEqual(
+            payload["source_refs"]["repaired_handoff"],
+            "runs/repaired_candidate_promotion_handoff_report.json",
+        )
+
+    def test_product_candidate_approval_gate_rejects_stale_repaired_handoff_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+                repaired_handoff_stale_ref=True,
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--active-candidate",
+                "runs/repaired_active_idea_to_spec_candidate.json",
+                "--repair-session",
+                "runs/repaired_idea_to_spec_repair_session.json",
+                "--promotion-gate",
+                "runs/repaired_idea_to_spec_promotion_gate.json",
+                "--repaired-handoff",
+                "runs/repaired_candidate_promotion_handoff_report.json",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+                cwd=specgraph_dir,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_approval_repaired_handoff_ref_stale",
+            codes,
+        )
+        self.assertFalse(payload["ready_to_materialize"])
+
+    def test_product_candidate_approval_gate_rejects_stale_handoff_repair_session_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+                repaired_handoff_stale_repair_session_ref=True,
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--active-candidate",
+                "runs/repaired_active_idea_to_spec_candidate.json",
+                "--repair-session",
+                "runs/repaired_idea_to_spec_repair_session.json",
+                "--promotion-gate",
+                "runs/repaired_idea_to_spec_promotion_gate.json",
+                "--repaired-handoff",
+                "runs/repaired_candidate_promotion_handoff_report.json",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_approval_repaired_handoff_ref_stale",
+            codes,
+        )
+        subjects = {diagnostic["subject"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            (
+                "repaired_handoff.output_artifacts."
+                "repaired_repair_session.source_ref"
+            ),
+            subjects,
+        )
+        self.assertFalse(payload["ready_to_materialize"])
+
+    def test_product_candidate_approval_gate_rejects_invalid_handoff_gap_count(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+            )
+            handoff_path = (
+                specgraph_dir / "runs" / "repaired_candidate_promotion_handoff_report.json"
+            )
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            handoff["summary"]["unresolved_candidate_gap_count"] = "0"
+            handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--active-candidate",
+                "runs/repaired_active_idea_to_spec_candidate.json",
+                "--repair-session",
+                "runs/repaired_idea_to_spec_repair_session.json",
+                "--promotion-gate",
+                "runs/repaired_idea_to_spec_promotion_gate.json",
+                "--repaired-handoff",
+                "runs/repaired_candidate_promotion_handoff_report.json",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_approval_repaired_handoff_gap_count_invalid",
+            codes,
+        )
+        self.assertFalse(payload["ready_to_materialize"])
 
     def test_product_candidate_approval_materialize_rejects_blocked_gate(
         self,
