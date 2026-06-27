@@ -310,6 +310,10 @@ Use `deploy timeweb-render` to create a Timeweb Cloud Apps manifest-only deploy
 tree. That profile requires digest-pinned SpecSpace API/UI image refs and
 contains no source files, bind mounts, build sections, or required environment
 interpolation.
+The Timeweb port contract is intentionally narrow: the public `app` service
+uses `8080:80`, while `specspace-api` is internal-only on exposed container port
+`8001`. Do not publish API host ports, use Timeweb-reserved `80:80`, or return
+to the old `5173:80` binding.
 `--image-lock` accepts a JSON `platform_service_image_lock` artifact from a
 service-producing CI job. The lock carries digest-pinned image refs for
 `specspace_api` and `specspace_ui`, letting Platform render one composite deploy
