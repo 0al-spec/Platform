@@ -35,5 +35,5 @@ services:
       - "team-decision-log=https://specgraph.tech"
       - --specpm-registry-url
       - "https://specpm.dev"
-    ports:
-      - "${SPECSPACE_API_PORT:-8001}:8001"
+    expose:
+      - "8001"
