@@ -250,6 +250,9 @@ PRODUCT_CANDIDATE_APPROVAL_DECISION_KIND = "candidate_approval_decision"
 PRODUCT_CANDIDATE_APPROVAL_DECISION_CONTRACT_REF = (
     "specgraph.idea-to-spec.candidate-approval-decision.v0.1"
 )
+PRODUCT_CANDIDATE_APPROVAL_EXECUTION_REPORT_KIND = (
+    "platform_candidate_approval_execution_report"
+)
 PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS = {
     "approval_intents": "runs/idea_to_spec_candidate_approval_intents.json",
     "repair_session": "runs/idea_to_spec_repair_session.json",
@@ -263,6 +266,7 @@ PRODUCT_CANDIDATE_APPROVAL_REPAIRED_HANDOFF_KIND = (
 PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS = {
     "gate": "runs/platform_candidate_approval_intent_gate_report.json",
     "decision": "runs/candidate_approval_decision.json",
+    "execution": "runs/platform_candidate_approval_execution_report.json",
 }
 PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS = {
     "request": "runs/graph_repository_promotion_request.json",
@@ -5944,7 +5948,9 @@ def build_product_candidate_approval_gate_report(
     return report, diagnostics
 
 
-def product_candidate_approval_gate(args: argparse.Namespace) -> int:
+def product_candidate_approval_gate_report_from_args(
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], list[Diagnostic], Path, Path]:
     deployment_profile_path = Path(args.deployment_profile)
     specgraph_dir = Path(args.specgraph_dir).resolve()
     approval_intents_path = input_path_arg_or_default(
@@ -6109,6 +6115,13 @@ def product_candidate_approval_gate(args: argparse.Namespace) -> int:
             *execution_diagnostics,
             *publication_diagnostics,
         ],
+    )
+    return report, diagnostics, output_path, specgraph_dir
+
+
+def product_candidate_approval_gate(args: argparse.Namespace) -> int:
+    report, diagnostics, output_path, _specgraph_dir = (
+        product_candidate_approval_gate_report_from_args(args)
     )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     if not args.no_write_report:
@@ -6384,6 +6397,205 @@ def product_candidate_approval_materialize(args: argparse.Namespace) -> int:
             )
         )
     return 0 if error_count == 0 else 1
+
+
+def build_product_candidate_approval_execution_report(
+    *,
+    specgraph_dir: Path,
+    gate_report_path: Path,
+    gate_report: dict[str, Any],
+    gate_diagnostics: list[Diagnostic],
+    decision_output_path: Path,
+    execution_output_path: Path,
+    dry_run: bool,
+    decision: dict[str, Any] | None,
+    decision_written: bool,
+) -> dict[str, Any]:
+    gate_error_count = sum(
+        1 for diagnostic in gate_diagnostics if diagnostic.level == "ERROR"
+    )
+    gate_ready = gate_error_count == 0 and gate_report.get("ready_to_materialize") is True
+    if gate_ready and dry_run:
+        status = "candidate_approval_dry_run_ready"
+    elif gate_ready and decision_written:
+        status = "candidate_approval_materialized"
+    else:
+        status = "candidate_approval_blocked"
+    summary = nested_mapping(gate_report, "summary")
+    selected_intent = nested_mapping(gate_report, "selected_intent")
+    decision_readiness = nested_mapping(decision or {}, "readiness")
+    decision_paths = string_list(
+        nested_mapping(decision or {}, "promotion_request").get("paths")
+    )
+    operations = [
+        product_repair_operation(
+            name="build_candidate_approval_gate",
+            status="ready" if gate_ready else "blocked",
+            reason="candidate approval gate is ready"
+            if gate_ready
+            else "candidate approval gate is blocked",
+            evidence=["platform_candidate_approval_intent_gate_report"],
+        ),
+        product_repair_operation(
+            name="materialize_candidate_approval_decision",
+            status=(
+                "skipped_dry_run"
+                if gate_ready and dry_run
+                else "succeeded"
+                if decision_written
+                else "blocked"
+            ),
+            reason=(
+                "dry-run did not write candidate approval decision"
+                if gate_ready and dry_run
+                else "candidate approval decision written"
+                if decision_written
+                else "gate did not allow materialization"
+            ),
+            evidence=["candidate_approval_decision"] if gate_ready else [],
+        ),
+    ]
+    return {
+        "artifact_kind": PRODUCT_CANDIDATE_APPROVAL_EXECUTION_REPORT_KIND,
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "specgraph_dir": str(specgraph_dir),
+        "ok": gate_ready,
+        "dry_run": dry_run,
+        "status": status,
+        "canonical_mutations_allowed": False,
+        "ontology_writes_allowed": False,
+        "tracked_artifacts_written": False,
+        "gate_report_ref": str(gate_report_path),
+        "candidate_approval_decision_ref": str(decision_output_path),
+        "execution_report_ref": str(execution_output_path),
+        "candidate_id": summary.get("candidate_id"),
+        "workspace_id": summary.get("workspace_id"),
+        "repair_session_ref": nested_mapping(gate_report, "source_refs").get(
+            "repair_session"
+        ),
+        "approval_intent_ref": selected_intent.get("id"),
+        "selected_intent": selected_intent or None,
+        "approved_paths": decision_paths or string_list(gate_report.get("approved_paths")),
+        "operations": operations,
+        "diagnostics": [asdict(diagnostic) for diagnostic in gate_diagnostics],
+        "output_artifacts": {
+            "gate_report": {
+                "path": str(gate_report_path),
+                "artifact_kind": gate_report.get("artifact_kind"),
+                "present": gate_report_path.is_file(),
+                "sha256": file_sha256(gate_report_path),
+            },
+            "candidate_approval_decision": {
+                "path": str(decision_output_path),
+                "artifact_kind": (decision or {}).get("artifact_kind"),
+                "present": decision_output_path.is_file(),
+                "sha256": file_sha256(decision_output_path),
+                "ready": decision_readiness.get("ready") is True,
+            },
+        },
+        "authority_boundary": PRODUCT_CANDIDATE_APPROVAL_BOUNDARY,
+        "summary": {
+            "status": status,
+            "candidate_id": summary.get("candidate_id"),
+            "workspace_id": summary.get("workspace_id"),
+            "selected_intent_id": selected_intent.get("id"),
+            "gate_ready": gate_ready,
+            "decision_written": decision_written,
+            "approved_path_count": len(
+                decision_paths or string_list(gate_report.get("approved_paths"))
+            ),
+            "error_count": gate_error_count,
+            "next_artifact": (
+                "runs/graph_repository_promotion_request.json"
+                if decision_written
+                else "runs/candidate_approval_decision.json"
+            ),
+        },
+    }
+
+
+def product_candidate_approval_approve(args: argparse.Namespace) -> int:
+    gate_args = argparse.Namespace(**vars(args))
+    gate_args.output = args.gate_output
+    gate_report, gate_diagnostics, gate_output_path, specgraph_dir = (
+        product_candidate_approval_gate_report_from_args(gate_args)
+    )
+    decision_output_path = input_path_arg_or_default(
+        args.decision_output,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS["decision"],
+    )
+    execution_output_path = input_path_arg_or_default(
+        args.output,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS["execution"],
+    )
+    gate_error_count = sum(
+        1 for diagnostic in gate_diagnostics if diagnostic.level == "ERROR"
+    )
+    gate_ready = gate_error_count == 0 and gate_report.get("ready_to_materialize") is True
+    decision = (
+        build_candidate_approval_decision(
+            gate_report_path=gate_output_path,
+            gate_report=gate_report,
+        )
+        if gate_ready
+        else None
+    )
+    decision_written = False
+    if not args.dry_run:
+        gate_output_path.parent.mkdir(parents=True, exist_ok=True)
+        gate_output_path.write_text(
+            json.dumps(gate_report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if decision is not None:
+            decision_output_path.parent.mkdir(parents=True, exist_ok=True)
+            decision_output_path.write_text(
+                json.dumps(decision, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            decision_written = True
+    report = build_product_candidate_approval_execution_report(
+        specgraph_dir=specgraph_dir,
+        gate_report_path=gate_output_path,
+        gate_report=gate_report,
+        gate_diagnostics=gate_diagnostics,
+        decision_output_path=decision_output_path,
+        execution_output_path=execution_output_path,
+        dry_run=args.dry_run,
+        decision=decision,
+        decision_written=decision_written,
+    )
+    if not args.no_write_report:
+        execution_output_path.parent.mkdir(parents=True, exist_ok=True)
+        execution_output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif gate_diagnostics:
+        print(render_diagnostic_table(gate_diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": str(report["summary"]["status"]),
+                        "candidate": str(report["summary"]["candidate_id"]),
+                        "paths": str(report["summary"]["approved_path_count"]),
+                    }
+                ],
+                [
+                    ("status", "STATUS"),
+                    ("candidate", "CANDIDATE"),
+                    ("paths", "PATHS"),
+                ],
+            )
+        )
+    return 0 if gate_ready else 1
 
 
 def run_platform_json_subcommand(command_args: list[str]) -> tuple[
@@ -12794,6 +13006,131 @@ def build_parser() -> argparse.ArgumentParser:
     )
     product_candidate_approval_materialize_parser.set_defaults(
         func=product_candidate_approval_materialize
+    )
+
+    product_candidate_approval_approve_parser = (
+        product_candidate_approval_subcommands.add_parser(
+            "approve",
+            help=(
+                "Run candidate approval gate and materialize a "
+                "candidate_approval_decision with an execution report."
+            ),
+        )
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--deployment-profile",
+        default=str(DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE),
+        help=(
+            "Path to a platform_deployment_profile artifact. Defaults to the "
+            "product idea-to-spec workbench profile."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--specgraph-dir",
+        default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
+        help="Local SpecGraph checkout that owns product idea-to-spec runs.",
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--approval-intents",
+        help=(
+            "SpecSpace-owned candidate approval intent state. Defaults to "
+            "runs/idea_to_spec_candidate_approval_intents.json under --specgraph-dir."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--repair-session",
+        help=(
+            "Idea-to-spec repair session journal. Defaults to "
+            "runs/idea_to_spec_repair_session.json under --specgraph-dir."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--active-candidate",
+        help=(
+            "Optional active_idea_to_spec_candidate artifact to validate with a "
+            "repaired handoff."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--promotion-gate",
+        help=(
+            "Idea-to-spec promotion gate artifact. Defaults to "
+            "runs/idea_to_spec_promotion_gate.json under --specgraph-dir."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--repaired-handoff",
+        help="Optional repaired_candidate_promotion_handoff_report from SpecGraph 0177.",
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--repair-execution",
+        help=(
+            "Platform product repair rerun execution report. Defaults to "
+            "runs/platform_product_repair_rerun_execution_report.json under "
+            "--specgraph-dir."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--repair-publication",
+        help=(
+            "Platform product repair rerun publication report. Defaults to "
+            "runs/platform_product_repair_rerun_publication_report.json under "
+            "--specgraph-dir."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--workspace-id",
+        help="Optional workspace id used to select the active SpecSpace intent.",
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        help=(
+            "Materialized candidate path approved for future Git Service promotion. "
+            "May be provided multiple times."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--gate-output",
+        help=(
+            "Optional path where the intermediate gate report JSON should be "
+            "written. Defaults to runs/platform_candidate_approval_intent_gate_report.json."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--decision-output",
+        help=(
+            "Optional path where candidate_approval_decision JSON should be written. "
+            "Defaults to runs/candidate_approval_decision.json."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path where platform_candidate_approval_execution_report JSON "
+            "should be written. Defaults to "
+            "runs/platform_candidate_approval_execution_report.json."
+        ),
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the approval handoff without writing gate or decision artifacts.",
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the approval execution report.",
+    )
+    product_candidate_approval_approve_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_candidate_approval_approve_parser.set_defaults(
+        func=product_candidate_approval_approve
     )
 
     product_candidate_promotion_parser = subcommands.add_parser(

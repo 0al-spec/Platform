@@ -3945,6 +3945,184 @@ workspaces:
                 payload["authority_boundary"]["may_execute_git_service_operation"]
             )
 
+    def test_product_candidate_approval_approve_materializes_decision_and_report(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            gate_path = specgraph_dir / "runs" / "candidate_approval_gate.json"
+            decision_path = specgraph_dir / "runs" / "candidate_approval_decision.json"
+            report_path = (
+                specgraph_dir
+                / "runs"
+                / "platform_candidate_approval_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "approve",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--gate-output",
+                str(gate_path),
+                "--decision-output",
+                str(decision_path),
+                "--output",
+                str(report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            persisted = json.loads(report_path.read_text(encoding="utf-8"))
+            decision = json.loads(decision_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload, persisted)
+            self.assertTrue(gate_path.is_file())
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_candidate_approval_execution_report",
+            )
+            self.assertEqual(payload["status"], "candidate_approval_materialized")
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["dry_run"])
+            self.assertEqual(payload["candidate_id"], "idea-alpha")
+            self.assertEqual(payload["workspace_id"], "idea-alpha")
+            self.assertEqual(
+                payload["candidate_approval_decision_ref"],
+                str(decision_path.resolve()),
+            )
+            self.assertEqual(decision["artifact_kind"], "candidate_approval_decision")
+            self.assertTrue(
+                payload["output_artifacts"]["candidate_approval_decision"]["present"]
+            )
+            self.assertTrue(
+                payload["output_artifacts"]["candidate_approval_decision"]["ready"]
+            )
+            self.assertEqual(
+                {
+                    operation["name"]: operation["status"]
+                    for operation in payload["operations"]
+                },
+                {
+                    "build_candidate_approval_gate": "ready",
+                    "materialize_candidate_approval_decision": "succeeded",
+                },
+            )
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+            self.assertFalse(payload["authority_boundary"]["mutates_canonical_specs"])
+
+    def test_product_candidate_approval_approve_dry_run_does_not_write_decision(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            gate_path = specgraph_dir / "runs" / "candidate_approval_gate.json"
+            decision_path = specgraph_dir / "runs" / "candidate_approval_decision.json"
+            report_path = (
+                specgraph_dir
+                / "runs"
+                / "platform_candidate_approval_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "approve",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--gate-output",
+                str(gate_path),
+                "--decision-output",
+                str(decision_path),
+                "--output",
+                str(report_path),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "candidate_approval_dry_run_ready")
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["dry_run"])
+            self.assertFalse(gate_path.exists())
+            self.assertFalse(decision_path.exists())
+            self.assertTrue(report_path.is_file())
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(
+                statuses["materialize_candidate_approval_decision"],
+                "skipped_dry_run",
+            )
+
+    def test_product_candidate_approval_approve_rejects_blocked_gate(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                repair_session_ready_for_candidate_approval=False,
+            )
+            gate_path = specgraph_dir / "runs" / "candidate_approval_gate.json"
+            decision_path = specgraph_dir / "runs" / "candidate_approval_decision.json"
+            report_path = (
+                specgraph_dir
+                / "runs"
+                / "platform_candidate_approval_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "approve",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--gate-output",
+                str(gate_path),
+                "--decision-output",
+                str(decision_path),
+                "--output",
+                str(report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["status"], "candidate_approval_blocked")
+            self.assertTrue(gate_path.is_file())
+            self.assertFalse(decision_path.exists())
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "product_candidate_approval_repair_session_not_ready_for_candidate_approval",
+                codes,
+            )
+
     def test_product_candidate_approval_gate_rejects_authority_expansion(
         self,
     ) -> None:
