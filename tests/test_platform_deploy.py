@@ -856,3 +856,46 @@ class PlatformDeployTests(unittest.TestCase):
                 for error in payload["errors"]
             )
         )
+
+    def test_timeweb_validate_rejects_extra_app_host_port_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose.replace(
+                    '      - "8080:80"\n',
+                    '      - "8080:80"\n      - "9090:80"\n',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["valid"])
+        self.assertTrue(
+            any(
+                "app must publish exactly one Timeweb port binding 8080:80" in error
+                for error in payload["errors"]
+            )
+        )

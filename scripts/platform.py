@@ -11575,10 +11575,10 @@ def validate_timeweb_manifest_tree(
     if "8001" not in api_expose:
         errors.append(f"{target_file} specspace-api must expose internal port 8001")
     app_ports = list_values_for_service_section(blocks, "app", "ports")
-    if "8080:80" not in app_ports:
+    if app_ports != ["8080:80"]:
         errors.append(
-            f"{target_file} app must publish container port 80 on host port "
-            "8080 for Timeweb"
+            f"{target_file} app must publish exactly one Timeweb port binding "
+            f"8080:80, got {app_ports}"
         )
     reserved_app_ports = [
         port for port in app_ports if compose_port_host_part(port) in {"80", "443"}
