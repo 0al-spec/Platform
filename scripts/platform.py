@@ -4472,24 +4472,60 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
             diagnostics.extend(product_repair_repaired_output_diagnostics(output_records))
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0 and (args.dry_run or command_result is not None)
+    requested_operation_status = "failed"
+    requested_operation_reason = "execution_failed"
+    if args.dry_run:
+        requested_operation_status = "dry_run"
+        requested_operation_reason = "dry_run"
+    elif command_result is None:
+        requested_operation_status = "skipped"
+        requested_operation_reason = "execution_not_started"
+    elif command_result.get("returncode") == 0:
+        requested_operation_status = "succeeded"
+        requested_operation_reason = "SpecGraph requested rerun target executed"
+    repaired_operation: dict[str, Any] | None = None
+    if args.build_repaired_handoff:
+        repaired_operation_status = "failed"
+        repaired_operation_reason = "repaired_handoff_execution_failed"
+        if args.dry_run:
+            repaired_operation_status = "dry_run"
+            repaired_operation_reason = "dry_run"
+        elif command_result is None:
+            repaired_operation_status = "skipped"
+            repaired_operation_reason = "requested_rerun_not_started"
+        elif command_result.get("returncode") != 0:
+            repaired_operation_status = "skipped"
+            repaired_operation_reason = "requested_rerun_failed"
+        elif repaired_handoff_command_result is None:
+            repaired_operation_status = "skipped"
+            repaired_operation_reason = "repaired_handoff_not_started"
+        elif repaired_handoff_command_result.get("returncode") == 0:
+            repaired_operation_status = "succeeded"
+            repaired_operation_reason = "SpecGraph repaired handoff target executed"
+        repaired_operation = product_repair_operation(
+            name="execute_specgraph_repaired_promotion_handoff",
+            status=repaired_operation_status,
+            reason=repaired_operation_reason,
+            evidence=[PRODUCT_REPAIR_RERUN_REPAIRED_HANDOFF_MAKE_TARGET],
+        )
     operations = [
         product_repair_operation(
             name="execute_specgraph_requested_rerun",
-            status="dry_run" if args.dry_run else "succeeded" if ok else "failed",
-            reason="SpecGraph requested rerun target executed"
-            if ok and not args.dry_run
-            else "dry_run"
-            if args.dry_run
-            else "execution_failed",
+            status=requested_operation_status,
+            reason=requested_operation_reason,
             evidence=[PRODUCT_REPAIR_RERUN_MAKE_TARGET],
         ),
+    ]
+    if repaired_operation is not None:
+        operations.append(repaired_operation)
+    operations.append(
         product_repair_operation(
             name="publish_public_safe_bundle",
             status="blocked_until_publication",
             reason="run product-repair-rerun publish after successful execution",
             evidence=["make publish-bundle"],
-        ),
-    ]
+        )
+    )
     report = {
         "schema_version": 1,
         "artifact_kind": PRODUCT_REPAIR_RERUN_EXECUTION_REPORT_KIND,

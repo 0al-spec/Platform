@@ -3166,6 +3166,18 @@ workspaces:
             self.assertTrue(
                 payload["output_artifacts"]["repaired_repair_session"]["ready"]
             )
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(
+                statuses["execute_specgraph_requested_rerun"],
+                "succeeded",
+            )
+            self.assertEqual(
+                statuses["execute_specgraph_repaired_promotion_handoff"],
+                "succeeded",
+            )
             self.assertTrue(
                 (
                     specgraph_dir
@@ -3656,6 +3668,19 @@ workspaces:
             self.assertEqual(statuses["execute_specgraph_requested_rerun"], "succeeded")
             self.assertEqual(statuses["publish_public_safe_bundle"], "succeeded")
             self.assertEqual(statuses["validate_candidate_approval_gate"], "succeeded")
+            execution_report = json.loads(
+                Path(payload["phase_reports"]["execution"]["path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            execution_statuses = {
+                operation["name"]: operation["status"]
+                for operation in execution_report["operations"]
+            }
+            self.assertEqual(
+                execution_statuses["execute_specgraph_repaired_promotion_handoff"],
+                "succeeded",
+            )
             self.assertTrue(payload["phase_reports"]["candidate_approval_gate"]["present"])
             self.assertFalse(
                 payload["authority_boundary"]["candidate_approval_performed"]
