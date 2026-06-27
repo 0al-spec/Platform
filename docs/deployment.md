@@ -221,6 +221,13 @@ Guardrails:
 
 - the first service is `app`, because Timeweb proxies the public domain to the
   first service;
+- the `app` service publishes exactly one Timeweb-safe binding, `8080:80`.
+  Do not use `80:80` because Timeweb reserves host port 80 for its internal
+  proxy, and do not use the old `5173:80` binding because existing deployments
+  can keep that host port allocated during a replacement deploy;
+- the `specspace-api` service is internal-only: it listens on container port
+  `8001` and declares `expose: ["8001"]`, but it must not publish a host port.
+  The public UI reaches it through the Compose network as `specspace-api:8001`;
 - API/UI image refs must be digest-pinned and must not use `latest`;
 - no source `build` sections;
 - no bind mounts or named volumes;
