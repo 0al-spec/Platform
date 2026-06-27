@@ -7046,6 +7046,21 @@ def product_candidate_promotion_operation(
     }
 
 
+def product_candidate_promotion_child_report_path(
+    child_payload: dict[str, Any] | None,
+    *,
+    base_dir: Path,
+    fallback: Path,
+) -> Path:
+    if isinstance(child_payload, dict):
+        local_files = string_list(child_payload.get("local_files_written"))
+        if local_files:
+            resolved = resolve_artifact_path(local_files[0], base_dir=base_dir)
+            if resolved is not None:
+                return resolved
+    return fallback
+
+
 def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
     contract_path = Path(args.contract).resolve()
     promotion_request_path = Path(args.promotion_request).resolve()
@@ -7350,6 +7365,8 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
 
 def product_candidate_promotion_execution_report_diagnostics(
     execution_report: dict[str, Any],
+    *,
+    base_dir: Path,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     if execution_report.get("artifact_kind") != (
@@ -7443,15 +7460,17 @@ def product_candidate_promotion_execution_report_diagnostics(
                 message="execution report must reference the open review report",
             )
         )
-    elif not Path(open_review_ref).is_file():
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="product_candidate_promotion_open_review_report_missing",
-                subject="execution_report.git_service_execution.report_refs.open_review",
-                message="open review report ref must point at an existing file",
+    else:
+        open_review_path = resolve_artifact_path(open_review_ref, base_dir=base_dir)
+        if open_review_path is None or not open_review_path.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_open_review_report_missing",
+                    subject="execution_report.git_service_execution.report_refs.open_review",
+                    message="open review report ref must point at an existing file",
+                )
             )
-        )
     authority_boundary = execution_report.get("authority_boundary")
     if not isinstance(authority_boundary, dict):
         diagnostics.append(
@@ -7479,6 +7498,7 @@ def product_candidate_promotion_execution_report_diagnostics(
 def product_candidate_promotion_review_status_report_diagnostics(
     review_status_report: dict[str, Any],
     *,
+    base_dir: Path,
     require_merged: bool,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
@@ -7505,6 +7525,15 @@ def product_candidate_promotion_review_status_report_diagnostics(
                 message="product review status must be ok before read-model publish",
             )
         )
+    if review_status_report.get("workflow_lane") != "product_idea_to_spec":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_status_workflow_mismatch",
+                subject="review_status_report.workflow_lane",
+                message="read-model publication requires product_idea_to_spec",
+            )
+        )
     if require_merged and review_status_report.get("review_state") != "merged":
         diagnostics.append(
             Diagnostic(
@@ -7524,15 +7553,17 @@ def product_candidate_promotion_review_status_report_diagnostics(
                 message="product review status must reference the generic review status report",
             )
         )
-    elif not Path(graph_report_ref).is_file():
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="product_candidate_promotion_graph_review_status_report_missing",
-                subject="review_status_report.graph_repository_review_status_report_ref",
-                message="generic graph repository review status report must exist",
+    else:
+        graph_report_path = resolve_artifact_path(graph_report_ref, base_dir=base_dir)
+        if graph_report_path is None or not graph_report_path.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_graph_review_status_report_missing",
+                    subject="review_status_report.graph_repository_review_status_report_ref",
+                    message="generic graph repository review status report must exist",
+                )
             )
-        )
     authority_boundary = review_status_report.get("authority_boundary")
     if not isinstance(authority_boundary, dict):
         diagnostics.append(
@@ -7564,7 +7595,8 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         label="product candidate promotion execution report",
     )
     diagnostics = product_candidate_promotion_execution_report_diagnostics(
-        execution_report
+        execution_report,
+        base_dir=execution_report_path.parent,
     )
     preflight_error_count = sum(
         1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
@@ -7619,6 +7651,11 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         child_payload.get("review_state")
         if isinstance(child_payload, dict)
         else "unknown"
+    )
+    graph_repository_report_path = product_candidate_promotion_child_report_path(
+        child_payload,
+        base_dir=workspace_dir,
+        fallback=graph_repository_report_path,
     )
     review_merged = review_state == "merged"
     operations = [
@@ -7760,6 +7797,7 @@ def product_candidate_promotion_publish_read_model(
     )
     diagnostics = product_candidate_promotion_review_status_report_diagnostics(
         review_status_report,
+        base_dir=review_status_report_path.parent,
         require_merged=True,
     )
     preflight_error_count = sum(
@@ -7819,6 +7857,11 @@ def product_candidate_promotion_publish_read_model(
         child_ok
         and not args.dry_run
         and nested_mapping(child_payload, "summary").get("published") is True
+    )
+    graph_repository_publish_report_path = product_candidate_promotion_child_report_path(
+        child_payload,
+        base_dir=output_dir,
+        fallback=graph_repository_publish_report_path,
     )
     ok = error_count == 0 and child_ok
     operations = [

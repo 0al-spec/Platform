@@ -4336,6 +4336,53 @@ workspaces:
         self.assertFalse(payload["ok"])
         self.assertIsNone(payload["graph_repository_command_result"])
 
+    def test_product_candidate_promotion_review_status_resolves_relative_open_review_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            payload = json.loads(execution_report.read_text(encoding="utf-8"))
+            payload["git_service_execution"]["report_refs"]["open_review"] = (
+                os.path.relpath(open_review_report, execution_report.parent)
+            )
+            execution_report.write_text(json.dumps(payload), encoding="utf-8")
+            operator_cwd = tmp_root / "operator"
+            operator_cwd.mkdir()
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "MERGED",
+                    "isDraft": False,
+                    "mergedAt": "2026-06-21T16:00:00Z",
+                    "mergeCommit": {"oid": "abc123"},
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+                cwd=operator_cwd,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"], payload["diagnostics"])
+        self.assertEqual(payload["review_state"], "merged")
+
     def test_product_candidate_promotion_publish_read_model_copies_bundle(
         self,
     ) -> None:
@@ -4481,6 +4528,73 @@ workspaces:
         self.assertIn("product_candidate_promotion_review_not_merged", codes)
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["summary"]["read_model_published"])
+        self.assertFalse(output_dir.exists())
+
+    def test_product_candidate_promotion_publish_read_model_rejects_non_product_lane(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "MERGED",
+                    "isDraft": False,
+                    "mergedAt": "2026-06-21T16:00:00Z",
+                    "mergeCommit": {"oid": "abc123"},
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+            status_output = (
+                tmp_root / "product_candidate_promotion_review_status_report.json"
+            )
+            status_result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--gh-bin",
+                str(fake_gh),
+                "--output",
+                str(status_output),
+                "--format",
+                "json",
+            )
+            self.assertEqual(status_result.returncode, 0, status_result.stderr)
+            status_payload = json.loads(status_output.read_text(encoding="utf-8"))
+            status_payload["workflow_lane"] = "specgraph_bootstrap"
+            status_output.write_text(json.dumps(status_payload), encoding="utf-8")
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            output_dir = tmp_root / "published-read-model"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "publish-read-model",
+                "--review-status-report",
+                str(status_output),
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_promotion_review_status_workflow_mismatch",
+            codes,
+        )
+        self.assertFalse(payload["ok"])
         self.assertFalse(output_dir.exists())
 
     def test_graph_repository_prepare_local_writes_workspace_manifest(self) -> None:
