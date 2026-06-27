@@ -533,8 +533,10 @@ Completed Git Service foundation:
    materialized paths from the decision artifact rather than requiring the
    operator to retype them.
    The gate requires an approval-ready repair session plus successful
-   repair-rerun execution/publication reports and still does not start Git
-   Service promotion.
+   repair-rerun execution/publication reports and can validate SpecGraph `0177`
+   repaired handoff artifacts as first-class inputs when the approval-ready
+   session lives in repaired outputs rather than the default `runs/*` chain. It
+   still does not start Git Service promotion.
 9. Platform now exposes `product-candidate-promotion execute`, a product-aware
    wrapper over `git-service execute-promotion`. It revalidates the promotion
    request, candidate approval decision, deployment profile, and Git Service

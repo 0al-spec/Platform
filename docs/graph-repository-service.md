@@ -256,6 +256,27 @@ scripts/platform.py product-candidate-approval gate \
   --output ../SpecGraph/runs/platform_candidate_approval_intent_gate_report.json
 ```
 
+When SpecGraph has produced the repaired promotion handoff from proposal `0177`,
+the gate can validate that repaired chain directly instead of comparing the
+SpecSpace intent against the default active-candidate and promotion-gate refs:
+
+```bash
+scripts/platform.py product-candidate-approval gate \
+  --specgraph-dir ../SpecGraph \
+  --workspace-id local-subscription-control \
+  --active-candidate runs/repaired_active_idea_to_spec_candidate.json \
+  --repair-session runs/repaired_idea_to_spec_repair_session.json \
+  --promotion-gate runs/repaired_idea_to_spec_promotion_gate.json \
+  --repaired-handoff runs/repaired_candidate_promotion_handoff_report.json \
+  --path specs/nodes/SUBSCRIPTION-CANDIDATE.yaml \
+  --output ../SpecGraph/runs/platform_candidate_approval_intent_gate_report.json
+```
+
+In this mode the gate checks that the repaired handoff is ready, still
+candidate-approval-only, has no unresolved repaired ontology/product gaps, and
+points at the same active candidate, repair session, and promotion gate artifacts
+selected by the invocation.
+
 The gate report is read-only. It checks that the SpecSpace state is owned by
 SpecSpace, the active intent is still `requested`, repair-session readiness is
 `ready_for_candidate_approval`, repair rerun execution/publication are

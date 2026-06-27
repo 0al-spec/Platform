@@ -236,6 +236,9 @@ PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS = {
     "repair_execution": "runs/platform_product_repair_rerun_execution_report.json",
     "repair_publication": "runs/platform_product_repair_rerun_publication_report.json",
 }
+PRODUCT_CANDIDATE_APPROVAL_REPAIRED_HANDOFF_KIND = (
+    "repaired_candidate_promotion_handoff_report"
+)
 PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS = {
     "gate": "runs/platform_candidate_approval_intent_gate_report.json",
     "decision": "runs/candidate_approval_decision.json",
@@ -2768,9 +2771,19 @@ def repair_session_readiness_flag(
 
 def graph_repository_repair_session_diagnostics(
     repair_session: dict[str, Any],
+    *,
+    expected_source_refs: dict[str, tuple[str, ...]] | None = None,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     subject = "runs.idea_to_spec_repair_session.json"
+    expected_refs_by_key = {
+        key: (value,)
+        for key, value in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items()
+    }
+    if expected_source_refs:
+        expected_refs_by_key.update(
+            {key: refs for key, refs in expected_source_refs.items() if refs}
+        )
 
     contract_ref = repair_session.get("contract_ref")
     if contract_ref != GRAPH_REPOSITORY_REPAIR_SESSION_CONTRACT_REF:
@@ -2853,7 +2866,7 @@ def graph_repository_repair_session_diagnostics(
             )
         )
     else:
-        for key, expected_ref in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items():
+        for key, expected_refs in expected_refs_by_key.items():
             source_entry = source_artifacts.get(key)
             if not isinstance(source_entry, dict):
                 diagnostics.append(
@@ -2866,14 +2879,19 @@ def graph_repository_repair_session_diagnostics(
                 )
                 continue
             source_ref = source_entry.get("source_ref")
-            if source_ref != expected_ref:
+            if source_ref not in expected_refs:
+                expected_label = (
+                    f"`{expected_refs[0]}`"
+                    if len(expected_refs) == 1
+                    else "one of " + ", ".join(f"`{ref}`" for ref in expected_refs)
+                )
                 diagnostics.append(
                     Diagnostic(
                         level="ERROR",
                         code="graph_repository_repair_session_source_ref_stale",
                         subject=f"{subject}.source_artifacts.{key}.source_ref",
                         message=(
-                            f"expected `{expected_ref}` but found "
+                            f"expected {expected_label} but found "
                             f"`{source_ref if source_ref is not None else 'missing'}`"
                         ),
                     )
@@ -4776,10 +4794,10 @@ def product_candidate_approval_expected_refs(
     *,
     raw_arg: str | None,
     resolved_path: Path,
-    default_rel: str,
+    default_rel: str | None,
     specgraph_dir: Path,
 ) -> tuple[str, ...]:
-    refs = {default_rel}
+    refs = {default_rel} if default_rel else set()
     if raw_arg:
         refs.add(raw_arg)
         refs.add(str(resolved_path))
@@ -4964,8 +4982,21 @@ def product_candidate_approval_intent_state_diagnostics(
 
 def product_candidate_approval_repair_session_diagnostics(
     repair_session: dict[str, Any],
+    *,
+    expected_active_candidate_refs: tuple[str, ...],
+    expected_promotion_gate_refs: tuple[str, ...],
 ) -> list[Diagnostic]:
-    diagnostics = [*graph_repository_repair_session_diagnostics(repair_session)]
+    expected_source_refs: dict[str, tuple[str, ...]] = {}
+    if expected_active_candidate_refs:
+        expected_source_refs["active_candidate"] = expected_active_candidate_refs
+    if expected_promotion_gate_refs:
+        expected_source_refs["promotion_gate"] = expected_promotion_gate_refs
+    diagnostics = [
+        *graph_repository_repair_session_diagnostics(
+            repair_session,
+            expected_source_refs=expected_source_refs,
+        )
+    ]
     if nested_mapping(repair_session, "readiness").get("ready") is not True:
         diagnostics.append(
             Diagnostic(
@@ -5038,6 +5069,197 @@ def product_candidate_approval_promotion_gate_diagnostics(
                         message="promotion gate must not expand write authority",
                     )
                 )
+    return diagnostics
+
+
+def product_candidate_approval_loaded_source_ref(
+    source_artifacts: list[dict[str, Any]],
+    *,
+    key: str,
+    specgraph_dir: Path,
+) -> str | None:
+    source_path = next(
+        (
+            item.get("path")
+            for item in source_artifacts
+            if item.get("key") == key and item.get("available") is True
+        ),
+        None,
+    )
+    if not isinstance(source_path, str) or not source_path:
+        return None
+    path = Path(source_path)
+    resolved = path if path.is_absolute() else (specgraph_dir / path)
+    try:
+        return resolved.resolve().relative_to(specgraph_dir.resolve()).as_posix()
+    except ValueError:
+        return source_path
+
+
+def product_candidate_approval_active_candidate_diagnostics(
+    active_candidate: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    diagnostics.extend(
+        product_candidate_approval_false_field_diagnostics(
+            active_candidate,
+            fields=PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS,
+            subject="active_candidate",
+            code="product_candidate_approval_active_candidate_authority_expanded",
+        )
+    )
+    if nested_mapping(active_candidate, "readiness").get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_active_candidate_not_ready",
+                subject="active_candidate.readiness.ready",
+                message="active candidate must be ready before candidate approval",
+            )
+        )
+    authority_boundary = active_candidate.get("authority_boundary")
+    if isinstance(authority_boundary, dict):
+        for key, value in sorted(authority_boundary.items()):
+            if value is not False:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code=(
+                            "product_candidate_approval_active_candidate_authority_expanded"
+                        ),
+                        subject=f"active_candidate.authority_boundary.{key}",
+                        message="active candidate must not expand write authority",
+                    )
+                )
+    return diagnostics
+
+
+def product_candidate_approval_repaired_handoff_diagnostics(
+    handoff: dict[str, Any],
+    *,
+    expected_active_candidate_refs: tuple[str, ...],
+    expected_repair_session_refs: tuple[str, ...],
+    expected_promotion_gate_refs: tuple[str, ...],
+    require_active_candidate_ref: bool,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    diagnostics.extend(
+        product_candidate_approval_false_field_diagnostics(
+            handoff,
+            fields=PRODUCT_CANDIDATE_APPROVAL_FALSE_TOP_LEVEL_FIELDS,
+            subject="repaired_handoff",
+            code="product_candidate_approval_repaired_handoff_authority_expanded",
+        )
+    )
+    if nested_mapping(handoff, "readiness").get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_repaired_handoff_not_ready",
+                subject="repaired_handoff.readiness.ready",
+                message="repaired candidate handoff must be ready before approval",
+            )
+        )
+    summary = nested_mapping(handoff, "summary")
+    if summary.get("ready_for_candidate_approval") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=(
+                    "product_candidate_approval_repaired_handoff_not_ready_for_candidate_approval"
+                ),
+                subject="repaired_handoff.summary.ready_for_candidate_approval",
+                message="repaired candidate handoff must be ready for candidate approval",
+            )
+        )
+    if summary.get("ready_for_platform_promotion") is True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=(
+                    "product_candidate_approval_repaired_handoff_platform_promotion_premature"
+                ),
+                subject="repaired_handoff.summary.ready_for_platform_promotion",
+                message=(
+                    "repaired handoff must not claim Platform promotion readiness before "
+                    "candidate approval decision materialization"
+                ),
+            )
+        )
+    for key in ("unresolved_ontology_gap_count", "unresolved_candidate_gap_count"):
+        value = summary.get(key)
+        if isinstance(value, int) and value > 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_repaired_handoff_unresolved_gaps",
+                    subject=f"repaired_handoff.summary.{key}",
+                    message="repaired handoff must not carry unresolved gaps",
+                )
+            )
+    authority_boundary = handoff.get("authority_boundary")
+    if isinstance(authority_boundary, dict):
+        for key, value in sorted(authority_boundary.items()):
+            if value is not False:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code=(
+                            "product_candidate_approval_repaired_handoff_authority_expanded"
+                        ),
+                        subject=f"repaired_handoff.authority_boundary.{key}",
+                        message="repaired handoff must not expand write authority",
+                    )
+                )
+    outputs = nested_mapping(handoff, "output_artifacts")
+    expected_outputs = (
+        (
+            "repaired_active_candidate",
+            "active_candidate",
+            expected_active_candidate_refs,
+            require_active_candidate_ref,
+        ),
+        (
+            "repaired_repair_session",
+            "repair_session",
+            expected_repair_session_refs,
+            True,
+        ),
+        (
+            "repaired_promotion_gate",
+            "promotion_gate",
+            expected_promotion_gate_refs,
+            True,
+        ),
+    )
+    for output_key, subject_key, expected_refs, required in expected_outputs:
+        source_ref = nested_mapping(outputs, output_key).get("source_ref")
+        if not isinstance(source_ref, str) or not source_ref:
+            if required:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_candidate_approval_repaired_handoff_ref_missing",
+                        subject=f"repaired_handoff.output_artifacts.{output_key}.source_ref",
+                        message=(
+                            "repaired handoff must reference each selected repaired "
+                            "approval artifact"
+                        ),
+                    )
+                )
+            continue
+        if source_ref not in expected_refs:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_repaired_handoff_ref_stale",
+                    subject=f"repaired_handoff.output_artifacts.{output_key}.source_ref",
+                    message=(
+                        f"repaired handoff {subject_key} ref must match this "
+                        "candidate approval invocation"
+                    ),
+                )
+            )
     return diagnostics
 
 
@@ -5119,6 +5341,8 @@ def product_candidate_approval_identity_diagnostics(
     selected_intent: dict[str, Any],
     repair_session: dict[str, Any],
     promotion_gate: dict[str, Any],
+    active_candidate: dict[str, Any] | None = None,
+    repaired_handoff: dict[str, Any] | None = None,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     candidate_id = selected_intent.get("candidate_id")
@@ -5126,11 +5350,36 @@ def product_candidate_approval_identity_diagnostics(
     repair_session_session = nested_mapping(repair_session, "session")
     repair_session_summary = nested_mapping(repair_session, "summary")
     promotion_summary = nested_mapping(promotion_gate, "summary")
-    for artifact_name, source in (
+    identity_sources: list[tuple[str, dict[str, Any]]] = [
         ("repair_session.session", repair_session_session),
         ("repair_session.summary", repair_session_summary),
         ("promotion_gate.summary", promotion_summary),
-    ):
+    ]
+    if active_candidate is not None:
+        identity_sources.append(
+            ("active_candidate.summary", nested_mapping(active_candidate, "summary"))
+        )
+    if repaired_handoff is not None:
+        handoff_outputs = nested_mapping(repaired_handoff, "output_artifacts")
+        identity_sources.extend(
+            [
+                (
+                    "repaired_handoff.output_artifacts.repaired_active_candidate.summary",
+                    nested_mapping(
+                        nested_mapping(handoff_outputs, "repaired_active_candidate"),
+                        "summary",
+                    ),
+                ),
+                (
+                    "repaired_handoff.output_artifacts.repaired_repair_session.summary",
+                    nested_mapping(
+                        nested_mapping(handoff_outputs, "repaired_repair_session"),
+                        "summary",
+                    ),
+                ),
+            ]
+        )
+    for artifact_name, source in identity_sources:
         actual_candidate = source.get("candidate_id")
         if actual_candidate and actual_candidate != candidate_id:
             diagnostics.append(
@@ -5201,13 +5450,16 @@ def build_product_candidate_approval_gate_report(
     deployment_profile: dict[str, Any],
     specgraph_dir: Path,
     intent_state: dict[str, Any] | None,
+    active_candidate: dict[str, Any] | None,
     repair_session: dict[str, Any] | None,
     promotion_gate: dict[str, Any] | None,
+    repaired_handoff: dict[str, Any] | None,
     repair_execution: dict[str, Any] | None,
     repair_publication: dict[str, Any] | None,
     selected_intent: dict[str, Any] | None,
     source_artifacts: list[dict[str, Any]],
     paths: list[str],
+    expected_active_candidate_refs: tuple[str, ...],
     expected_repair_session_refs: tuple[str, ...],
     expected_promotion_gate_refs: tuple[str, ...],
     extra_diagnostics: list[Diagnostic],
@@ -5239,14 +5491,44 @@ def build_product_candidate_approval_gate_report(
                 expected_promotion_gate_refs=expected_promotion_gate_refs,
             )
         )
+    if active_candidate is not None:
+        diagnostics.extend(
+            product_candidate_approval_active_candidate_diagnostics(active_candidate)
+        )
     if repair_session is not None:
         diagnostics.extend(
-            product_candidate_approval_repair_session_diagnostics(repair_session)
+            product_candidate_approval_repair_session_diagnostics(
+                repair_session,
+                expected_active_candidate_refs=expected_active_candidate_refs,
+                expected_promotion_gate_refs=expected_promotion_gate_refs,
+            )
         )
     if promotion_gate is not None:
         diagnostics.extend(
             product_candidate_approval_promotion_gate_diagnostics(promotion_gate)
         )
+    if repaired_handoff is not None:
+        diagnostics.extend(
+            product_candidate_approval_repaired_handoff_diagnostics(
+                repaired_handoff,
+                expected_active_candidate_refs=expected_active_candidate_refs,
+                expected_repair_session_refs=expected_repair_session_refs,
+                expected_promotion_gate_refs=expected_promotion_gate_refs,
+                require_active_candidate_ref=active_candidate is not None,
+            )
+        )
+        if active_candidate is None:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_approval_repaired_handoff_active_candidate_missing",
+                    subject="active_candidate",
+                    message=(
+                        "--active-candidate is required when --repaired-handoff "
+                        "is supplied"
+                    ),
+                )
+            )
     if repair_execution is not None:
         diagnostics.extend(product_repair_execution_report_diagnostics(repair_execution))
         diagnostics.extend(
@@ -5273,6 +5555,8 @@ def build_product_candidate_approval_gate_report(
                 selected_intent=selected_intent,
                 repair_session=repair_session,
                 promotion_gate=promotion_gate,
+                active_candidate=active_candidate,
+                repaired_handoff=repaired_handoff,
             )
         )
 
@@ -5293,6 +5577,30 @@ def build_product_candidate_approval_gate_report(
         if selected_intent is not None
         else None
     )
+    source_refs = {
+        "active_candidate": product_candidate_approval_loaded_source_ref(
+            source_artifacts,
+            key="active_idea_to_spec_candidate",
+            specgraph_dir=specgraph_dir,
+        ),
+        "repair_session": (
+            selected_intent.get("repair_session_ref")
+            if selected_intent is not None
+            else None
+        )
+        or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
+        "promotion_gate": (
+            selected_intent.get("promotion_gate_ref")
+            if selected_intent is not None
+            else None
+        )
+        or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
+        "repaired_handoff": product_candidate_approval_loaded_source_ref(
+            source_artifacts,
+            key="repaired_candidate_promotion_handoff_report",
+            specgraph_dir=specgraph_dir,
+        ),
+    }
     operations = [
         product_repair_operation(
             name="validate_specspace_candidate_approval_intent",
@@ -5309,6 +5617,26 @@ def build_product_candidate_approval_gate_report(
             if ready_to_materialize
             else "repair_session_not_ready",
             evidence=["idea_to_spec_repair_session"],
+        ),
+        product_repair_operation(
+            name="validate_repaired_candidate_handoff",
+            status=(
+                "ready"
+                if ready_to_materialize and repaired_handoff is not None
+                else "not_provided"
+                if repaired_handoff is None
+                else "blocked"
+            ),
+            reason=(
+                "repaired handoff matches selected approval inputs"
+                if ready_to_materialize and repaired_handoff is not None
+                else "repaired handoff not provided"
+                if repaired_handoff is None
+                else "repaired handoff not ready"
+            ),
+            evidence=["repaired_candidate_promotion_handoff_report"]
+            if repaired_handoff is not None
+            else [],
         ),
         product_repair_operation(
             name="validate_platform_rerun_publication",
@@ -5342,6 +5670,7 @@ def build_product_candidate_approval_gate_report(
         "ontology_writes_allowed": False,
         "tracked_artifacts_written": False,
         "source_artifacts": source_artifacts,
+        "source_refs": {key: value for key, value in source_refs.items() if value},
         "selected_intent": selected_summary,
         "approved_paths": paths if ready_to_materialize else [],
         "operations": operations,
@@ -5384,10 +5713,16 @@ def product_candidate_approval_gate(args: argparse.Namespace) -> int:
         base_dir=specgraph_dir,
         default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
     )
+    active_candidate_path = (
+        Path(args.active_candidate).resolve() if args.active_candidate else None
+    )
     promotion_gate_path = path_arg_or_default(
         args.promotion_gate,
         base_dir=specgraph_dir,
         default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
+    )
+    repaired_handoff_path = (
+        Path(args.repaired_handoff).resolve() if args.repaired_handoff else None
     )
     repair_execution_path = path_arg_or_default(
         args.repair_execution,
@@ -5418,6 +5753,17 @@ def product_candidate_approval_gate(args: argparse.Namespace) -> int:
         )
     )
     source_artifacts.append(intent_status)
+    active_candidate = None
+    active_diagnostics: list[Diagnostic] = []
+    if active_candidate_path is not None:
+        active_candidate, active_status, active_diagnostics = (
+            load_product_candidate_approval_artifact(
+                active_candidate_path,
+                label="active_idea_to_spec_candidate",
+                expected_kind="active_idea_to_spec_candidate",
+            )
+        )
+        source_artifacts.append(active_status)
     repair_session, repair_status, repair_diagnostics = (
         load_product_candidate_approval_artifact(
             repair_session_path,
@@ -5434,6 +5780,17 @@ def product_candidate_approval_gate(args: argparse.Namespace) -> int:
         )
     )
     source_artifacts.append(promotion_status)
+    repaired_handoff = None
+    repaired_handoff_diagnostics: list[Diagnostic] = []
+    if repaired_handoff_path is not None:
+        repaired_handoff, repaired_handoff_status, repaired_handoff_diagnostics = (
+            load_product_candidate_approval_artifact(
+                repaired_handoff_path,
+                label="repaired_candidate_promotion_handoff_report",
+                expected_kind=PRODUCT_CANDIDATE_APPROVAL_REPAIRED_HANDOFF_KIND,
+            )
+        )
+        source_artifacts.append(repaired_handoff_status)
     repair_execution, execution_status, execution_diagnostics = (
         load_product_candidate_approval_artifact(
             repair_execution_path,
@@ -5464,13 +5821,25 @@ def product_candidate_approval_gate(args: argparse.Namespace) -> int:
         deployment_profile=deployment_profile,
         specgraph_dir=specgraph_dir,
         intent_state=intent_state,
+        active_candidate=active_candidate,
         repair_session=repair_session,
         promotion_gate=promotion_gate,
+        repaired_handoff=repaired_handoff,
         repair_execution=repair_execution,
         repair_publication=repair_publication,
         selected_intent=selected_intent,
         source_artifacts=source_artifacts,
         paths=list(args.path or []),
+        expected_active_candidate_refs=(
+            product_candidate_approval_expected_refs(
+                raw_arg=args.active_candidate,
+                resolved_path=active_candidate_path,
+                default_rel=None,
+                specgraph_dir=specgraph_dir,
+            )
+            if active_candidate_path is not None
+            else ()
+        ),
         expected_repair_session_refs=product_candidate_approval_expected_refs(
             raw_arg=args.repair_session,
             resolved_path=repair_session_path,
@@ -5485,8 +5854,10 @@ def product_candidate_approval_gate(args: argparse.Namespace) -> int:
         ),
         extra_diagnostics=[
             *intent_diagnostics,
+            *active_diagnostics,
             *repair_diagnostics,
             *promotion_diagnostics,
+            *repaired_handoff_diagnostics,
             *execution_diagnostics,
             *publication_diagnostics,
         ],
@@ -5600,6 +5971,7 @@ def build_candidate_approval_decision(
 ) -> dict[str, Any]:
     selected_intent = nested_mapping(gate_report, "selected_intent")
     summary = nested_mapping(gate_report, "summary")
+    gate_source_refs = nested_mapping(gate_report, "source_refs")
     candidate_id = str(
         selected_intent.get("candidate_id") or summary.get("candidate_id") or ""
     )
@@ -5607,6 +5979,23 @@ def build_candidate_approval_decision(
         selected_intent.get("workspace_id") or summary.get("workspace_id") or candidate_id
     )
     paths = string_list(gate_report.get("approved_paths"))
+    source_artifacts = {
+        "candidate_approval_gate": str(gate_report_path),
+        "candidate_approval_intent": selected_intent.get("id"),
+        "repair_session": gate_source_refs.get("repair_session")
+        or selected_intent.get("repair_session_ref")
+        or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
+        "promotion_gate": gate_source_refs.get("promotion_gate")
+        or selected_intent.get("promotion_gate_ref")
+        or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
+        "repaired_handoff": gate_source_refs.get("repaired_handoff"),
+        "platform_repair_execution": (
+            PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_execution"]
+        ),
+        "platform_repair_publication": (
+            PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_publication"]
+        ),
+    }
     return {
         "artifact_kind": PRODUCT_CANDIDATE_APPROVAL_DECISION_KIND,
         "schema_version": 1,
@@ -5625,7 +6014,8 @@ def build_candidate_approval_decision(
         "candidate": {
             "candidate_id": candidate_id,
             "display_name": workspace_id.replace("-", " ").title(),
-            "active_candidate_ref": "runs/active_idea_to_spec_candidate.json",
+            "active_candidate_ref": gate_source_refs.get("active_candidate")
+            or "runs/active_idea_to_spec_candidate.json",
             "promotion_gate_ref": selected_intent.get("promotion_gate_ref")
             or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
         },
@@ -5648,18 +6038,7 @@ def build_candidate_approval_decision(
             "requires_git_service_execution": True,
         },
         "source_artifacts": {
-            "candidate_approval_gate": str(gate_report_path),
-            "candidate_approval_intent": selected_intent.get("id"),
-            "repair_session": selected_intent.get("repair_session_ref")
-            or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
-            "promotion_gate": selected_intent.get("promotion_gate_ref")
-            or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
-            "platform_repair_execution": (
-                PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_execution"]
-            ),
-            "platform_repair_publication": (
-                PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_publication"]
-            ),
+            key: value for key, value in source_artifacts.items() if value is not None
         },
         "authority_boundary": {
             "may_execute_prompt_agent": False,
@@ -11789,10 +12168,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     product_candidate_approval_gate_parser.add_argument(
+        "--active-candidate",
+        help=(
+            "Optional active_idea_to_spec_candidate artifact to validate with a "
+            "repaired handoff, for example runs/repaired_active_idea_to_spec_candidate.json."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
         "--promotion-gate",
         help=(
             "Idea-to-spec promotion gate artifact. Defaults to "
             "runs/idea_to_spec_promotion_gate.json under --specgraph-dir."
+        ),
+    )
+    product_candidate_approval_gate_parser.add_argument(
+        "--repaired-handoff",
+        help=(
+            "Optional repaired_candidate_promotion_handoff_report from SpecGraph "
+            "0177. When provided, the gate verifies it points at the selected "
+            "active candidate, repair session, and promotion gate inputs."
         ),
     )
     product_candidate_approval_gate_parser.add_argument(
