@@ -1085,6 +1085,87 @@ publish-bundle:
             workspace_dir / ".platform" / "graph_repository_open_review_report.json",
         )
 
+    def write_product_candidate_promotion_execution_report(
+        self,
+        tmp_root: Path,
+        *,
+        dry_run: bool = False,
+        open_review_dry_run: bool = False,
+    ) -> tuple[Path, Path, Path]:
+        workspace_dir, open_review_report = self.open_graph_repository_review(tmp_root)
+        report_path = tmp_root / "product_candidate_promotion_execution_report.json"
+        payload = {
+            "schema_version": 1,
+            "artifact_kind": "platform_product_candidate_promotion_execution_report",
+            "generated_at": "2026-06-21T16:00:00Z",
+            "promotion_request_ref": str(
+                tmp_root / "graph_repository_promotion_request.json"
+            ),
+            "approval_decision_ref": str(tmp_root / "candidate_approval_decision.json"),
+            "deployment_profile_ref": str(
+                REPO_ROOT / "deployment-profiles/product-idea-to-spec-workbench.json"
+            ),
+            "contract_ref": str(
+                REPO_ROOT / "git-service-operation-contract.example.json"
+            ),
+            "graph_repository_plan_ref": str(
+                tmp_root / "graph_repository_execution_plan.json"
+            ),
+            "git_service_execution_report_ref": str(
+                workspace_dir / ".platform/git_service_promotion_execution_report.json"
+            ),
+            "ok": True,
+            "dry_run": dry_run,
+            "open_review_dry_run": open_review_dry_run,
+            "workflow_lane": "product_idea_to_spec",
+            "candidate_id": "idea-alpha",
+            "candidate_branch": "graph-candidate/idea-alpha",
+            "repository_dir": str(tmp_root / "checkout"),
+            "workspace_dir": str(workspace_dir),
+            "git_service_execution": {
+                "artifact_kind": "platform_git_service_promotion_execution_report",
+                "ok": True,
+                "dry_run": dry_run,
+                "open_review_dry_run": open_review_dry_run,
+                "report_refs": {"open_review": str(open_review_report)},
+                "operations": [
+                    {"name": "prepare_worktree", "status": "succeeded"},
+                    {"name": "commit_candidate", "status": "succeeded"},
+                    {
+                        "name": "open_review",
+                        "status": "dry_run"
+                        if open_review_dry_run
+                        else "succeeded",
+                    },
+                ],
+            },
+            "operations": [],
+            "authority_boundary": {
+                "specspace_direct_git_write": False,
+                "controlled_git_service_execution": True,
+                "creates_candidate_worktree_or_branch": True,
+                "creates_candidate_commit": True,
+                "opens_pull_requests": not open_review_dry_run,
+                "merges_pull_requests": False,
+                "publishes_read_models": False,
+                "canonical_spec_mutation_without_review": False,
+                "ontology_package_write": False,
+                "ontology_term_acceptance": False,
+                "private_artifact_publication": False,
+            },
+            "diagnostics": [],
+            "summary": {
+                "status": "completed",
+                "error_count": 0,
+                "worktree_prepared": True,
+                "commit_created": True,
+                "review_opened": not open_review_dry_run,
+                "read_model_published": False,
+            },
+        }
+        report_path.write_text(json.dumps(payload), encoding="utf-8")
+        return report_path, workspace_dir, open_review_report
+
     def merged_graph_repository_review_status(self, tmp_root: Path) -> tuple[Path, Path]:
         workspace_dir, open_review_report = self.open_graph_repository_review(tmp_root)
         fake_gh = self.write_fake_gh_view(
@@ -4149,6 +4230,258 @@ workspaces:
         self.assertIn("product_candidate_promotion_source_plan_mismatch", codes)
         self.assertFalse(payload["ok"])
         self.assertIsNone(payload["git_service_command_result"])
+
+    def test_product_candidate_promotion_review_status_marks_merged_review(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "MERGED",
+                    "isDraft": False,
+                    "mergedAt": "2026-06-21T16:00:00Z",
+                    "mergeCommit": {"oid": "abc123"},
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+            output = tmp_root / "product_candidate_promotion_review_status_report.json"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--gh-bin",
+                str(fake_gh),
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_candidate_promotion_review_status_report",
+            )
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertEqual(payload["review_state"], "merged")
+            self.assertTrue(payload["summary"]["review_merged"])
+            self.assertEqual(
+                payload["summary"]["status"],
+                "ready_for_read_model_publication",
+            )
+            self.assertFalse(payload["authority_boundary"]["publishes_read_models"])
+            self.assertFalse(payload["authority_boundary"]["merges_pull_requests"])
+            self.assertTrue(output.is_file())
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / ".platform"
+                    / "graph_repository_review_status_report.json"
+                ).is_file()
+            )
+
+    def test_product_candidate_promotion_review_status_rejects_dry_run_execution(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(
+                    tmp_root,
+                    dry_run=True,
+                )
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "MERGED",
+                    "isDraft": False,
+                    "mergedAt": "2026-06-21T16:00:00Z",
+                    "mergeCommit": {"oid": "abc123"},
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("product_candidate_promotion_execution_dry_run", codes)
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["graph_repository_command_result"])
+
+    def test_product_candidate_promotion_publish_read_model_copies_bundle(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "MERGED",
+                    "isDraft": False,
+                    "mergedAt": "2026-06-21T16:00:00Z",
+                    "mergeCommit": {"oid": "abc123"},
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+            status_output = (
+                tmp_root / "product_candidate_promotion_review_status_report.json"
+            )
+            status_result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--gh-bin",
+                str(fake_gh),
+                "--output",
+                str(status_output),
+                "--format",
+                "json",
+            )
+            self.assertEqual(status_result.returncode, 0, status_result.stderr)
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            output_dir = tmp_root / "published-read-model"
+            publish_output = (
+                tmp_root
+                / "product_candidate_promotion_read_model_publication_report.json"
+            )
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "publish-read-model",
+                "--review-status-report",
+                str(status_output),
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(output_dir),
+                "--output",
+                str(publish_output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_candidate_promotion_read_model_publication_report",
+            )
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertEqual(payload["summary"]["status"], "published")
+            self.assertTrue(payload["summary"]["read_model_published"])
+            self.assertTrue(payload["authority_boundary"]["publishes_read_models"])
+            self.assertFalse(payload["authority_boundary"]["merges_pull_requests"])
+            self.assertFalse(payload["authority_boundary"]["ontology_package_write"])
+            self.assertTrue((output_dir / "artifact_manifest.json").is_file())
+            self.assertTrue(
+                (output_dir / "runs" / "candidate_spec_graph.json").is_file()
+            )
+            self.assertTrue(publish_output.is_file())
+            self.assertTrue(
+                (
+                    output_dir
+                    / ".platform"
+                    / "graph_repository_publish_read_model_report.json"
+                ).is_file()
+            )
+
+    def test_product_candidate_promotion_publish_read_model_rejects_unmerged_review(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "mergedAt": None,
+                    "mergeCommit": None,
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+            status_output = (
+                tmp_root / "product_candidate_promotion_review_status_report.json"
+            )
+            status_result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--gh-bin",
+                str(fake_gh),
+                "--output",
+                str(status_output),
+                "--format",
+                "json",
+            )
+            self.assertEqual(status_result.returncode, 0, status_result.stderr)
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            output_dir = tmp_root / "published-read-model"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "publish-read-model",
+                "--review-status-report",
+                str(status_output),
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("product_candidate_promotion_review_not_merged", codes)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["summary"]["read_model_published"])
+        self.assertFalse(output_dir.exists())
 
     def test_graph_repository_prepare_local_writes_workspace_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

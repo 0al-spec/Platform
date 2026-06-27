@@ -365,6 +365,50 @@ candidate specs into canonical state, write Ontology packages, or accept
 Ontology terms. Post-review read-model publication remains a separate
 `review-status` / `publish-read-model` step after the pull request is merged.
 
+## Product Post-Review Read-Model Publication
+
+After the review pull request exists, product promotion continues through two
+product-aware wrappers. The first one inspects review state from the product
+execution report:
+
+```bash
+scripts/platform.py product-candidate-promotion review-status \
+  --execution-report ../SpecGraph/runs/product_candidate_promotion_execution_report.json \
+  --output ../SpecGraph/runs/product_candidate_promotion_review_status_report.json
+```
+
+This wraps `graph-repository review-status` and writes:
+
+```text
+runs/product_candidate_promotion_review_status_report.json
+```
+
+The report is read-only. It requires a non-dry-run product execution, a real
+open-review report, and a `product_idea_to_spec` workflow lane. It records the
+generic review-status report ref and whether read-model publication is still
+blocked or ready after a merged review.
+
+When the review is merged, the public-safe read model can be published through:
+
+```bash
+scripts/platform.py product-candidate-promotion publish-read-model \
+  --review-status-report ../SpecGraph/runs/product_candidate_promotion_review_status_report.json \
+  --bundle-dir ../SpecGraph/dist/specgraph-public \
+  --output-dir /srv/specspace/workspaces/team-decision-log \
+  --output ../SpecGraph/runs/product_candidate_promotion_read_model_publication_report.json
+```
+
+This wraps `graph-repository publish-read-model` and writes:
+
+```text
+runs/product_candidate_promotion_read_model_publication_report.json
+```
+
+The command copies only the supplied public-safe bundle to the selected
+read-model output directory. It does not merge the review, open pull requests,
+mutate canonical specs without review, write Ontology packages, accept Ontology
+terms, or publish private artifacts.
+
 ## Validate
 
 ```bash
