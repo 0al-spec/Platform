@@ -775,6 +775,49 @@ class PlatformDeployTests(unittest.TestCase):
             )
         )
 
+    def test_timeweb_validate_rejects_env_default_old_app_host_port_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose.replace(
+                    '      - "8080:80"\n',
+                    '      - "${SPECSPACE_UI_PORT:-127.0.0.1:5173}:80"\n',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["valid"])
+        self.assertTrue(
+            any(
+                "app must not publish old conflicting host port 5173" in error
+                for error in payload["errors"]
+            )
+        )
+
     def test_timeweb_validate_rejects_app_reserved_host_port_binding(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"

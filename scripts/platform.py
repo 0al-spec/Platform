@@ -11423,7 +11423,8 @@ def compose_port_host_part(port: str) -> str | None:
         return None
     env_default_match = re.match(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]+)\}:", value)
     if env_default_match:
-        return env_default_match.group(1)
+        default = env_default_match.group(1)
+        return compose_port_host_part(f"{default}:0")
     if value.startswith("["):
         after_bracket = value.split("]", 1)[-1].lstrip(":")
         parts = after_bracket.split(":")
