@@ -11191,8 +11191,8 @@ def render_timeweb_compose(
         f"{product_workspace_args}"
         "      - --specpm-registry-url\n"
         f"      - \"{specpm_registry_url}\"\n"
-        "    ports:\n"
-        "      - \"${SPECSPACE_API_PORT:-8001}:8001\"\n"
+        "    expose:\n"
+        "      - \"8001\"\n"
     )
 
 
@@ -11386,6 +11386,27 @@ def image_for_service(blocks: dict[str, list[str]], service_name: str) -> str | 
     return None
 
 
+def list_values_for_service_section(
+    blocks: dict[str, list[str]],
+    service_name: str,
+    section_name: str,
+) -> list[str]:
+    values: list[str] = []
+    in_section = False
+    for line in blocks.get(service_name, []):
+        if re.match(rf"^    {re.escape(section_name)}:\s*$", line):
+            in_section = True
+            continue
+        if in_section:
+            match = re.match(r"^      -\s*(.*?)\s*$", line)
+            if match:
+                values.append(match.group(1).strip().strip('"').strip("'"))
+                continue
+            if line.strip() and not line.startswith("      "):
+                break
+    return values
+
+
 def validate_timeweb_manifest_tree(
     root: Path,
     *,
@@ -11517,6 +11538,16 @@ def validate_timeweb_manifest_tree(
             errors.append(f"{service_name} image must not use latest: {image}")
         elif not DIGEST_IMAGE_RE.match(image):
             errors.append(f"{service_name} image must be digest-pinned: {image}")
+
+    api_ports = list_values_for_service_section(blocks, "specspace-api", "ports")
+    if api_ports:
+        errors.append(
+            f"{target_file} specspace-api must not publish host ports in Timeweb "
+            "deploy; app/nginx is the only public service"
+        )
+    api_expose = list_values_for_service_section(blocks, "specspace-api", "expose")
+    if "8001" not in api_expose:
+        errors.append(f"{target_file} specspace-api must expose internal port 8001")
 
     return errors
 

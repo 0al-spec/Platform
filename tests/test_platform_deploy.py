@@ -290,6 +290,8 @@ class PlatformDeployTests(unittest.TestCase):
             self.assertNotIn("volumes:", compose)
             self.assertNotIn("build:", compose)
             self.assertNotIn("${ORG_ROOT", compose)
+            self.assertNotIn("${SPECSPACE_API_PORT:-8001}:8001", compose)
+            self.assertIn("    expose:\n      - \"8001\"\n", compose)
             self.assertIn(
                 'SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED: "true"',
                 compose,
@@ -639,3 +641,45 @@ class PlatformDeployTests(unittest.TestCase):
             any("unexpected top-level entries" in error for error in payload["errors"])
         )
         self.assertTrue(any("must not declare volumes" in error for error in payload["errors"]))
+
+    def test_timeweb_validate_rejects_api_host_port_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose.replace(
+                    "    expose:\n      - \"8001\"\n",
+                    "    ports:\n      - \"${SPECSPACE_API_PORT:-8001}:8001\"\n",
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["valid"])
+        self.assertTrue(
+            any(
+                "specspace-api must not publish host ports" in error
+                for error in payload["errors"]
+            )
+        )
