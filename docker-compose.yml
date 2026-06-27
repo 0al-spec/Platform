@@ -4,7 +4,7 @@ services:
   app:
     image: "ghcr.io/0al-spec/specspace-ui@sha256:0133f0a403beb20ab0e87d3991f5b198f7d4b456221c738608e35c9ae5619176"
     ports:
-      - "${SPECSPACE_UI_PORT:-5173}:80"
+      - "80"
     depends_on:
       - specspace-api
 
