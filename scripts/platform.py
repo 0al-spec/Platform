@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -189,6 +190,26 @@ PRODUCT_REPAIR_RERUN_PUBLIC_PATHS = (
 )
 PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS = tuple(
     PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.values()
+)
+IDEA_MATURITY_METRICS_REPORT_ARTIFACT = "idea_maturity_metrics_report.json"
+IDEA_MATURITY_VALIDATION_REPORT_ARTIFACT = (
+    "idea_maturity_metrics_validation_report.json"
+)
+IDEA_MATURITY_METRICS_REPORT_KIND = "idea_maturity_metrics_report"
+IDEA_MATURITY_VALIDATION_REPORT_KIND = "idea_maturity_metrics_validation_report"
+IDEA_MATURITY_METRIC_PACK_ID = "idea_to_spec_maturity"
+IDEA_MATURITY_DEFAULT_REFS = {
+    "metrics_report": f"runs/{IDEA_MATURITY_METRICS_REPORT_ARTIFACT}",
+    "validation_report": f"runs/{IDEA_MATURITY_VALIDATION_REPORT_ARTIFACT}",
+}
+IDEA_MATURITY_TOP_LEVEL_FALSE_FIELDS = (
+    "canonical_mutations_allowed",
+    "tracked_artifacts_written",
+)
+IDEA_MATURITY_PRIVACY_FALSE_FIELDS = (
+    "contains_human_operator_identity",
+    "join_to_identity_allowed",
+    "raw_prompt_or_operator_text_included",
 )
 PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS = {
     "rerun_request": "runs/idea_to_spec_repair_rerun_requests.json",
@@ -2636,6 +2657,342 @@ def file_sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
+def load_optional_json_mapping(
+    path: Path,
+    *,
+    label: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any], list[Diagnostic]]:
+    status = {
+        "path": str(path),
+        "present": path.is_file(),
+        "sha256": file_sha256(path),
+    }
+    if not path.is_file():
+        return None, status, []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return (
+            None,
+            status,
+            [
+                Diagnostic(
+                    level="WARN",
+                    code=f"{label}_unreadable",
+                    subject=str(path),
+                    message=f"cannot read or parse {label}: {exc}",
+                )
+            ],
+        )
+    if not isinstance(data, dict):
+        return (
+            None,
+            status,
+            [
+                Diagnostic(
+                    level="WARN",
+                    code=f"{label}_not_object",
+                    subject=str(path),
+                    message=f"{label} must contain a JSON object",
+                )
+            ],
+        )
+    return data, status, []
+
+
+def numeric_metric(value: Any) -> int | float | None:
+    if type(value) is int:
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    return None
+
+
+def idea_maturity_false_field_diagnostics(
+    payload: dict[str, Any],
+    *,
+    fields: tuple[str, ...],
+    subject: str,
+    code: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for field in fields:
+        if payload.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code=code,
+                    subject=f"{subject}.{field}",
+                    message=f"{field} must be literally false for trusted maturity telemetry",
+                )
+            )
+    return diagnostics
+
+
+def idea_maturity_authority_diagnostics(
+    payload: dict[str, Any],
+    *,
+    subject: str,
+    require_top_level_boundary: bool = True,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if require_top_level_boundary:
+        diagnostics.extend(
+            idea_maturity_false_field_diagnostics(
+                payload,
+                fields=IDEA_MATURITY_TOP_LEVEL_FALSE_FIELDS,
+                subject=subject,
+                code="idea_maturity_authority_expanded",
+            )
+        )
+    authority = payload.get("authority_boundary")
+    if not isinstance(authority, dict):
+        diagnostics.append(
+            Diagnostic(
+                level="WARN",
+                code="idea_maturity_authority_boundary_missing",
+                subject=f"{subject}.authority_boundary",
+                message="maturity telemetry must declare a closed authority boundary",
+            )
+        )
+    else:
+        for key, value in sorted(authority.items()):
+            if value is not False:
+                diagnostics.append(
+                    Diagnostic(
+                        level="WARN",
+                        code="idea_maturity_authority_expanded",
+                        subject=f"{subject}.authority_boundary.{key}",
+                        message="maturity telemetry must not claim write authority",
+                    )
+                )
+    privacy = payload.get("privacy_boundary")
+    if isinstance(privacy, dict):
+        diagnostics.extend(
+            idea_maturity_false_field_diagnostics(
+                privacy,
+                fields=IDEA_MATURITY_PRIVACY_FALSE_FIELDS,
+                subject=f"{subject}.privacy_boundary",
+                code="idea_maturity_privacy_expanded",
+            )
+        )
+    return diagnostics
+
+
+def idea_maturity_public_artifact_status(
+    specgraph_dir: Path,
+    *,
+    public_root: Path | None,
+) -> dict[str, Any]:
+    if public_root is None:
+        public_root = specgraph_dir / "dist" / "specgraph-public"
+    expected = list(IDEA_MATURITY_DEFAULT_REFS.values())
+    published = [rel_path for rel_path in expected if (public_root / rel_path).is_file()]
+    missing = [rel_path for rel_path in expected if rel_path not in published]
+    return {
+        "public_root": str(public_root),
+        "expected": expected,
+        "published": published,
+        "missing": missing,
+        "published_count": len(published),
+        "missing_count": len(missing),
+    }
+
+
+def idea_maturity_summary(
+    specgraph_dir: Path,
+    *,
+    public_root: Path | None = None,
+) -> dict[str, Any]:
+    metrics_ref = IDEA_MATURITY_DEFAULT_REFS["metrics_report"]
+    validation_ref = IDEA_MATURITY_DEFAULT_REFS["validation_report"]
+    metrics_path = specgraph_dir / metrics_ref
+    validation_path = specgraph_dir / validation_ref
+    metrics_report, metrics_status, diagnostics = load_optional_json_mapping(
+        metrics_path,
+        label="idea_maturity_metrics_report",
+    )
+    validation_report, validation_status_ref, validation_diagnostics = (
+        load_optional_json_mapping(
+            validation_path,
+            label="idea_maturity_metrics_validation_report",
+        )
+    )
+    diagnostics.extend(validation_diagnostics)
+    metrics_valid = metrics_report is not None
+    validation_valid = validation_report is not None
+    if metrics_report is not None:
+        if metrics_report.get("artifact_kind") != IDEA_MATURITY_METRICS_REPORT_KIND:
+            metrics_valid = False
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code="idea_maturity_report_kind_mismatch",
+                    subject="idea_maturity_metrics_report.artifact_kind",
+                    message=f"expected {IDEA_MATURITY_METRICS_REPORT_KIND}",
+                )
+            )
+        if metrics_report.get("metric_pack_id") != IDEA_MATURITY_METRIC_PACK_ID:
+            metrics_valid = False
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code="idea_maturity_metric_pack_mismatch",
+                    subject="idea_maturity_metrics_report.metric_pack_id",
+                    message=f"expected {IDEA_MATURITY_METRIC_PACK_ID}",
+                )
+            )
+        diagnostics.extend(
+            idea_maturity_authority_diagnostics(
+                metrics_report,
+                subject="idea_maturity_metrics_report",
+            )
+        )
+    if validation_report is not None:
+        if (
+            validation_report.get("artifact_kind")
+            != IDEA_MATURITY_VALIDATION_REPORT_KIND
+        ):
+            validation_valid = False
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code="idea_maturity_validation_kind_mismatch",
+                    subject="idea_maturity_metrics_validation_report.artifact_kind",
+                    message=f"expected {IDEA_MATURITY_VALIDATION_REPORT_KIND}",
+                )
+            )
+        if validation_report.get("metric_pack_id") != IDEA_MATURITY_METRIC_PACK_ID:
+            validation_valid = False
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code="idea_maturity_validation_metric_pack_mismatch",
+                    subject="idea_maturity_metrics_validation_report.metric_pack_id",
+                    message=f"expected {IDEA_MATURITY_METRIC_PACK_ID}",
+                )
+            )
+        diagnostics.extend(
+            idea_maturity_authority_diagnostics(
+                validation_report,
+                subject="idea_maturity_metrics_validation_report",
+                require_top_level_boundary=False,
+            )
+        )
+    validation_summary = (
+        nested_mapping(validation_report, "summary") if validation_report else {}
+    )
+    validation_status = (
+        validation_summary.get("status")
+        if isinstance(validation_summary.get("status"), str)
+        else "missing"
+        if validation_report is None
+        else "unknown"
+    )
+    validation_reports = (
+        validation_report.get("reports") if isinstance(validation_report, dict) else []
+    )
+    validation_report_statuses = [
+        item.get("status")
+        for item in validation_reports
+        if isinstance(item, dict) and isinstance(item.get("status"), str)
+    ]
+    validation_ok = (
+        validation_valid
+        and validation_status == "ok"
+        and bool(validation_report_statuses)
+        and all(status == "ok" for status in validation_report_statuses)
+    )
+    if validation_report is not None and not validation_ok:
+        diagnostics.append(
+            Diagnostic(
+                level="WARN",
+                code="idea_maturity_validation_not_ok",
+                subject="idea_maturity_metrics_validation_report.summary.status",
+                message="idea maturity validation must be ok for trusted telemetry",
+            )
+        )
+    authority_or_privacy_findings = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.code
+        in {
+            "idea_maturity_authority_boundary_missing",
+            "idea_maturity_authority_expanded",
+            "idea_maturity_privacy_expanded",
+        }
+    ]
+    trusted = metrics_valid and validation_ok and not authority_or_privacy_findings
+    if metrics_report is None:
+        status = "missing"
+    elif not metrics_valid:
+        status = "invalid"
+    elif validation_report is None:
+        status = "validation_missing"
+    elif not validation_ok:
+        status = "validation_failed"
+    else:
+        status = "available"
+    derived_state = nested_mapping(metrics_report or {}, "derived_state")
+    metrics = nested_mapping(metrics_report or {}, "metrics")
+    groups = nested_mapping(metrics_report or {}, "groups")
+    workflow_friction = nested_mapping(groups, "workflow_friction")
+    promotion_readiness = nested_mapping(groups, "promotion_readiness")
+    review_publication = nested_mapping(groups, "review_publication")
+    blockers = string_list(derived_state.get("blockers"))
+    return {
+        "status": status,
+        "available": metrics_report is not None and metrics_valid,
+        "trusted": trusted,
+        "validation_status": validation_status,
+        "validation_report_count": validation_summary.get("report_count", 0),
+        "validation_invalid_count": validation_summary.get("invalid_count", 0),
+        "metric_pack_id": (metrics_report or {}).get("metric_pack_id"),
+        "lifecycle_state": derived_state.get("lifecycle_state")
+        or metrics.get("lifecycle_state"),
+        "candidate_approval_state": derived_state.get("candidate_approval_state")
+        or promotion_readiness.get("candidate_approval_state")
+        or metrics.get("candidate_approval_state"),
+        "platform_promotion_state": derived_state.get("platform_promotion_state")
+        or promotion_readiness.get("platform_promotion_state")
+        or metrics.get("platform_promotion_state"),
+        "review_status": derived_state.get("review_status")
+        or review_publication.get("review_status")
+        or metrics.get("review_status"),
+        "read_model_publication_state": derived_state.get(
+            "read_model_publication_state"
+        )
+        or review_publication.get("read_model_publication_state")
+        or metrics.get("read_model_publication_state"),
+        "blockers": blockers,
+        "blocker_count": len(blockers),
+        "stale_ref_count": numeric_metric(
+            workflow_friction.get("stale_ref_count", metrics.get("stale_ref_count"))
+        ),
+        "failed_gate_count": numeric_metric(
+            workflow_friction.get("failed_gate_count", metrics.get("failed_gate_count"))
+        ),
+        "dry_run_count": numeric_metric(
+            workflow_friction.get("dry_run_count", metrics.get("dry_run_count"))
+        ),
+        "source_refs": IDEA_MATURITY_DEFAULT_REFS,
+        "upstream_source_artifact_count": len(
+            (metrics_report or {}).get("source_artifacts", [])
+            if isinstance((metrics_report or {}).get("source_artifacts"), list)
+            else []
+        ),
+        "artifact_refs": {
+            "metrics_report": metrics_status,
+            "validation_report": validation_status_ref,
+        },
+        "public_artifacts": idea_maturity_public_artifact_status(
+            specgraph_dir,
+            public_root=public_root,
+        ),
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+    }
+
+
 def path_arg_or_default(
     value: str | None,
     *,
@@ -4990,6 +5347,10 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
                 ),
             )
         )
+    maturity_summary = idea_maturity_summary(
+        specgraph_dir,
+        public_root=specgraph_dir / "dist" / "specgraph-public",
+    )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0
     report = {
@@ -5021,12 +5382,16 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         },
         "published_artifacts": present_public_paths,
         "missing_artifacts": missing_public_paths,
+        "idea_maturity": maturity_summary,
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
         "summary": {
             "status": "published" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
             "error_count": error_count,
             "published_artifact_count": len(present_public_paths),
             "missing_artifact_count": len(missing_public_paths),
+            "idea_maturity_status": maturity_summary["status"],
+            "idea_maturity_trusted": maturity_summary["trusted"],
+            "idea_maturity_validation_status": maturity_summary["validation_status"],
         },
     }
     if not args.no_write_report:
@@ -6033,6 +6398,7 @@ def build_product_candidate_approval_gate_report(
             )
         )
 
+    maturity_summary = idea_maturity_summary(specgraph_dir)
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ready_to_materialize = error_count == 0
     selected_summary = (
@@ -6146,6 +6512,7 @@ def build_product_candidate_approval_gate_report(
         "source_refs": {key: value for key, value in source_refs.items() if value},
         "selected_intent": selected_summary,
         "approved_paths": paths if ready_to_materialize else [],
+        "idea_maturity": maturity_summary,
         "operations": operations,
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
         "authority_boundary": PRODUCT_CANDIDATE_APPROVAL_BOUNDARY,
@@ -6158,6 +6525,9 @@ def build_product_candidate_approval_gate_report(
             "status": "ready_to_materialize" if ready_to_materialize else "blocked",
             "error_count": error_count,
             "source_artifact_count": len(source_artifacts),
+            "idea_maturity_status": maturity_summary["status"],
+            "idea_maturity_trusted": maturity_summary["trusted"],
+            "idea_maturity_validation_status": maturity_summary["validation_status"],
             "approved_path_count": len(paths) if ready_to_materialize else 0,
             "workspace_id": selected_summary.get("workspace_id")
             if selected_summary
@@ -7299,6 +7669,10 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
             )
         )
 
+    maturity_summary = idea_maturity_summary(
+        specgraph_dir,
+        public_root=specgraph_dir / "dist" / "specgraph-public",
+    )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     expected_phase_keys = ["plan", "execution", "publication"]
     if args.build_repaired_handoff:
@@ -7340,6 +7714,7 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
                 "present": False,
             },
         },
+        "idea_maturity": maturity_summary,
         "operations": operations,
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
         "summary": {
@@ -7377,6 +7752,9 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
                 "published_artifact_count",
                 0,
             ),
+            "idea_maturity_status": maturity_summary["status"],
+            "idea_maturity_trusted": maturity_summary["trusted"],
+            "idea_maturity_validation_status": maturity_summary["validation_status"],
             "candidate_approval_approved_path_count": candidate_approval_summary.get(
                 "approved_path_count",
                 0,

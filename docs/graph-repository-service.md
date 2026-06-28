@@ -241,6 +241,15 @@ that the selected SpecSpace draft request can be validated, executed through the
 single approved SpecGraph make target, published as public-safe artifacts, and
 observed without starting candidate approval or Git Service promotion.
 
+When SpecGraph has produced `runs/idea_maturity_metrics_report.json` and
+`runs/idea_maturity_metrics_validation_report.json`, the publish and smoke
+reports also include a compact `idea_maturity` summary. Platform exposes the
+metrics status, validation status, lifecycle state, blockers, stale refs, failed
+gates, dry-run count, source refs, and public bundle presence. This is
+report-only telemetry: missing or failed maturity metrics make the maturity
+surface untrusted, but they do not replace the concrete repair, approval, and
+promotion gates.
+
 The smoke can also include the repaired handoff and candidate approval gate:
 
 ```bash
@@ -338,6 +347,12 @@ SpecSpace, the active intent is still `requested`, repair-session readiness is
 `ready_for_candidate_approval`, repair rerun execution/publication are
 successful non-dry-run reports, no ontology/spec/Git authority has expanded,
 and the approved paths are safe relative repository paths.
+
+The gate report also carries the same compact `idea_maturity` summary when the
+SpecGraph maturity artifacts are present. The summary helps an operator inspect
+pre-SIB/product maturity, but the gate continues to base readiness on concrete
+handoff artifacts and explicit approved paths. Platform does not apply a score
+threshold from the metrics report.
 
 When the gate is ready, Platform can materialize the narrow handoff artifact
 that the Git Service already expects:
