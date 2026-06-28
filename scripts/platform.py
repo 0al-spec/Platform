@@ -163,6 +163,24 @@ PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS = {
     "repaired_repair_session": "runs/repaired_idea_to_spec_repair_session.json",
     "repaired_promotion_gate": "runs/repaired_idea_to_spec_promotion_gate.json",
 }
+GRAPH_REPOSITORY_REPAIRED_PLAN_ARTIFACTS = {
+    "repaired_handoff": (
+        "repaired_candidate_promotion_handoff_report.json",
+        "repaired_candidate_promotion_handoff_report",
+    ),
+    "repaired_active_candidate": (
+        "repaired_active_idea_to_spec_candidate.json",
+        "active_idea_to_spec_candidate",
+    ),
+    "repaired_repair_session": (
+        "repaired_idea_to_spec_repair_session.json",
+        "idea_to_spec_repair_session_journal",
+    ),
+    "repaired_promotion_gate": (
+        "repaired_idea_to_spec_promotion_gate.json",
+        "idea_to_spec_promotion_gate",
+    ),
+}
 PRODUCT_REPAIR_RERUN_PUBLIC_PATHS = (
     "runs/idea_to_spec_repair_session.json",
     "runs/specspace_repair_draft_rerun_report.json",
@@ -2752,6 +2770,14 @@ def graph_repository_run_artifact_status(
     return status, payload, diagnostics
 
 
+def graph_repository_repaired_source_ref(
+    *,
+    runs_dir: Path,
+    filename: str,
+) -> str:
+    return f"runs/{filename}"
+
+
 def graph_repository_operation(
     *,
     name: str,
@@ -2815,9 +2841,9 @@ def graph_repository_repair_session_diagnostics(
     repair_session: dict[str, Any],
     *,
     expected_source_refs: dict[str, tuple[str, ...]] | None = None,
+    subject: str = "runs.idea_to_spec_repair_session.json",
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
-    subject = "runs.idea_to_spec_repair_session.json"
     expected_refs_by_key = {
         key: (value,)
         for key, value in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items()
@@ -3016,6 +3042,7 @@ def build_graph_repository_execution_plan(
     contract_path: Path,
     contract: dict[str, Any],
     runs_dir: Path,
+    repaired_handoff_path: Path | None = None,
 ) -> tuple[dict[str, Any], list[Diagnostic]]:
     diagnostics = [
         *validate_graph_repository_contract_schema(contract),
@@ -3023,28 +3050,121 @@ def build_graph_repository_execution_plan(
     ]
     source_artifacts: list[dict[str, Any]] = []
     payloads: dict[str, dict[str, Any]] = {}
-    for artifact_key, (
-        filename,
-        expected_kind,
-    ) in GRAPH_REPOSITORY_REQUIRED_RUN_ARTIFACTS.items():
-        status, payload, artifact_diagnostics = graph_repository_run_artifact_status(
-            runs_dir=runs_dir,
-            artifact_key=artifact_key,
-            filename=filename,
-            expected_kind=expected_kind,
-        )
-        source_artifacts.append(status)
-        if payload is not None:
-            payloads[artifact_key] = payload
-        diagnostics.extend(artifact_diagnostics)
+    if repaired_handoff_path is None:
+        for artifact_key, (
+            filename,
+            expected_kind,
+        ) in GRAPH_REPOSITORY_REQUIRED_RUN_ARTIFACTS.items():
+            status, payload, artifact_diagnostics = graph_repository_run_artifact_status(
+                runs_dir=runs_dir,
+                artifact_key=artifact_key,
+                filename=filename,
+                expected_kind=expected_kind,
+            )
+            source_artifacts.append(status)
+            if payload is not None:
+                payloads[artifact_key] = payload
+            diagnostics.extend(artifact_diagnostics)
 
-    repair_session = payloads.get("idea_to_spec_repair_session")
-    if repair_session is not None:
-        diagnostics.extend(graph_repository_repair_session_diagnostics(repair_session))
+        repair_session = payloads.get("idea_to_spec_repair_session")
+        if repair_session is not None:
+            diagnostics.extend(graph_repository_repair_session_diagnostics(repair_session))
+
+    repaired_payloads: dict[str, dict[str, Any]] = {}
+    repaired_source_refs: dict[str, str] = {}
+    if repaired_handoff_path is not None:
+        for artifact_key, (
+            filename,
+            expected_kind,
+        ) in GRAPH_REPOSITORY_REPAIRED_PLAN_ARTIFACTS.items():
+            if artifact_key == "repaired_handoff":
+                path = repaired_handoff_path
+                source_ref = graph_repository_repaired_source_ref(
+                    runs_dir=runs_dir,
+                    filename=path.name,
+                )
+            else:
+                path = runs_dir / filename
+                source_ref = graph_repository_repaired_source_ref(
+                    runs_dir=runs_dir,
+                    filename=filename,
+                )
+            status, payload, artifact_diagnostics = graph_repository_run_artifact_status(
+                runs_dir=path.parent,
+                artifact_key=artifact_key,
+                filename=path.name,
+                expected_kind=expected_kind,
+            )
+            status["source_mode"] = "repaired_handoff"
+            status["source_ref"] = source_ref
+            source_artifacts.append(status)
+            repaired_source_refs[artifact_key] = source_ref
+            if payload is not None:
+                repaired_payloads[artifact_key] = payload
+            diagnostics.extend(artifact_diagnostics)
+
+        repaired_repair_session = repaired_payloads.get("repaired_repair_session")
+        if repaired_repair_session is not None:
+            diagnostics.extend(
+                graph_repository_repair_session_diagnostics(
+                    repaired_repair_session,
+                    subject="runs.repaired_idea_to_spec_repair_session.json",
+                    expected_source_refs={
+                        "active_candidate": (
+                            repaired_source_refs.get(
+                                "repaired_active_candidate",
+                                PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
+                                    "repaired_active_candidate"
+                                ],
+                            ),
+                        ),
+                        "promotion_gate": (
+                            repaired_source_refs.get(
+                                "repaired_promotion_gate",
+                                PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
+                                    "repaired_promotion_gate"
+                                ],
+                            ),
+                        ),
+                    },
+                )
+            )
+        if "repaired_handoff" in repaired_payloads:
+            diagnostics.extend(
+                product_candidate_approval_repaired_handoff_diagnostics(
+                    repaired_payloads["repaired_handoff"],
+                    expected_active_candidate_refs=(
+                        repaired_source_refs.get(
+                            "repaired_active_candidate",
+                            PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
+                                "repaired_active_candidate"
+                            ],
+                        ),
+                    ),
+                    expected_repair_session_refs=(
+                        repaired_source_refs.get(
+                            "repaired_repair_session",
+                            PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
+                                "repaired_repair_session"
+                            ],
+                        ),
+                    ),
+                    expected_promotion_gate_refs=(
+                        repaired_source_refs.get(
+                            "repaired_promotion_gate",
+                            PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
+                                "repaired_promotion_gate"
+                            ],
+                        ),
+                    ),
+                    require_active_candidate_ref=True,
+                )
+            )
 
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     operations: list[dict[str, Any]]
     ready_for_branch = False
+    repaired_mode = repaired_handoff_path is not None
     if error_count:
         operations = [
             graph_repository_operation(
@@ -3076,6 +3196,104 @@ def build_graph_repository_execution_plan(
                 name="publish_read_model",
                 status="blocked",
                 reason="review_not_opened",
+            ),
+        ]
+    elif repaired_mode:
+        repaired_handoff = repaired_payloads["repaired_handoff"]
+        repaired_active_candidate = repaired_payloads["repaired_active_candidate"]
+        repaired_repair_session = repaired_payloads["repaired_repair_session"]
+        repaired_promotion_gate = repaired_payloads["repaired_promotion_gate"]
+        active_readiness = nested_mapping(repaired_active_candidate, "readiness")
+        handoff_readiness = nested_mapping(repaired_handoff, "readiness")
+        repair_session_readiness = nested_mapping(repaired_repair_session, "readiness")
+        promotion_gate_readiness = nested_mapping(repaired_promotion_gate, "readiness")
+        promotion_request = nested_mapping(repaired_promotion_gate, "promotion_request")
+        promotion_paths = string_list(promotion_request.get("paths"))
+        prepare_blockers: list[str] = []
+        if handoff_readiness.get("ready") is not True:
+            add_blocker(prepare_blockers, "repaired_handoff_not_ready")
+        if active_readiness.get("ready") is not True:
+            add_blocker(prepare_blockers, "repaired_active_candidate_not_ready")
+        if repair_session_readiness.get("ready") is not True:
+            add_blocker(prepare_blockers, "repaired_repair_session_not_ready")
+        if (
+            repair_session_readiness_flag(
+                repaired_repair_session,
+                "ready_for_candidate_approval",
+            )
+            is not True
+        ):
+            impact_blockers = string_list(
+                nested_mapping(repaired_repair_session, "readiness_impact").get(
+                    "blocked_by"
+                )
+            )
+            if impact_blockers:
+                for blocker in impact_blockers:
+                    add_blocker(prepare_blockers, blocker)
+            else:
+                add_blocker(
+                    prepare_blockers,
+                    "repaired_repair_session_not_ready_for_candidate_approval",
+                )
+        if promotion_gate_readiness.get("ready") is not True:
+            add_blocker(prepare_blockers, "repaired_promotion_gate_not_ready")
+        if not promotion_paths:
+            add_blocker(prepare_blockers, "repaired_promotion_paths_missing")
+
+        ready_for_branch = not prepare_blockers
+        operations = [
+            graph_repository_operation(
+                name="create_candidate_workspace",
+                status="ready",
+                reason="repaired candidate handoff artifacts are available",
+                evidence=[
+                    "repaired_active_candidate",
+                    "repaired_repair_session",
+                    "repaired_promotion_gate",
+                    "repaired_handoff",
+                ],
+            ),
+            graph_repository_operation(
+                name="validate_candidate_graph",
+                status="ready" if ready_for_branch else "blocked",
+                reason="repaired candidate handoff is ready for branch preparation"
+                if ready_for_branch
+                else ",".join(prepare_blockers),
+                evidence=[
+                    "repaired_handoff",
+                    "repaired_active_candidate",
+                    "repaired_repair_session",
+                    "repaired_promotion_gate",
+                ],
+            ),
+            graph_repository_operation(
+                name="prepare_branch",
+                status="ready" if ready_for_branch else "blocked",
+                reason="repaired_candidate_approval_ready"
+                if ready_for_branch
+                else ",".join(prepare_blockers),
+                evidence=[
+                    "repaired_handoff",
+                    "repaired_active_candidate",
+                    "repaired_repair_session",
+                    "repaired_promotion_gate",
+                ],
+            ),
+            graph_repository_operation(
+                name="create_commit",
+                status="blocked_until_prepare_branch",
+                reason="report-only plan does not execute git commit",
+            ),
+            graph_repository_operation(
+                name="open_review",
+                status="blocked_until_create_commit",
+                reason="report-only plan does not open pull requests",
+            ),
+            graph_repository_operation(
+                name="publish_read_model",
+                status="blocked_until_review_or_policy",
+                reason="report-only plan does not publish read models",
             ),
         ]
     else:
@@ -3290,6 +3508,7 @@ def build_graph_repository_execution_plan(
         "runs_dir": str(runs_dir),
         "ok": error_count == 0,
         "ready_for_branch": ready_for_branch,
+        "source_mode": "repaired_handoff" if repaired_mode else "standard_runs",
         "read_only": True,
         "canonical_mutations_allowed": False,
         "tracked_artifacts_written": False,
@@ -3322,11 +3541,17 @@ def build_graph_repository_execution_plan(
 def graph_repository_plan(args: argparse.Namespace) -> int:
     contract_path = Path(args.contract)
     runs_dir = Path(args.runs_dir)
+    repaired_handoff_path = (
+        input_path_arg(args.repaired_handoff, base_dir=runs_dir)
+        if args.repaired_handoff
+        else None
+    )
     contract = load_json_mapping(contract_path, label="graph repository contract")
     plan, diagnostics = build_graph_repository_execution_plan(
         contract_path=contract_path,
         contract=contract,
         runs_dir=runs_dir,
+        repaired_handoff_path=repaired_handoff_path,
     )
     error_count = plan["summary"]["error_count"]
 
@@ -12330,6 +12555,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--runs-dir",
         required=True,
         help="Directory containing required SpecGraph run JSON artifacts.",
+    )
+    graph_repository_plan_parser.add_argument(
+        "--repaired-handoff",
+        help=(
+            "Optional repaired_candidate_promotion_handoff_report. When provided, "
+            "branch readiness is evaluated against repaired active candidate, "
+            "repair session, and promotion gate artifacts in --runs-dir."
+        ),
     )
     graph_repository_plan_parser.add_argument(
         "--output",
