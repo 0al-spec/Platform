@@ -377,6 +377,195 @@ class PlatformCliTests(unittest.TestCase):
         for filename, payload in artifacts.items():
             (runs_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
 
+    def write_graph_repository_repaired_run_artifacts(
+        self,
+        runs_dir: Path,
+        *,
+        stale_handoff_ref: bool = False,
+    ) -> None:
+        source_refs = {
+            "active_candidate": "runs/repaired_active_idea_to_spec_candidate.json",
+            "clarification_requests": "runs/idea_to_spec_clarification_requests.json",
+            "clarification_answers": "runs/idea_to_spec_clarification_answers.json",
+            "ontology_decisions": "runs/product_ontology_gap_review_decisions.json",
+            "rerun_input": "runs/idea_to_spec_answer_rerun_input.json",
+            "rerun_preview": "runs/idea_to_spec_rerun_preview.json",
+            "rerun_materialization": "runs/idea_to_spec_rerun_materialization.json",
+            "promotion_gate": "runs/repaired_idea_to_spec_promotion_gate.json",
+        }
+        repaired_active = {
+            "schema_version": 1,
+            "artifact_kind": "active_idea_to_spec_candidate",
+            "contract_ref": "specgraph.idea-to-spec.active-candidate-source.v0.1",
+            "canonical_mutations_allowed": False,
+            "tracked_artifacts_written": False,
+            "readiness": {
+                "ready": True,
+                "review_state": "active_candidate_ready",
+                "blocked_by": [],
+            },
+            "summary": {
+                "candidate_id": "idea-alpha",
+                "workspace_route": "/idea-alpha",
+                "status": "active_candidate_ready",
+                "promotion_path_count": 1,
+            },
+        }
+        repaired_repair_session = {
+            "schema_version": 1,
+            "artifact_kind": "idea_to_spec_repair_session_journal",
+            "contract_ref": "specgraph.idea-to-spec.repair-session-journal.v0.1",
+            "canonical_mutations_allowed": False,
+            "tracked_artifacts_written": False,
+            "authority_boundary": {
+                "may_accept_ontology_terms": False,
+                "may_apply_answers_to_source_artifacts": False,
+                "may_apply_decisions_to_source_artifacts": False,
+                "may_create_branch_or_commit": False,
+                "may_execute_prompt_agent": False,
+                "may_mark_candidate_graph_accepted": False,
+                "may_mutate_candidate_source_artifacts": False,
+                "may_mutate_canonical_specs": False,
+                "may_open_pull_request": False,
+                "may_publish_read_model": False,
+                "may_write_ontology_lockfile": False,
+                "may_write_ontology_package": False,
+            },
+            "privacy_boundary": {
+                "raw_idea_text_published": False,
+                "raw_model_output_published": False,
+                "raw_operator_note_published": False,
+                "raw_prompt_published": False,
+                "static_flags_are_asserted_invariants": True,
+            },
+            "session": {
+                "candidate_id": "idea-alpha",
+                "workflow_lane": "product_idea_to_spec",
+                "target_repository_role": "product_spec_workspace",
+                "workspace_route": "/idea-alpha",
+            },
+            "readiness": {
+                "ready": True,
+                "review_state": "repair_session_journal_ready",
+                "blocked_by": [],
+            },
+            "readiness_impact": {
+                "blocked_by": [],
+                "intermediate_artifacts_ready": True,
+                "ready_for_candidate_approval": True,
+                "ready_for_platform_promotion": False,
+                "unresolved_ontology_gap_count": 0,
+            },
+            "source_artifacts": {
+                key: {
+                    "artifact_key": key,
+                    "source_ref": source_ref,
+                    "artifact_kind": key,
+                    "readiness": {"ready": True, "review_state": "ready"},
+                }
+                for key, source_ref in source_refs.items()
+            },
+            "summary": {
+                "candidate_id": "idea-alpha",
+                "workflow_lane": "product_idea_to_spec",
+                "ready_for_candidate_approval": True,
+                "unresolved_ontology_gap_count": 0,
+                "source_artifact_count": len(source_refs),
+            },
+        }
+        repaired_promotion_gate = {
+            "schema_version": 1,
+            "artifact_kind": "idea_to_spec_promotion_gate",
+            "canonical_mutations_allowed": False,
+            "tracked_artifacts_written": False,
+            "readiness": {
+                "ready": True,
+                "review_state": "ready_for_platform_promotion_request",
+                "blocked_by": [],
+            },
+            "summary": {
+                "status": "ready_for_platform_promotion_request",
+                "promotion_path_count": 1,
+                "materialized_file_count": 1,
+                "finding_count": 0,
+            },
+            "promotion_request": {
+                "paths": ["runs/repaired_materialized_candidate_specs/IDEA-ALPHA.yaml"],
+                "path_argument": "--path",
+                "platform_artifact_kind": "platform_graph_repository_promotion_request",
+            },
+            "authority_boundary": {
+                "may_create_branch_or_commit": False,
+                "may_mutate_canonical_specs": False,
+                "may_open_pull_request": False,
+                "may_write_ontology_package": False,
+            },
+        }
+        repaired_handoff = {
+            "schema_version": 1,
+            "artifact_kind": "repaired_candidate_promotion_handoff_report",
+            "contract_ref": (
+                "specgraph.idea-to-spec.repaired-candidate-promotion-handoff.v0.1"
+            ),
+            "canonical_mutations_allowed": False,
+            "tracked_artifacts_written": False,
+            "readiness": {
+                "ready": True,
+                "review_state": "repaired_candidate_promotion_handoff_ready",
+                "blocked_by": [],
+            },
+            "summary": {
+                "status": "repaired_candidate_promotion_handoff_ready",
+                "ready_for_candidate_approval": True,
+                "ready_for_platform_promotion": False,
+                "unresolved_candidate_gap_count": 0,
+                "unresolved_ontology_gap_count": 0,
+                "resolved_candidate_gap_count": 1,
+                "resolved_ontology_gap_count": 1,
+                "removed_gap_count": 2,
+            },
+            "output_artifacts": {
+                "repaired_active_candidate": {
+                    "artifact_kind": "active_idea_to_spec_candidate",
+                    "source_ref": "runs/active_idea_to_spec_candidate.json"
+                    if stale_handoff_ref
+                    else "runs/repaired_active_idea_to_spec_candidate.json",
+                    "summary": repaired_active["summary"],
+                },
+                "repaired_repair_session": {
+                    "artifact_kind": "idea_to_spec_repair_session_journal",
+                    "source_ref": "runs/repaired_idea_to_spec_repair_session.json",
+                    "summary": repaired_repair_session["summary"],
+                },
+                "repaired_promotion_gate": {
+                    "artifact_kind": "idea_to_spec_promotion_gate",
+                    "source_ref": "runs/repaired_idea_to_spec_promotion_gate.json",
+                    "summary": repaired_promotion_gate["summary"],
+                },
+            },
+            "authority_boundary": {
+                "may_accept_ontology_terms": False,
+                "may_create_branch_or_commit": False,
+                "may_execute_prompt_agent": False,
+                "may_mark_candidate_graph_accepted": False,
+                "may_materialize_candidate_approval_decision": False,
+                "may_mutate_candidate_source_artifacts": False,
+                "may_mutate_canonical_specs": False,
+                "may_open_pull_request": False,
+                "may_publish_read_model": False,
+                "may_write_ontology_lockfile": False,
+                "may_write_ontology_package": False,
+            },
+        }
+        artifacts = {
+            "repaired_active_idea_to_spec_candidate.json": repaired_active,
+            "repaired_idea_to_spec_repair_session.json": repaired_repair_session,
+            "repaired_idea_to_spec_promotion_gate.json": repaired_promotion_gate,
+            "repaired_candidate_promotion_handoff_report.json": repaired_handoff,
+        }
+        for filename, payload in artifacts.items():
+            (runs_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
+
     def write_product_repair_rerun_artifacts(
         self,
         specgraph_dir: Path,
@@ -2880,6 +3069,73 @@ workspaces:
         self.assertFalse(payload["ready_for_branch"])
         self.assertEqual(operations["prepare_branch"]["status"], "blocked")
         self.assertEqual(operations["prepare_branch"]["reason"], "candidate_not_ready")
+
+    def test_graph_repository_plan_accepts_repaired_handoff_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                candidate_ready=False,
+                repair_session_ready_for_candidate_approval=False,
+            )
+            self.write_graph_repository_repaired_run_artifacts(runs_dir)
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--repaired-handoff",
+                "repaired_candidate_promotion_handoff_report.json",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        operations = {
+            operation["name"]: operation for operation in payload["operations"]
+        }
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["source_mode"], "repaired_handoff")
+        self.assertTrue(payload["ready_for_branch"])
+        self.assertEqual(operations["validate_candidate_graph"]["status"], "ready")
+        self.assertEqual(operations["prepare_branch"]["status"], "ready")
+        source_keys = {artifact["key"] for artifact in payload["source_artifacts"]}
+        self.assertIn("repaired_handoff", source_keys)
+        self.assertIn("repaired_active_candidate", source_keys)
+        self.assertIn("repaired_repair_session", source_keys)
+        self.assertIn("repaired_promotion_gate", source_keys)
+
+    def test_graph_repository_plan_rejects_stale_repaired_handoff_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(runs_dir)
+            self.write_graph_repository_repaired_run_artifacts(
+                runs_dir,
+                stale_handoff_ref=True,
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--repaired-handoff",
+                "repaired_candidate_promotion_handoff_report.json",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("product_candidate_approval_repaired_handoff_ref_stale", codes)
+        self.assertFalse(payload["ok"])
 
     def test_graph_repository_plan_blocks_unresolved_ontology_gaps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
