@@ -4073,6 +4073,54 @@ workspaces:
                 "skipped_dry_run",
             )
 
+    def test_product_candidate_approval_approve_resolves_relative_gate_output_under_specgraph(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            relative_gate = f"runs/{Path(tmp_dir).name}_relative_gate.json"
+            gate_path = specgraph_dir / relative_gate
+            caller_relative_gate_path = REPO_ROOT / relative_gate
+            decision_path = specgraph_dir / "runs" / "candidate_approval_decision.json"
+            report_path = (
+                specgraph_dir
+                / "runs"
+                / "platform_candidate_approval_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "approve",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--gate-output",
+                relative_gate,
+                "--decision-output",
+                str(decision_path),
+                "--output",
+                str(report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            decision = json.loads(decision_path.read_text(encoding="utf-8"))
+            self.assertTrue(gate_path.is_file())
+            self.assertFalse(caller_relative_gate_path.exists())
+            self.assertEqual(payload["gate_report_ref"], str(gate_path.resolve()))
+            self.assertEqual(
+                decision["source_artifacts"]["candidate_approval_gate"],
+                str(gate_path.resolve()),
+            )
+
     def test_product_candidate_approval_approve_rejects_blocked_gate(
         self,
     ) -> None:

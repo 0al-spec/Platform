@@ -6516,8 +6516,14 @@ def build_product_candidate_approval_execution_report(
 
 
 def product_candidate_approval_approve(args: argparse.Namespace) -> int:
+    specgraph_dir = Path(args.specgraph_dir).resolve()
+    gate_output_path = input_path_arg_or_default(
+        args.gate_output,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_OUTPUTS["gate"],
+    )
     gate_args = argparse.Namespace(**vars(args))
-    gate_args.output = args.gate_output
+    gate_args.output = str(gate_output_path)
     gate_report, gate_diagnostics, gate_output_path, specgraph_dir = (
         product_candidate_approval_gate_report_from_args(gate_args)
     )
