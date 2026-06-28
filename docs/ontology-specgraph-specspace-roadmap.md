@@ -572,44 +572,34 @@ Completed Git Service foundation:
 The previous valuable implementation choices have partially landed: active
 candidate source, workspace route selection, controlled promotion UI, deployment
 lane isolation, repair-rerun execution, a reproducible rerun smoke contract, and
-Metrics-backed idea maturity visibility are now present. The next valuable
-implementation choices are:
+Metrics-backed idea maturity visibility are now present. The first UX polish
+slice landed in SpecSpace: the panel links metric groups to lifecycle sections,
+surfaces `next_action` text, and shows rerun trend. The next explainability
+slice connects SpecGraph readiness explainers through SpecSpace and Platform
+reports so operators see "candidate is blocked because these concrete
+conditions remain", not "the score is bad".
 
-1. SpecSpace: turn the Idea Maturity panel from a dashboard into a lifecycle
-   navigation surface.
-   - Metric groups should link or focus the relevant lane:
-     clarification requests, ontology gap decisions, repair session and
-     materialization, approval readiness, or controlled promotion.
-   - Findings should expose a concrete `next_action` when the upstream artifact
-     provides one.
-   - The panel should summarize the rerun trend: ontology gaps resolved,
-     candidate gaps resolved, blockers removed, and remaining blockers.
-   - The panel must still avoid a single maturity score; maturity remains a
-     diagnostic view over lifecycle state.
-2. SpecGraph/SpecSpace: connect Idea Maturity to Pre-SIB readiness explainers.
-   The desired report shape is a compact, typed list of reasons such as
-   invariant failures, policy failures, unresolved repair actions, stale refs,
-   and missing evidence. SpecSpace should present this as "candidate is blocked
-   because these concrete conditions remain", not as "the score is bad".
-3. Metrics: harden the Metrics repository as a first-class contract/tool
+The next valuable implementation choices are:
+
+1. Metrics: harden the Metrics repository as a first-class contract/tool
    provider, following the Hyperprompt/Ontology pattern where practical:
    versioned validator CLI, stable JSON Schema, examples, documented invocation
    from SpecGraph, and compatibility policy. SpecGraph should keep invoking the
    validator through an explicit contract rather than depending on an implicit
    neighboring checkout shape.
-4. SpecGraph/SpecSpace/Platform: run and preserve a full demo pass for a product
-   workspace after the UX and Pre-SIB explainers land. The expected outcome is a
+2. SpecGraph/SpecSpace/Platform: run and preserve a full demo pass for a product
+   workspace after the Pre-SIB explainers land. The expected outcome is a
    Product Workspace that shows candidate graph, repair session, Idea Maturity,
    approval readiness, controlled promotion, Git Service execution, review
    status, and publication status as one operator-readable flow.
-5. Platform: move Product Repair Rerun, candidate approval validation, and Git
+3. Platform: move Product Repair Rerun, candidate approval validation, and Git
    Service execution from local adapter orchestration toward hosted or
    queue-backed service implementation while preserving the same report
    contracts.
-6. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
+4. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
    become structured event-storming input without adding a product-specific
    script.
-7. Ontology/SpecGraph: continue compiler-backed applicability profile import
+5. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 
 ## Operating Notes
