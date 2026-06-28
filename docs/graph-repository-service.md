@@ -281,7 +281,26 @@ consumes:
 - `runs/platform_product_repair_rerun_publication_report.json`;
 - explicit promotion paths supplied by the operator.
 
-Example:
+The product-level approval handoff can run the gate and materialize the narrow
+approval decision in one audited step:
+
+```bash
+scripts/platform.py product-candidate-approval approve \
+  --specgraph-dir ../SpecGraph \
+  --workspace-id team-decision-log \
+  --path specs/nodes/SG-SPEC-CANDIDATE.yaml \
+  --output ../SpecGraph/runs/platform_candidate_approval_execution_report.json \
+  --decision-output ../SpecGraph/runs/candidate_approval_decision.json
+```
+
+The approval execution report records the gate report ref, materialized
+decision ref, approved paths, selected SpecSpace intent, and authority boundary.
+It still does not run Git Service promotion, create branches or commits, open
+pull requests, publish read models, mutate canonical specs, write Ontology
+packages, or accept ontology terms.
+
+The lower-level gate remains available when an operator needs to inspect the
+readiness decision before materialization:
 
 ```bash
 scripts/platform.py product-candidate-approval gate \

@@ -531,6 +531,10 @@ Completed Git Service foundation:
 8. SpecSpace now records a candidate approval intent as SpecSpace-owned state,
    and Platform validates that intent through `product-candidate-approval gate`
    before materializing the narrow `candidate_approval_decision.json` handoff.
+   The product-level `product-candidate-approval approve` wrapper now records
+   that gate/materialize handoff in
+   `platform_candidate_approval_execution_report.json` without starting Git
+   Service promotion.
    Platform then derives a report-only Graph Repository promotion request via
    `product-candidate-promotion request`, using the approved candidate id and
    materialized paths from the decision artifact rather than requiring the
