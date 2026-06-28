@@ -5050,12 +5050,13 @@ workspaces:
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
             self.assertTrue(payload["child_report_refs"]["prepare_worktree"])
             self.assertTrue(payload["child_report_refs"]["commit_candidate"])
-            self.assertTrue(payload["child_report_refs"]["open_review"])
+            self.assertIsNone(payload["child_report_refs"]["open_review"])
             self.assertTrue(payload["git_review"]["commit_sha"])
             self.assertIsNone(payload["git_review"]["review_url"])
             self.assertFalse(payload["git_review"]["review_opened"])
             self.assertTrue(payload["git_review"]["open_review_dry_run"])
             self.assertEqual(payload["git_review"]["copied_file_count"], 1)
+            self.assertIsNone(payload["git_review"]["open_review_report_ref"])
             statuses = {
                 operation["name"]: operation["status"]
                 for operation in payload["git_service_execution"]["operations"]

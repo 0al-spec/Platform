@@ -8215,7 +8215,14 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
             return None, {}
         path = resolve_artifact_path(ref, base_dir=git_service_output_path.parent)
         if path is None or not path.is_file():
-            return ref, {}
+            return None, {}
+        resolved_path = path.resolve()
+        allowed_roots = {
+            workspace_dir.resolve(),
+            git_service_output_path.parent.resolve(),
+        }
+        if not any(resolved_path.is_relative_to(root) for root in allowed_roots):
+            return None, {}
         return ref, load_json_mapping(path, label=label)
 
     prepare_ref, _prepare_report = load_child_report(
