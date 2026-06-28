@@ -8201,6 +8201,62 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
     worktree_prepared = statuses.get("prepare_worktree") in {"succeeded", "dry_run"}
     commit_created = statuses.get("commit_candidate") == "succeeded"
     review_opened = statuses.get("open_review") == "succeeded"
+    child_report_refs = (
+        child_payload.get("report_refs")
+        if isinstance(child_payload, dict)
+        and isinstance(child_payload.get("report_refs"), dict)
+        else {}
+    )
+
+    def load_child_report(key: str, label: str) -> tuple[str | None, dict[str, Any]]:
+        raw_ref = child_report_refs.get(key)
+        ref = raw_ref.strip() if isinstance(raw_ref, str) and raw_ref.strip() else None
+        if ref is None:
+            return None, {}
+        path = resolve_artifact_path(ref, base_dir=git_service_output_path.parent)
+        if path is None or not path.is_file():
+            return None, {}
+        resolved_path = path.resolve()
+        allowed_roots = {
+            workspace_dir.resolve(),
+            git_service_output_path.parent.resolve(),
+        }
+        if not any(resolved_path.is_relative_to(root) for root in allowed_roots):
+            return None, {}
+        return ref, load_json_mapping(path, label=label)
+
+    prepare_ref, _prepare_report = load_child_report(
+        "prepare_worktree",
+        "graph repository worktree prepare report",
+    )
+    commit_ref, commit_report = load_child_report(
+        "commit_candidate",
+        "graph repository review commit report",
+    )
+    open_review_ref, open_review_report = load_child_report(
+        "open_review",
+        "graph repository open review report",
+    )
+    commit_sha = commit_report.get("commit_sha")
+    if not isinstance(commit_sha, str) or not commit_sha.strip():
+        commit_sha = open_review_report.get("commit_sha")
+    if not isinstance(commit_sha, str) or not commit_sha.strip():
+        commit_sha = None
+    review_url = open_review_report.get("review_url")
+    if not isinstance(review_url, str) or not review_url.strip():
+        review_url = None
+    review_number = None
+    if review_url is not None:
+        review_url_tail = review_url.rstrip("/").rsplit("/", 1)[-1]
+        if review_url_tail.isdigit():
+            review_number = int(review_url_tail)
+    candidate_branch_pushed = open_review_report.get("candidate_branch_pushed") is True
+    copied_materialized_files = (
+        child_payload.get("copied_materialized_files")
+        if isinstance(child_payload, dict)
+        and isinstance(child_payload.get("copied_materialized_files"), list)
+        else []
+    )
     operations = [
         product_candidate_promotion_operation(
             name="validate_product_promotion_handoff",
@@ -8267,6 +8323,25 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
         "materialized_source_dir": (
             None if materialized_source_dir is None else str(materialized_source_dir)
         ),
+        "child_report_refs": {
+            "prepare_worktree": prepare_ref,
+            "commit_candidate": commit_ref,
+            "open_review": open_review_ref,
+        },
+        "git_review": {
+            "candidate_branch": promotion_request.get("candidate_branch"),
+            "worktree_dir": str(workspace_dir),
+            "commit_sha": commit_sha,
+            "review_url": review_url,
+            "review_number": review_number,
+            "review_opened": review_opened,
+            "open_review_dry_run": args.open_review_dry_run,
+            "candidate_branch_pushed": candidate_branch_pushed,
+            "copied_file_count": len(copied_materialized_files),
+            "prepare_worktree_report_ref": prepare_ref,
+            "commit_report_ref": commit_ref,
+            "open_review_report_ref": open_review_ref,
+        },
         "git_service_command": git_service_command,
         "git_service_command_result": child_result,
         "git_service_execution": {
@@ -8287,9 +8362,7 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
             if isinstance(child_payload, dict)
             else {},
             "operations": child_operations,
-            "copied_materialized_files": child_payload.get("copied_materialized_files")
-            if isinstance(child_payload, dict)
-            else [],
+            "copied_materialized_files": copied_materialized_files,
         },
         "operations": operations,
         "authority_boundary": {
