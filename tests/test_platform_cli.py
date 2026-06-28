@@ -700,6 +700,7 @@ class PlatformCliTests(unittest.TestCase):
         *,
         validation_status: str = "ok",
         authority_expanded: bool = False,
+        include_privacy_boundary: bool = True,
     ) -> None:
         runs_dir = specgraph_dir / "runs"
         runs_dir.mkdir(parents=True, exist_ok=True)
@@ -720,11 +721,6 @@ class PlatformCliTests(unittest.TestCase):
                 "may_open_pull_request": False,
                 "may_publish_read_model": False,
                 "may_write_ontology_package": False,
-            },
-            "privacy_boundary": {
-                "contains_human_operator_identity": False,
-                "join_to_identity_allowed": False,
-                "raw_prompt_or_operator_text_included": False,
             },
             "candidate": {
                 "candidate_id": "idea-alpha",
@@ -764,6 +760,12 @@ class PlatformCliTests(unittest.TestCase):
                 "runs/platform_product_repair_rerun_publication_report.json",
             ],
         }
+        if include_privacy_boundary:
+            metrics_report["privacy_boundary"] = {
+                "contains_human_operator_identity": False,
+                "join_to_identity_allowed": False,
+                "raw_prompt_or_operator_text_included": False,
+            }
         validation_report = {
             "schema_version": 1,
             "artifact_kind": "idea_maturity_metrics_validation_report",
@@ -4540,6 +4542,87 @@ workspaces:
                 for diagnostic in payload["idea_maturity"]["diagnostics"]
             }
             self.assertIn("idea_maturity_authority_expanded", codes)
+            self.assertEqual(payload["diagnostics"], [])
+
+    def test_product_candidate_approval_gate_requires_maturity_privacy_boundary(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            self.write_idea_maturity_artifacts(
+                specgraph_dir,
+                include_privacy_boundary=False,
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["idea_maturity"]["trusted"])
+            codes = {
+                diagnostic["code"]
+                for diagnostic in payload["idea_maturity"]["diagnostics"]
+            }
+            self.assertIn("idea_maturity_privacy_boundary_missing", codes)
+            self.assertEqual(payload["diagnostics"], [])
+
+    def test_product_candidate_approval_gate_handles_maturity_validation_without_reports(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            self.write_idea_maturity_artifacts(specgraph_dir)
+            validation_path = (
+                specgraph_dir / "runs" / "idea_maturity_metrics_validation_report.json"
+            )
+            validation_report = json.loads(validation_path.read_text(encoding="utf-8"))
+            validation_report.pop("reports")
+            validation_path.write_text(
+                json.dumps(validation_report),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["idea_maturity"]["status"], "validation_failed")
+            self.assertFalse(payload["idea_maturity"]["trusted"])
+            codes = {
+                diagnostic["code"]
+                for diagnostic in payload["idea_maturity"]["diagnostics"]
+            }
+            self.assertIn("idea_maturity_validation_not_ok", codes)
             self.assertEqual(payload["diagnostics"], [])
 
     def test_product_candidate_approval_materialize_writes_decision(self) -> None:

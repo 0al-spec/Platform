@@ -2734,6 +2734,7 @@ def idea_maturity_authority_diagnostics(
     *,
     subject: str,
     require_top_level_boundary: bool = True,
+    require_privacy_boundary: bool = True,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     if require_top_level_boundary:
@@ -2774,6 +2775,15 @@ def idea_maturity_authority_diagnostics(
                 fields=IDEA_MATURITY_PRIVACY_FALSE_FIELDS,
                 subject=f"{subject}.privacy_boundary",
                 code="idea_maturity_privacy_expanded",
+            )
+        )
+    elif require_privacy_boundary:
+        diagnostics.append(
+            Diagnostic(
+                level="WARN",
+                code="idea_maturity_privacy_boundary_missing",
+                subject=f"{subject}.privacy_boundary",
+                message="maturity telemetry must declare a privacy boundary",
             )
         )
     return diagnostics
@@ -2877,6 +2887,7 @@ def idea_maturity_summary(
                 validation_report,
                 subject="idea_maturity_metrics_validation_report",
                 require_top_level_boundary=False,
+                require_privacy_boundary=False,
             )
         )
     validation_summary = (
@@ -2889,8 +2900,11 @@ def idea_maturity_summary(
         if validation_report is None
         else "unknown"
     )
-    validation_reports = (
+    raw_validation_reports = (
         validation_report.get("reports") if isinstance(validation_report, dict) else []
+    )
+    validation_reports = (
+        raw_validation_reports if isinstance(raw_validation_reports, list) else []
     )
     validation_report_statuses = [
         item.get("status")
@@ -2919,6 +2933,7 @@ def idea_maturity_summary(
         in {
             "idea_maturity_authority_boundary_missing",
             "idea_maturity_authority_expanded",
+            "idea_maturity_privacy_boundary_missing",
             "idea_maturity_privacy_expanded",
         }
     ]
