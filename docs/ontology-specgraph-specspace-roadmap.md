@@ -562,14 +562,30 @@ candidate source, workspace route selection, controlled promotion UI, deployment
 lane isolation, repair-rerun execution, and a reproducible rerun smoke contract
 are now present. The next valuable implementation choices are:
 
-1. Platform: move Product Repair Rerun, candidate approval validation, and Git
+1. SpecSpace: consume the Metrics-backed
+   `runs/idea_maturity_metrics_report.json` and
+   `runs/idea_maturity_metrics_validation_report.json` in the Product
+   Workspace. The first UI slice should add an `Idea maturity` section that
+   shows lifecycle state, validation status, blockers, ontology/candidate gap
+   rates, clarification/answer materialization, approval/promotion readiness,
+   and stale refs or failed gates.
+2. Platform: treat the Idea Maturity metrics report as an explanatory
+   preflight signal for product promotion, not as authority. Promotion gates
+   must continue to validate concrete handoff artifacts, while metrics explain
+   readiness, stalled phases, and operator-visible friction.
+3. SpecGraph/SpecSpace/Platform: run a demo pass for
+   `local-subscription-control` after the SpecSpace metrics UI lands. The
+   expected outcome is a Product Workspace that shows both the repair/promotion
+   artifacts and a compact maturity dashboard rather than only raw JSON
+   surfaces.
+4. Platform: move Product Repair Rerun, candidate approval validation, and Git
    Service execution from local
    adapter orchestration toward hosted or queue-backed service implementation
    while preserving the same report contracts.
-2. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
+5. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
    become structured event-storming input without adding a product-specific
    script.
-3. Ontology/SpecGraph: continue compiler-backed applicability profile import
+6. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 
 ## Operating Notes
