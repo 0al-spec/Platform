@@ -20,7 +20,7 @@ repository that owns the behavior:
 
 ## Current Anchors
 
-As of 2026-06-23:
+As of 2026-06-29:
 
 - Ontology PR `#53` is merged: `ontologyc` adapter report artifact line.
 - Ontology PR `#54` is merged: Hypercode IR v2 ontology package import.
@@ -91,6 +91,18 @@ As of 2026-06-23:
   from `specgraph_bootstrap` writes. Product promotion may target only
   `product_spec_workspace` repository roles, while bootstrap-internal Git
   Service writes remain dry-run-only.
+- The Idea Maturity line is now end-to-end visible:
+  - Metrics remains the source of truth for the idea maturity RFC, schema, and
+    validator.
+  - SpecGraph `0179` / PR `#632` publishes
+    `runs/idea_maturity_metrics_report.json` and
+    `runs/idea_maturity_metrics_validation_report.json` as part of dashboard-ready
+    product/repaired flows.
+  - SpecSpace PR `#284` shows a read-only Product Workspace Idea Maturity panel
+    and keeps raw maturity JSON out of generic artifact previews.
+  - Platform PR `#67` reads those artifacts as report-only telemetry in product
+    publish/smoke/approval reports without replacing the real repair, approval,
+    or promotion gates.
 - The next product direction is an autonomous idea-to-spec workflow: SpecSpace
   should help a user clarify a product idea through an event-storming-like
   intake, then let SpecGraph build a complete candidate specification graph
@@ -563,19 +575,41 @@ lane isolation, repair-rerun execution, a reproducible rerun smoke contract, and
 Metrics-backed idea maturity visibility are now present. The next valuable
 implementation choices are:
 
-1. SpecGraph/SpecSpace/Platform: run a demo pass for
-   `local-subscription-control` after the SpecSpace metrics UI lands. The
-   expected outcome is a Product Workspace that shows both the repair/promotion
-   artifacts and a compact maturity dashboard rather than only raw JSON
-   surfaces.
-2. Platform: move Product Repair Rerun, candidate approval validation, and Git
-   Service execution from local
-   adapter orchestration toward hosted or queue-backed service implementation
-   while preserving the same report contracts.
-3. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
+1. SpecSpace: turn the Idea Maturity panel from a dashboard into a lifecycle
+   navigation surface.
+   - Metric groups should link or focus the relevant lane:
+     clarification requests, ontology gap decisions, repair session and
+     materialization, approval readiness, or controlled promotion.
+   - Findings should expose a concrete `next_action` when the upstream artifact
+     provides one.
+   - The panel should summarize the rerun trend: ontology gaps resolved,
+     candidate gaps resolved, blockers removed, and remaining blockers.
+   - The panel must still avoid a single maturity score; maturity remains a
+     diagnostic view over lifecycle state.
+2. SpecGraph/SpecSpace: connect Idea Maturity to Pre-SIB readiness explainers.
+   The desired report shape is a compact, typed list of reasons such as
+   invariant failures, policy failures, unresolved repair actions, stale refs,
+   and missing evidence. SpecSpace should present this as "candidate is blocked
+   because these concrete conditions remain", not as "the score is bad".
+3. Metrics: harden the Metrics repository as a first-class contract/tool
+   provider, following the Hyperprompt/Ontology pattern where practical:
+   versioned validator CLI, stable JSON Schema, examples, documented invocation
+   from SpecGraph, and compatibility policy. SpecGraph should keep invoking the
+   validator through an explicit contract rather than depending on an implicit
+   neighboring checkout shape.
+4. SpecGraph/SpecSpace/Platform: run and preserve a full demo pass for a product
+   workspace after the UX and Pre-SIB explainers land. The expected outcome is a
+   Product Workspace that shows candidate graph, repair session, Idea Maturity,
+   approval readiness, controlled promotion, Git Service execution, review
+   status, and publication status as one operator-readable flow.
+5. Platform: move Product Repair Rerun, candidate approval validation, and Git
+   Service execution from local adapter orchestration toward hosted or
+   queue-backed service implementation while preserving the same report
+   contracts.
+6. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
    become structured event-storming input without adding a product-specific
    script.
-4. Ontology/SpecGraph: continue compiler-backed applicability profile import
+7. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 
 ## Operating Notes
