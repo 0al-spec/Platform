@@ -3109,6 +3109,43 @@ workspaces:
         self.assertIn("repaired_repair_session", source_keys)
         self.assertIn("repaired_promotion_gate", source_keys)
 
+    def test_graph_repository_plan_repaired_handoff_ignores_stale_default_session(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(runs_dir)
+            default_session_path = runs_dir / "idea_to_spec_repair_session.json"
+            default_session = json.loads(default_session_path.read_text(encoding="utf-8"))
+            default_session["source_artifacts"]["active_candidate"]["source_ref"] = (
+                "runs/stale_active_idea_to_spec_candidate.json"
+            )
+            default_session_path.write_text(
+                json.dumps(default_session),
+                encoding="utf-8",
+            )
+            self.write_graph_repository_repaired_run_artifacts(runs_dir)
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--repaired-handoff",
+                "repaired_candidate_promotion_handoff_report.json",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["source_mode"], "repaired_handoff")
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
+
     def test_graph_repository_plan_rejects_stale_repaired_handoff_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             runs_dir = Path(tmp_dir)
@@ -3136,6 +3173,51 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertIn("product_candidate_approval_repaired_handoff_ref_stale", codes)
         self.assertFalse(payload["ok"])
+
+    def test_graph_repository_plan_repaired_session_diagnostic_uses_repaired_subject(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(runs_dir)
+            self.write_graph_repository_repaired_run_artifacts(runs_dir)
+            repaired_session_path = runs_dir / "repaired_idea_to_spec_repair_session.json"
+            repaired_session = json.loads(
+                repaired_session_path.read_text(encoding="utf-8")
+            )
+            repaired_session["source_artifacts"]["active_candidate"]["source_ref"] = (
+                "runs/stale_repaired_active_idea_to_spec_candidate.json"
+            )
+            repaired_session_path.write_text(
+                json.dumps(repaired_session),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--repaired-handoff",
+                "repaired_candidate_promotion_handoff_report.json",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        diagnostic = next(
+            item
+            for item in payload["diagnostics"]
+            if item["code"] == "graph_repository_repair_session_source_ref_stale"
+        )
+        self.assertTrue(
+            diagnostic["subject"].startswith(
+                "runs.repaired_idea_to_spec_repair_session.json"
+            )
+        )
 
     def test_graph_repository_plan_blocks_unresolved_ontology_gaps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

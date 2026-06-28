@@ -2841,9 +2841,9 @@ def graph_repository_repair_session_diagnostics(
     repair_session: dict[str, Any],
     *,
     expected_source_refs: dict[str, tuple[str, ...]] | None = None,
+    subject: str = "runs.idea_to_spec_repair_session.json",
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
-    subject = "runs.idea_to_spec_repair_session.json"
     expected_refs_by_key = {
         key: (value,)
         for key, value in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items()
@@ -3050,24 +3050,25 @@ def build_graph_repository_execution_plan(
     ]
     source_artifacts: list[dict[str, Any]] = []
     payloads: dict[str, dict[str, Any]] = {}
-    for artifact_key, (
-        filename,
-        expected_kind,
-    ) in GRAPH_REPOSITORY_REQUIRED_RUN_ARTIFACTS.items():
-        status, payload, artifact_diagnostics = graph_repository_run_artifact_status(
-            runs_dir=runs_dir,
-            artifact_key=artifact_key,
-            filename=filename,
-            expected_kind=expected_kind,
-        )
-        source_artifacts.append(status)
-        if payload is not None:
-            payloads[artifact_key] = payload
-        diagnostics.extend(artifact_diagnostics)
+    if repaired_handoff_path is None:
+        for artifact_key, (
+            filename,
+            expected_kind,
+        ) in GRAPH_REPOSITORY_REQUIRED_RUN_ARTIFACTS.items():
+            status, payload, artifact_diagnostics = graph_repository_run_artifact_status(
+                runs_dir=runs_dir,
+                artifact_key=artifact_key,
+                filename=filename,
+                expected_kind=expected_kind,
+            )
+            source_artifacts.append(status)
+            if payload is not None:
+                payloads[artifact_key] = payload
+            diagnostics.extend(artifact_diagnostics)
 
-    repair_session = payloads.get("idea_to_spec_repair_session")
-    if repair_session is not None:
-        diagnostics.extend(graph_repository_repair_session_diagnostics(repair_session))
+        repair_session = payloads.get("idea_to_spec_repair_session")
+        if repair_session is not None:
+            diagnostics.extend(graph_repository_repair_session_diagnostics(repair_session))
 
     repaired_payloads: dict[str, dict[str, Any]] = {}
     repaired_source_refs: dict[str, str] = {}
@@ -3107,6 +3108,7 @@ def build_graph_repository_execution_plan(
             diagnostics.extend(
                 graph_repository_repair_session_diagnostics(
                     repaired_repair_session,
+                    subject="runs.repaired_idea_to_spec_repair_session.json",
                     expected_source_refs={
                         "active_candidate": (
                             repaired_source_refs.get(
