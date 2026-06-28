@@ -430,6 +430,9 @@ It records:
 
 - the promotion request and approval decision refs;
 - the inner Git Service execution report ref;
+- normalized child report refs for prepare, commit, and open-review steps;
+- a `git_review` summary with candidate branch, worktree, commit SHA, PR URL
+  and PR number when those reports exist;
 - the candidate branch;
 - copied materialized paths;
 - prepare/commit/open-review operation statuses;

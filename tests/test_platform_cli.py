@@ -4948,6 +4948,10 @@ workspaces:
             git_service_output = tmp_root / "git_service_promotion_execution_report.json"
             self.assertTrue(git_service_output.is_file())
             self.assertTrue(payload["git_service_execution"]["ok"])
+            self.assertIsNone(payload["git_review"]["commit_sha"])
+            self.assertIsNone(payload["git_review"]["review_url"])
+            self.assertFalse(payload["git_review"]["review_opened"])
+            self.assertEqual(payload["git_review"]["copied_file_count"], 0)
             statuses = {
                 operation["name"]: operation["status"]
                 for operation in payload["git_service_execution"]["operations"]
@@ -5044,6 +5048,14 @@ workspaces:
             )
             self.assertTrue(payload["authority_boundary"]["creates_candidate_commit"])
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+            self.assertTrue(payload["child_report_refs"]["prepare_worktree"])
+            self.assertTrue(payload["child_report_refs"]["commit_candidate"])
+            self.assertTrue(payload["child_report_refs"]["open_review"])
+            self.assertTrue(payload["git_review"]["commit_sha"])
+            self.assertIsNone(payload["git_review"]["review_url"])
+            self.assertFalse(payload["git_review"]["review_opened"])
+            self.assertTrue(payload["git_review"]["open_review_dry_run"])
+            self.assertEqual(payload["git_review"]["copied_file_count"], 1)
             statuses = {
                 operation["name"]: operation["status"]
                 for operation in payload["git_service_execution"]["operations"]
