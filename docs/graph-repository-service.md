@@ -71,6 +71,11 @@ The service must not treat working directories as authority. Authority comes
 from validated promotion artifacts, repository policy, review state, and the
 published read-model manifest.
 
+For a step-by-step local product demo that exercises SpecGraph artifact
+generation, SpecSpace Product Workspace visibility, Idea Maturity diagnostics,
+Platform repair smoke, candidate approval, and Git Service dry-run boundaries,
+see [Product Idea-to-Spec Demo Runbook](product-idea-to-spec-demo-runbook.md).
+
 The production-facing operation contract lives in
 `git-service-operation-contract.example.json` and is validated with:
 
