@@ -606,10 +606,12 @@ The next valuable implementation choices are:
      Product Workspace state hygiene surface, and Platform smoke can consume it
      as preflight telemetry before interpreting stale local draft/request/intent
      state.
-   - **Team Decision Log happy-path repair pack.** Done in the paired SpecGraph
-     slice. SpecGraph can materialize workspace/session-consistent repair drafts
-     and rerun request state for the Team Decision Log pilot until the repaired
-     handoff reaches `ready_for_candidate_approval: true`.
+   - **Generic happy-path repair pack.** Done in the paired SpecGraph slice.
+     SpecGraph can materialize workspace/session-consistent repair drafts and
+     rerun request state from a `product_workspace_repair_pack` fixture until
+     the repaired handoff reaches `ready_for_candidate_approval: true`. Team
+     Decision Log is the default demo fixture/alias, not a product-specific
+     system flow.
    - **SpecSpace guided product flow.** Turn the Product Workspace from a
      passive dashboard into a guided lifecycle layer: idea intake, repair
      requests, ontology decisions, rerun request, approval intent, Platform
