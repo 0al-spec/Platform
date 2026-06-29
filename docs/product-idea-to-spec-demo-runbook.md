@@ -112,17 +112,23 @@ In another terminal, start the SpecSpace API with the product workspace mapped
 to the same bundle:
 
 ```bash
+SPECGRAPH_DIR="${SPECGRAPH_DIR:-../SpecGraph}"
+DIALOG_DIR="${DIALOG_DIR:-../ChatGPTDialogs/canonical_json}"
+
 uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt \
   python viewer/server.py \
     --host 127.0.0.1 \
     --port 8001 \
-    --dialog-dir /Users/egor/Development/GitHub/ChatGPTDialogs/canonical_json \
-    --spec-dir /Users/egor/Development/GitHub/0AL/SpecGraph/specs/nodes \
-    --specgraph-dir /Users/egor/Development/GitHub/0AL/SpecGraph \
+    --dialog-dir "$DIALOG_DIR" \
+    --spec-dir "$SPECGRAPH_DIR/specs/nodes" \
+    --specgraph-dir "$SPECGRAPH_DIR" \
     --artifact-base-url http://127.0.0.1:9009 \
     --product-workspace-artifact-base-url team-decision-log=http://127.0.0.1:9009 \
     --agent
 ```
+
+Set `DIALOG_DIR` explicitly if your canonical dialog export is not available
+at the sibling `../ChatGPTDialogs/canonical_json` path.
 
 In a third terminal, start the new SpecSpace UI. Do not start the deprecated
 ContextBuilder UI for this demo.
@@ -274,6 +280,7 @@ scripts/platform.py product-candidate-promotion execute \
 Expected dry-run result:
 
 - no branch, commit, or pull request is created;
+- the candidate workspace/worktree directory is not created by the dry-run;
 - the execution report explains the planned Git Service operations;
 - SpecSpace can display the resulting product promotion execution surface.
 
@@ -311,4 +318,3 @@ This is a successful diagnostic demo. The next product demo iteration should
 record workspace/session-consistent repair drafts and ontology decisions for
 Team Decision Log, rerun the repaired handoff, and then repeat steps 3-5 for a
 happy-path dry-run promotion.
-
