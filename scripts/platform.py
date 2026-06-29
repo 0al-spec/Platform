@@ -166,6 +166,10 @@ PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS = {
 PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS = {
     "repaired_handoff": "runs/repaired_candidate_promotion_handoff_report.json",
     "repaired_active_candidate": "runs/repaired_active_idea_to_spec_candidate.json",
+    "repaired_candidate_graph": "runs/repaired_candidate_spec_graph.json",
+    "repaired_pre_sib": "runs/repaired_pre_sib_coherence_report.json",
+    "repaired_repair_loop": "runs/repaired_candidate_repair_loop_report.json",
+    "repaired_materialization": "runs/repaired_candidate_spec_materialization_report.json",
     "repaired_repair_session": "runs/repaired_idea_to_spec_repair_session.json",
     "repaired_promotion_gate": "runs/repaired_idea_to_spec_promotion_gate.json",
 }
@@ -3357,6 +3361,19 @@ def input_path_arg(value: str, *, base_dir: Path) -> Path:
     return path.resolve() if path.is_absolute() else (base_dir / path).resolve()
 
 
+def input_path_arg_or_existing(value: str, *, base_dir: Path) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path.resolve()
+    base_relative = base_dir / path
+    if base_relative.exists():
+        return base_relative.resolve()
+    cwd_relative = path.resolve()
+    if cwd_relative.exists():
+        return cwd_relative
+    return base_relative.resolve()
+
+
 def resolve_optional_path_arg(value: str | None) -> str | None:
     if not value:
         return None
@@ -4233,9 +4250,9 @@ def build_graph_repository_execution_plan(
 
 def graph_repository_plan(args: argparse.Namespace) -> int:
     contract_path = Path(args.contract)
-    runs_dir = Path(args.runs_dir)
+    runs_dir = Path(args.runs_dir).resolve()
     repaired_handoff_path = (
-        input_path_arg(args.repaired_handoff, base_dir=runs_dir)
+        input_path_arg_or_existing(args.repaired_handoff, base_dir=runs_dir)
         if args.repaired_handoff
         else None
     )
@@ -9099,6 +9116,7 @@ def product_candidate_promotion_materialized_source_dir(
     explicit: str | None,
     plan_path: Path | None,
     plan: dict[str, Any],
+    promotion_request: dict[str, Any],
 ) -> Path | None:
     if explicit:
         return Path(explicit).resolve()
@@ -9110,6 +9128,12 @@ def product_candidate_promotion_materialized_source_dir(
     )
     if runs_dir is None:
         return None
+    commit_paths = string_list(promotion_request.get("commit_paths"))
+    if commit_paths and all(
+        path.startswith("runs/repaired_materialized_candidate_specs/")
+        for path in commit_paths
+    ):
+        return runs_dir.parent
     return runs_dir / "materialized_candidate_specs"
 
 
@@ -9173,6 +9197,7 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
         explicit=args.materialized_source_dir,
         plan_path=plan_path,
         plan=plan,
+        promotion_request=promotion_request,
     )
     diagnostics = [
         *product_candidate_promotion_request_execution_diagnostics(
