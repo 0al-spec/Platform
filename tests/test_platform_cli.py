@@ -4251,6 +4251,9 @@ workspaces:
             )
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["summary"]["status"], "passed")
+            self.assertEqual(payload["summary"]["profile"], "strict")
+            self.assertEqual(payload["summary"]["profile_status"], "passed")
+            self.assertEqual(payload["summary"]["strict_status"], "passed")
             self.assertTrue(payload["summary"]["plan_ok"])
             self.assertTrue(payload["summary"]["execution_ok"])
             self.assertTrue(payload["summary"]["publication_ok"])
@@ -4317,6 +4320,9 @@ workspaces:
             payload = json.loads(result.stdout)
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["summary"]["status"], "passed")
+            self.assertEqual(payload["summary"]["profile"], "strict")
+            self.assertEqual(payload["summary"]["profile_status"], "passed")
+            self.assertEqual(payload["summary"]["strict_status"], "passed")
             self.assertTrue(payload["summary"]["candidate_approval_gate_ok"])
             self.assertTrue(payload["summary"]["ready_to_materialize"])
             self.assertIsInstance(
@@ -4369,6 +4375,77 @@ workspaces:
                     / "repaired_candidate_promotion_handoff_report.json"
                 ).is_file()
             )
+
+    def test_product_repair_rerun_smoke_happy_profile_requires_approval_gate(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            self.write_product_candidate_approval_intent_state(specgraph_dir)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--build-repaired-handoff",
+                "--profile",
+                "happy-path-promotion-dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(
+                payload["summary"]["profile"],
+                "happy-path-promotion-dry-run",
+            )
+            self.assertEqual(payload["summary"]["profile_status"], "passed")
+            self.assertEqual(payload["summary"]["profile_observed"], "happy_path_ready")
+            self.assertEqual(payload["summary"]["strict_status"], "passed")
+            self.assertTrue(payload["summary"]["candidate_approval_gate_ok"])
+            self.assertTrue(payload["summary"]["ready_to_materialize"])
+            self.assertTrue(payload["profile"]["candidate_approval_gate_ready"])
+
+    def test_product_repair_rerun_smoke_happy_profile_requires_repaired_handoff(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--profile",
+                "happy-path-promotion-dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(
+                payload["summary"]["profile"],
+                "happy-path-promotion-dry-run",
+            )
+            self.assertEqual(payload["summary"]["profile_status"], "failed")
+            self.assertEqual(
+                payload["summary"]["profile_observed"],
+                "missing_repaired_handoff",
+            )
+            self.assertEqual(payload["summary"]["strict_status"], "passed")
+            self.assertIsNone(payload["summary"]["candidate_approval_gate_ok"])
 
     def test_product_repair_rerun_smoke_surfaces_idea_maturity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -4619,6 +4696,87 @@ workspaces:
                     / "platform_product_repair_rerun_publication_report.json"
                 ).exists()
             )
+
+    def test_product_repair_rerun_smoke_diagnostic_profile_accepts_expected_block(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(
+                specgraph_dir,
+                request_gate_ready=False,
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--profile",
+                "diagnostic-blocked",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["summary"]["status"], "passed")
+            self.assertEqual(payload["summary"]["profile"], "diagnostic-blocked")
+            self.assertEqual(payload["summary"]["profile_status"], "passed")
+            self.assertEqual(
+                payload["summary"]["profile_observed"],
+                "expected_diagnostic_block",
+            )
+            self.assertEqual(payload["summary"]["strict_status"], "failed")
+            self.assertFalse(payload["summary"]["plan_ok"])
+            self.assertTrue(payload["profile"]["diagnostic_block_observed"])
+            self.assertFalse(payload["profile"]["authority_or_infra_error"])
+            statuses = {
+                operation["name"]: operation["status"]
+                for operation in payload["operations"]
+            }
+            self.assertEqual(statuses["plan_product_repair_rerun"], "failed")
+            self.assertEqual(statuses["execute_specgraph_requested_rerun"], "skipped")
+            self.assertEqual(statuses["publish_public_safe_bundle"], "skipped")
+
+    def test_product_repair_rerun_smoke_diagnostic_profile_rejects_authority_expansion(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(
+                specgraph_dir,
+                request_authority_expanded=True,
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--profile",
+                "diagnostic-blocked",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["summary"]["profile"], "diagnostic-blocked")
+            self.assertEqual(payload["summary"]["profile_status"], "failed")
+            self.assertEqual(payload["summary"]["strict_status"], "failed")
+            self.assertTrue(payload["profile"]["diagnostic_block_observed"])
+            self.assertTrue(payload["profile"]["authority_or_infra_error"])
+            plan_ref = Path(payload["phase_reports"]["plan"]["path"])
+            plan = json.loads(plan_ref.read_text(encoding="utf-8"))
+            codes = {diagnostic["code"] for diagnostic in plan["diagnostics"]}
+            self.assertIn("product_repair_rerun_request_authority_expanded", codes)
 
     def test_product_candidate_approval_gate_builds_ready_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
