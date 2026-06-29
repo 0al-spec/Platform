@@ -103,6 +103,10 @@ As of 2026-06-29:
   - Platform PR `#67` reads those artifacts as report-only telemetry in product
     publish/smoke/approval reports without replacing the real repair, approval,
     or promotion gates.
+  - The next Platform slice surfaces Metrics contract metadata in those compact
+    summaries, so operators can see the report schema, validation schema,
+    validator id/version, and compatibility policy that made the telemetry
+    trustworthy.
 - The next product direction is an autonomous idea-to-spec workflow: SpecSpace
   should help a user clarify a product idea through an event-storming-like
   intake, then let SpecGraph build a complete candidate specification graph
@@ -586,7 +590,8 @@ The next valuable implementation choices are:
    versioned validator CLI, stable JSON Schema, examples, documented invocation
    from SpecGraph, and compatibility policy. SpecGraph should keep invoking the
    validator through an explicit contract rather than depending on an implicit
-   neighboring checkout shape.
+   neighboring checkout shape. Platform should preserve the resulting contract
+   metadata as report-only telemetry, not as an extra approval gate.
 2. SpecGraph/SpecSpace/Platform: run and preserve a full demo pass for a product
    workspace after the Pre-SIB explainers land. The expected outcome is a
    Product Workspace that shows candidate graph, repair session, Idea Maturity,
