@@ -241,6 +241,26 @@ IDEA_MATURITY_PRIVACY_FALSE_FIELDS = (
     "join_to_identity_allowed",
     "raw_prompt_or_operator_text_included",
 )
+WORKSPACE_STATE_HYGIENE_KIND = "specspace_idea_to_spec_workspace_state_hygiene"
+WORKSPACE_STATE_HYGIENE_AUTHORITY_FALSE_FIELDS = (
+    "workspace_state_hygiene_is_authority",
+    "may_execute_specgraph",
+    "may_execute_platform",
+    "may_execute_git_service",
+    "may_apply_answers",
+    "may_apply_decisions",
+    "may_mutate_candidate_artifacts",
+    "may_mutate_canonical_specs",
+    "may_write_ontology_package",
+    "may_accept_ontology_terms",
+    "may_create_branch_or_commit",
+    "may_open_pull_request",
+)
+WORKSPACE_STATE_HYGIENE_ACTION_FALSE_FIELDS = (
+    "may_clear_state",
+    "may_apply_state",
+    "may_delete_state",
+)
 PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS = {
     "rerun_request": "runs/idea_to_spec_repair_rerun_requests.json",
     "import_preview": "runs/specspace_repair_draft_import_preview.json",
@@ -3150,6 +3170,156 @@ def idea_maturity_summary(
             specgraph_dir,
             public_root=public_root,
         ),
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+    }
+
+
+def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {
+            "status": "missing",
+            "available": False,
+            "trusted": False,
+            "path": None,
+            "workspace_id": None,
+            "candidate_id": None,
+            "repair_session_id": None,
+            "repair_session_ref": None,
+            "usable_state_count": 0,
+            "missing_state_count": 0,
+            "stale_state_count": 0,
+            "invalid_state_count": 0,
+            "blocking_state_count": 0,
+            "next_action": "Provide a SpecSpace workspace state hygiene report for preflight diagnostics.",
+            "states": [],
+            "diagnostics": [],
+        }
+    payload, status, diagnostics = load_optional_json_mapping(
+        path,
+        label="workspace_state_hygiene",
+    )
+    if not status.get("present"):
+        diagnostics.append(
+            Diagnostic(
+                level="WARN",
+                code="workspace_state_hygiene_missing",
+                subject=str(path),
+                message="workspace state hygiene report was requested but the file does not exist",
+            )
+        )
+    if payload is None:
+        return {
+            "status": "invalid" if status.get("present") else "missing",
+            "available": False,
+            "trusted": False,
+            "path": str(path),
+            "workspace_id": None,
+            "candidate_id": None,
+            "repair_session_id": None,
+            "repair_session_ref": None,
+            "usable_state_count": 0,
+            "missing_state_count": 0,
+            "stale_state_count": 0,
+            "invalid_state_count": 0,
+            "blocking_state_count": 0,
+            "next_action": "Repair or publish workspace state hygiene before smoke.",
+            "states": [],
+            "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        }
+    if payload.get("artifact_kind") != WORKSPACE_STATE_HYGIENE_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="WARN",
+                code="workspace_state_hygiene_kind_mismatch",
+                subject="workspace_state_hygiene.artifact_kind",
+                message=f"expected {WORKSPACE_STATE_HYGIENE_KIND}",
+            )
+        )
+    authority = nested_mapping(payload, "authority_boundary")
+    action_boundary = nested_mapping(payload, "action_boundary")
+    for field in WORKSPACE_STATE_HYGIENE_AUTHORITY_FALSE_FIELDS:
+        if authority.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code="workspace_state_hygiene_authority_expanded",
+                    subject=f"workspace_state_hygiene.authority_boundary.{field}",
+                    message="workspace state hygiene must remain report-only",
+                )
+            )
+    for field in WORKSPACE_STATE_HYGIENE_ACTION_FALSE_FIELDS:
+        if action_boundary.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code="workspace_state_hygiene_action_expanded",
+                    subject=f"workspace_state_hygiene.action_boundary.{field}",
+                    message="workspace state hygiene must not grant state mutation",
+                )
+            )
+    summary = nested_mapping(payload, "summary")
+    states = []
+    raw_states = payload.get("states")
+    state_items = raw_states if isinstance(raw_states, list) else []
+    for item in state_items:
+        if not isinstance(item, dict):
+            continue
+        state_status = item.get("status")
+        states.append(
+            {
+                "kind": item.get("kind") if isinstance(item.get("kind"), str) else "unknown",
+                "status": state_status if isinstance(state_status, str) else "unknown",
+                "reason": item.get("reason") if isinstance(item.get("reason"), str) else None,
+                "stored_workspace_id": item.get("stored_workspace_id")
+                if isinstance(item.get("stored_workspace_id"), str)
+                else None,
+                "current_workspace_id": item.get("current_workspace_id")
+                if isinstance(item.get("current_workspace_id"), str)
+                else None,
+                "blocks": string_list(item.get("blocks")),
+                "next_action": item.get("next_action")
+                if isinstance(item.get("next_action"), str)
+                else None,
+            }
+        )
+    trusted = (
+        payload.get("artifact_kind") == WORKSPACE_STATE_HYGIENE_KIND
+        and not any(
+            diagnostic.code
+            in {
+                "workspace_state_hygiene_kind_mismatch",
+                "workspace_state_hygiene_authority_expanded",
+                "workspace_state_hygiene_action_expanded",
+            }
+            for diagnostic in diagnostics
+        )
+    )
+    return {
+        "status": summary.get("status") if isinstance(summary.get("status"), str) else "unknown",
+        "available": True,
+        "trusted": trusted,
+        "path": str(path),
+        "workspace_id": payload.get("workspace_id")
+        if isinstance(payload.get("workspace_id"), str)
+        else None,
+        "candidate_id": payload.get("candidate_id")
+        if isinstance(payload.get("candidate_id"), str)
+        else None,
+        "repair_session_id": payload.get("repair_session_id")
+        if isinstance(payload.get("repair_session_id"), str)
+        else None,
+        "repair_session_ref": payload.get("repair_session_ref")
+        if isinstance(payload.get("repair_session_ref"), str)
+        else None,
+        "usable_state_count": numeric_metric(summary.get("usable_state_count")),
+        "missing_state_count": numeric_metric(summary.get("missing_state_count")),
+        "stale_state_count": numeric_metric(summary.get("stale_state_count")),
+        "invalid_state_count": numeric_metric(summary.get("invalid_state_count")),
+        "blocking_state_count": numeric_metric(summary.get("blocking_state_count")),
+        "next_action": summary.get("next_action")
+        if isinstance(summary.get("next_action"), str)
+        else None,
+        "states": states[:12],
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
     }
 
@@ -7834,6 +8004,39 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
         specgraph_dir,
         public_root=specgraph_dir / "dist" / "specgraph-public",
     )
+    hygiene_path = (
+        Path(args.workspace_state_hygiene).resolve()
+        if args.workspace_state_hygiene
+        else None
+    )
+    hygiene_summary = workspace_state_hygiene_summary(hygiene_path)
+    if hygiene_path is not None:
+        diagnostics.extend(
+            Diagnostic(**diagnostic)
+            for diagnostic in hygiene_summary.get("diagnostics", [])
+            if isinstance(diagnostic, dict)
+        )
+        if (hygiene_summary.get("stale_state_count") or 0) > 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code="workspace_state_hygiene_stale_state",
+                    subject="workspace_state_hygiene.summary.stale_state_count",
+                    message=(
+                        "workspace-scoped state contains stale records; smoke "
+                        "may be blocked by identity/session mismatches"
+                    ),
+                )
+            )
+        if (hygiene_summary.get("invalid_state_count") or 0) > 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code="workspace_state_hygiene_invalid_state",
+                    subject="workspace_state_hygiene.summary.invalid_state_count",
+                    message="workspace-scoped state contains invalid records",
+                )
+            )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     expected_phase_keys = ["plan", "execution", "publication"]
     if args.build_repaired_handoff:
@@ -7876,6 +8079,7 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
             },
         },
         "idea_maturity": maturity_summary,
+        "workspace_state_hygiene": hygiene_summary,
         "operations": operations,
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
         "summary": {
@@ -7916,6 +8120,14 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
             "idea_maturity_status": maturity_summary["status"],
             "idea_maturity_trusted": maturity_summary["trusted"],
             "idea_maturity_validation_status": maturity_summary["validation_status"],
+            "workspace_state_hygiene_status": hygiene_summary["status"],
+            "workspace_state_hygiene_trusted": hygiene_summary["trusted"],
+            "workspace_state_hygiene_stale_state_count": hygiene_summary[
+                "stale_state_count"
+            ],
+            "workspace_state_hygiene_invalid_state_count": hygiene_summary[
+                "invalid_state_count"
+            ],
             "candidate_approval_approved_path_count": candidate_approval_summary.get(
                 "approved_path_count",
                 0,
@@ -13621,6 +13833,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "SpecGraph rerun request gate artifact. Defaults to "
             "runs/specspace_repair_rerun_request_gate.json under --specgraph-dir."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--workspace-state-hygiene",
+        help=(
+            "Optional SpecSpace workspace state hygiene report used for "
+            "preflight diagnostics before interpreting smoke blockers."
         ),
     )
     product_repair_smoke_parser.add_argument(
