@@ -7697,6 +7697,15 @@ def product_repair_smoke_profile_evaluation(
     error_codes = [
         diagnostic.code for diagnostic in diagnostics if diagnostic.level == "ERROR"
     ]
+    for payload in phase_payloads.values():
+        phase_diagnostics = payload.get("diagnostics")
+        if not isinstance(phase_diagnostics, list):
+            continue
+        for diagnostic in phase_diagnostics:
+            if not isinstance(diagnostic, dict):
+                continue
+            if str(diagnostic.get("level") or "") == "ERROR":
+                error_codes.append(str(diagnostic.get("code") or ""))
     plan = phase_payloads.get("plan") or {}
     candidate_approval_gate = phase_payloads.get("candidate_approval_gate") or {}
     diagnostic_block_observed = (
@@ -7715,6 +7724,7 @@ def product_repair_smoke_profile_evaluation(
             "product_repair_rerun_smoke_execution_dry_run",
             "product_repair_rerun_smoke_publication_dry_run",
         }
+        or "authority_expanded" in code
         for code in error_codes
     )
     candidate_gate_ready = (
@@ -7741,7 +7751,8 @@ def product_repair_smoke_profile_evaluation(
             "authority_or_infra_error": authority_or_infra_error,
         }
     if profile == "happy-path-promotion-dry-run":
-        ok = strict_ok and (not build_repaired_handoff or candidate_gate_ready)
+        missing_handoff = not build_repaired_handoff
+        ok = strict_ok and not missing_handoff and candidate_gate_ready
         return {
             "profile": profile,
             "ok": ok,
@@ -7750,7 +7761,13 @@ def product_repair_smoke_profile_evaluation(
                 "repair rerun, publication, and candidate approval gate reach "
                 "promotion dry-run boundary"
             ),
-            "observed": "happy_path_ready" if ok else "happy_path_not_ready",
+            "observed": (
+                "missing_repaired_handoff"
+                if missing_handoff
+                else "happy_path_ready"
+                if ok
+                else "happy_path_not_ready"
+            ),
             "candidate_approval_gate_ready": candidate_gate_ready,
             "build_repaired_handoff": build_repaired_handoff,
         }
