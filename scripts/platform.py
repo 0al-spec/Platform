@@ -2812,18 +2812,22 @@ def idea_maturity_public_artifact_status(
 
 def idea_maturity_readiness_explainers(
     report: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
+) -> tuple[int, list[dict[str, Any]]]:
     if not isinstance(report, dict):
-        return []
+        return 0, []
     raw_explainers = report.get("readiness_explainers")
     if not isinstance(raw_explainers, list):
-        return []
+        return 0, []
+    valid_count = 0
     explainers: list[dict[str, Any]] = []
-    for item in raw_explainers[:IDEA_MATURITY_READINESS_EXPLAINER_LIMIT]:
+    for item in raw_explainers:
         if not isinstance(item, dict):
             continue
         explainer_id = item.get("id")
         if not isinstance(explainer_id, str) or not explainer_id:
+            continue
+        valid_count += 1
+        if len(explainers) >= IDEA_MATURITY_READINESS_EXPLAINER_LIMIT:
             continue
         proposal_id = item.get("proposal_id")
         kind = item.get("kind")
@@ -2844,7 +2848,7 @@ def idea_maturity_readiness_explainers(
                 "evidence_refs": string_list(item.get("evidence_refs")),
             }
         )
-    return explainers
+    return valid_count, explainers
 
 
 def idea_maturity_summary(
@@ -2993,7 +2997,9 @@ def idea_maturity_summary(
     promotion_readiness = nested_mapping(groups, "promotion_readiness")
     review_publication = nested_mapping(groups, "review_publication")
     blockers = string_list(derived_state.get("blockers"))
-    readiness_explainers = idea_maturity_readiness_explainers(metrics_report)
+    readiness_explainer_count, readiness_explainers = (
+        idea_maturity_readiness_explainers(metrics_report)
+    )
     return {
         "status": status,
         "available": metrics_report is not None and metrics_valid,
@@ -3020,7 +3026,11 @@ def idea_maturity_summary(
         or metrics.get("read_model_publication_state"),
         "blockers": blockers,
         "blocker_count": len(blockers),
-        "readiness_explainer_count": len(readiness_explainers),
+        "readiness_explainer_count": readiness_explainer_count,
+        "readiness_explainer_omitted_count": max(
+            0,
+            readiness_explainer_count - len(readiness_explainers),
+        ),
         "readiness_explainers": readiness_explainers,
         "stale_ref_count": numeric_metric(
             workflow_friction.get("stale_ref_count", metrics.get("stale_ref_count"))
