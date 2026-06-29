@@ -353,6 +353,33 @@ This remains a successful diagnostic demo when run with
 
 For the happy-path demo, SpecGraph provides a workspace/session-consistent Team
 Decision Log repair pack. Run the SpecGraph happy-path repair pack target first,
-then run the Platform smoke with `--profile happy-path-promotion-dry-run`. That
-path should reach candidate approval gate readiness without materializing the
-approval decision and without starting Git Service promotion.
+then run the Platform smoke with `--profile happy-path-promotion-dry-run`. The
+latest local promotion dry-run pass reached the intended boundary:
+
+```text
+product-repair-rerun smoke:
+  profile_status: passed
+  profile_observed: happy_path_ready
+  ready_to_materialize: true
+  candidate_approval_approved_path_count: 6
+  published_artifact_count: 12
+
+product-candidate-approval approve:
+  status: candidate_approval_materialized
+  decision_written: true
+  approved_path_count: 6
+
+product-candidate-promotion request:
+  promotion_ready: true
+  commit_path_count: 6
+
+product-candidate-promotion execute --dry-run --open-review-dry-run:
+  status: dry_run
+  review_opened: false
+  commit_created: false
+  read_model_published: false
+```
+
+This reaches candidate approval, promotion request, and Git Service dry-run
+visibility without creating a branch, commit, pull request, ontology write, or
+canonical spec mutation.

@@ -1327,6 +1327,10 @@ product-workspace-requested-repair-draft-rerun:
 product-workspace-repaired-promotion-handoff:
 \t@mkdir -p runs
 \t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","contract_ref":"specgraph.idea-to-spec.active-candidate-source.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"active_candidate_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > runs/repaired_active_idea_to_spec_candidate.json
+\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_graph","readiness":{"ready":true,"review_state":"ready_for_pre_sib","blocked_by":[]},"summary":{"status":"ready_for_pre_sib"}}' > runs/repaired_candidate_spec_graph.json
+\t@printf '%s\\n' '{"artifact_kind":"pre_sib_coherence_report","readiness":{"ready":true,"review_state":"pre_sib_ready","blocked_by":[]},"summary":{"status":"pre_sib_ready"}}' > runs/repaired_pre_sib_coherence_report.json
+\t@printf '%s\\n' '{"artifact_kind":"candidate_repair_loop_report","readiness":{"ready":true,"review_state":"repair_preview_ready","blocked_by":[]},"summary":{"status":"repair_preview_ready"}}' > runs/repaired_candidate_repair_loop_report.json
+\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_materialization_report","readiness":{"ready":true,"review_state":"materialized_candidate_review_ready","blocked_by":[]},"summary":{"status":"materialized_candidate_review_ready"}}' > runs/repaired_candidate_spec_materialization_report.json
 \t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_promotion_gate","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"ready_for_platform_promotion_request","blocked_by":[]},"promotion_request":{"paths":["specs/nodes/SG-SPEC-CANDIDATE.yaml"]},"summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_open_pull_request":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false}}' > runs/repaired_idea_to_spec_promotion_gate.json
 \t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/repaired_active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/repaired_idea_to_spec_promotion_gate.json"}}}' > runs/repaired_idea_to_spec_repair_session.json
 \t@printf '%s\\n' '{"artifact_kind":"repaired_candidate_promotion_handoff_report","contract_ref":"specgraph.idea-to-spec.repaired-candidate-promotion-handoff.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repaired_candidate_promotion_handoff_ready","blocked_by":[]},"summary":{"status":"repaired_candidate_promotion_handoff_ready","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_candidate_gap_count":0,"unresolved_ontology_gap_count":0,"resolved_candidate_gap_count":1,"resolved_ontology_gap_count":1,"removed_gap_count":2},"output_artifacts":{"repaired_active_candidate":{"artifact_kind":"active_idea_to_spec_candidate","source_ref":"runs/repaired_active_idea_to_spec_candidate.json","summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1}},"repaired_repair_session":{"artifact_kind":"idea_to_spec_repair_session_journal","source_ref":"runs/repaired_idea_to_spec_repair_session.json","summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0}},"repaired_promotion_gate":{"artifact_kind":"idea_to_spec_promotion_gate","source_ref":"runs/repaired_idea_to_spec_promotion_gate.json","summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1}}},"authority_boundary":{"may_accept_ontology_terms":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_materialize_candidate_approval_decision":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > runs/repaired_candidate_promotion_handoff_report.json
@@ -1340,6 +1344,10 @@ publish-bundle:
 \t@cp runs/idea_to_spec_rerun_materialization.json dist/specgraph-public/runs/idea_to_spec_rerun_materialization.json
 \t@test ! -f runs/repaired_candidate_promotion_handoff_report.json || cp runs/repaired_candidate_promotion_handoff_report.json dist/specgraph-public/runs/repaired_candidate_promotion_handoff_report.json
 \t@test ! -f runs/repaired_active_idea_to_spec_candidate.json || cp runs/repaired_active_idea_to_spec_candidate.json dist/specgraph-public/runs/repaired_active_idea_to_spec_candidate.json
+\t@test ! -f runs/repaired_candidate_spec_graph.json || cp runs/repaired_candidate_spec_graph.json dist/specgraph-public/runs/repaired_candidate_spec_graph.json
+\t@test ! -f runs/repaired_pre_sib_coherence_report.json || cp runs/repaired_pre_sib_coherence_report.json dist/specgraph-public/runs/repaired_pre_sib_coherence_report.json
+\t@test ! -f runs/repaired_candidate_repair_loop_report.json || cp runs/repaired_candidate_repair_loop_report.json dist/specgraph-public/runs/repaired_candidate_repair_loop_report.json
+\t@test ! -f runs/repaired_candidate_spec_materialization_report.json || cp runs/repaired_candidate_spec_materialization_report.json dist/specgraph-public/runs/repaired_candidate_spec_materialization_report.json
 \t@test ! -f runs/repaired_idea_to_spec_repair_session.json || cp runs/repaired_idea_to_spec_repair_session.json dist/specgraph-public/runs/repaired_idea_to_spec_repair_session.json
 \t@test ! -f runs/repaired_idea_to_spec_promotion_gate.json || cp runs/repaired_idea_to_spec_promotion_gate.json dist/specgraph-public/runs/repaired_idea_to_spec_promotion_gate.json
 \t@test ! -f runs/idea_maturity_metrics_report.json || cp runs/idea_maturity_metrics_report.json dist/specgraph-public/runs/idea_maturity_metrics_report.json
@@ -3095,7 +3103,7 @@ workspaces:
                 "graph-repository",
                 "plan",
                 "--contract",
-                "graph-repository-service.example.json",
+                str(Path("graph-repository-service.example.json").resolve()),
                 "--runs-dir",
                 str(runs_dir),
                 "--output",
@@ -3139,7 +3147,7 @@ workspaces:
                 "graph-repository",
                 "plan",
                 "--contract",
-                "graph-repository-service.example.json",
+                str(Path("graph-repository-service.example.json").resolve()),
                 "--runs-dir",
                 str(runs_dir),
                 "--format",
@@ -3336,6 +3344,97 @@ workspaces:
         self.assertIn("repaired_active_candidate", source_keys)
         self.assertIn("repaired_repair_session", source_keys)
         self.assertIn("repaired_promotion_gate", source_keys)
+
+    def test_graph_repository_plan_accepts_repaired_handoff_filesystem_path(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runs_dir = Path(tmp_dir)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                candidate_ready=False,
+                repair_session_ready_for_candidate_approval=False,
+            )
+            self.write_graph_repository_repaired_run_artifacts(runs_dir)
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                "graph-repository-service.example.json",
+                "--runs-dir",
+                str(runs_dir),
+                "--repaired-handoff",
+                str(runs_dir / "repaired_candidate_promotion_handoff_report.json"),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["ready_for_branch"])
+        self.assertEqual(payload["runs_dir"], str(runs_dir.resolve()))
+        repaired_handoff = next(
+            artifact
+            for artifact in payload["source_artifacts"]
+            if artifact["key"] == "repaired_handoff"
+        )
+        self.assertTrue(repaired_handoff["available"])
+        self.assertEqual(
+            repaired_handoff["source_ref"],
+            "runs/repaired_candidate_promotion_handoff_report.json",
+        )
+
+    def test_graph_repository_plan_prefers_runs_dir_repaired_handoff_path(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            runs_dir = tmp_root / "runs"
+            runs_dir.mkdir()
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                candidate_ready=False,
+                repair_session_ready_for_candidate_approval=False,
+            )
+            self.write_graph_repository_repaired_run_artifacts(runs_dir)
+            operator_cwd = tmp_root / "operator"
+            operator_cwd.mkdir()
+            (
+                operator_cwd / "repaired_candidate_promotion_handoff_report.json"
+            ).write_text(
+                json.dumps({"artifact_kind": "wrong_cwd_handoff"}),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                str(Path("graph-repository-service.example.json").resolve()),
+                "--runs-dir",
+                str(runs_dir),
+                "--repaired-handoff",
+                "repaired_candidate_promotion_handoff_report.json",
+                "--format",
+                "json",
+                cwd=operator_cwd,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        repaired_handoff = next(
+            artifact
+            for artifact in payload["source_artifacts"]
+            if artifact["key"] == "repaired_handoff"
+        )
+        self.assertTrue(repaired_handoff["available"])
+        self.assertEqual(
+            repaired_handoff["source_ref"],
+            "runs/repaired_candidate_promotion_handoff_report.json",
+        )
 
     def test_graph_repository_plan_repaired_handoff_ignores_stale_default_session(
         self,
@@ -4091,7 +4190,7 @@ workspaces:
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads(result.stdout)
             self.assertTrue(payload["ok"])
-            self.assertEqual(payload["summary"]["published_artifact_count"], 8)
+            self.assertEqual(payload["summary"]["published_artifact_count"], 12)
             self.assertTrue(
                 (
                     specgraph_dir
@@ -4108,6 +4207,15 @@ workspaces:
                     / "specgraph-public"
                     / "runs"
                     / "repaired_idea_to_spec_repair_session.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "dist"
+                    / "specgraph-public"
+                    / "runs"
+                    / "repaired_candidate_spec_graph.json"
                 ).is_file()
             )
 
@@ -4333,7 +4441,7 @@ workspaces:
                 payload["summary"]["repaired_repair_session_digest"],
                 str,
             )
-            self.assertEqual(payload["summary"]["published_artifact_count"], 8)
+            self.assertEqual(payload["summary"]["published_artifact_count"], 12)
             self.assertEqual(
                 payload["summary"]["candidate_approval_approved_path_count"],
                 1,
@@ -6275,6 +6383,134 @@ workspaces:
             self.assertEqual(statuses["prepare_worktree"], "dry_run")
             self.assertEqual(statuses["commit_candidate"], "skipped_dry_run")
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_candidate_promotion_execute_defaults_repaired_source_dir(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                paths=[
+                    "runs/repaired_materialized_candidate_specs/IDEA-ALPHA.yaml",
+                ],
+            )
+            promotion_request = tmp_root / "graph_repository_promotion_request.json"
+            request_result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--output",
+                str(promotion_request),
+                "--format",
+                "json",
+            )
+            self.assertEqual(request_result.returncode, 0, request_result.stderr)
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(workspace_dir),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            expected_source_dir = tmp_root.resolve()
+            self.assertEqual(
+                payload["materialized_source_dir"],
+                str(expected_source_dir),
+            )
+            self.assertIn(
+                str(expected_source_dir),
+                payload["git_service_command"],
+            )
+
+    def test_product_candidate_promotion_execute_copies_repaired_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                paths=[
+                    "runs/repaired_materialized_candidate_specs/IDEA-ALPHA.yaml",
+                ],
+            )
+            promotion_request = tmp_root / "graph_repository_promotion_request.json"
+            request_result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--output",
+                str(promotion_request),
+                "--format",
+                "json",
+            )
+            self.assertEqual(request_result.returncode, 0, request_result.stderr)
+            repaired_spec_path = (
+                tmp_root
+                / "runs"
+                / "repaired_materialized_candidate_specs"
+                / "IDEA-ALPHA.yaml"
+            )
+            repaired_spec_path.parent.mkdir(parents=True, exist_ok=True)
+            repaired_spec_path.write_text(
+                "id: IDEA-ALPHA\nsummary: Repaired candidate spec\n",
+                encoding="utf-8",
+            )
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(workspace_dir),
+                "--open-review-dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertEqual(payload["summary"]["status"], "completed")
+            self.assertEqual(payload["git_review"]["copied_file_count"], 1)
+            self.assertTrue(
+                (
+                    workspace_dir
+                    / "runs"
+                    / "repaired_materialized_candidate_specs"
+                    / "IDEA-ALPHA.yaml"
+                ).is_file()
+            )
 
     def test_product_candidate_promotion_execute_resolves_relative_child_inputs(
         self,
