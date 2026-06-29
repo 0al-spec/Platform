@@ -597,6 +597,37 @@ The next valuable implementation choices are:
    Product Workspace that shows candidate graph, repair session, Idea Maturity,
    approval readiness, controlled promotion, Git Service execution, review
    status, and publication status as one operator-readable flow.
+   The diagnostic pass is now documented in the
+   [Product Idea-to-Spec Demo Runbook](product-idea-to-spec-demo-runbook.md).
+   The next demo-hardening slices are:
+
+   - **Workspace-scoped demo state hygiene.** Add a preflight surface that
+     reports which SpecSpace-owned state artifacts belong to which
+     workspace/session, and make stale cross-workspace rerun request or
+     approval intent state visible before Platform smoke runs.
+   - **Team Decision Log happy-path repair pack.** Prepare
+     workspace/session-consistent repair drafts and ontology decisions for the
+     Team Decision Log pilot until the repaired handoff reaches
+     `ready_for_candidate_approval: true`.
+   - **SpecSpace guided product flow.** Turn the Product Workspace from a
+     passive dashboard into a guided lifecycle layer: idea intake, repair
+     requests, ontology decisions, rerun request, approval intent, Platform
+     approval, promotion request, Git dry-run, review status, and read-model
+     publication.
+   - **Platform smoke profiles.** Split demo smoke expectations into an
+     explicit diagnostic-blocked profile and a happy-path promotion dry-run
+     profile so expected gate blocks are not confused with unexpected
+     execution failures.
+   - **Product ontology gap review UX.** Make bind, alias,
+     project-local-term proposal, reject, and defer decisions easier to review
+     from SpecSpace, and preview their effect on Idea Maturity and approval
+     readiness.
+   - **Promotion readiness explainability polish.** Group blockers by owner
+     and next action: SpecSpace state, SpecGraph repair/ontology gaps,
+     Platform approval gates, and Git Service handoff.
+   - **Demo artifact publishing contract.** Clarify how a product workspace
+     artifact base is published and selected so bootstrap SpecGraph artifacts
+     do not leak into product workspace demos.
 3. Platform: move Product Repair Rerun, candidate approval validation, and Git
    Service execution from local adapter orchestration toward hosted or
    queue-backed service implementation while preserving the same report
