@@ -1,0 +1,314 @@
+# Product Idea-to-Spec Demo Runbook
+
+This runbook describes a local end-to-end demo of the product
+`idea_to_spec` lifecycle across SpecGraph, SpecSpace, Metrics, and Platform.
+It is intentionally operator-driven and does not grant UI write authority.
+
+## Goal
+
+Show how a product idea becomes a reviewable SpecGraph candidate, how
+SpecSpace displays the candidate lifecycle and Idea Maturity diagnostics, and
+how Platform gates repair, approval, and Git Service promotion handoffs.
+
+The demo has two useful outcomes:
+
+- a diagnostic demo, where the candidate is blocked and the UI/report explains
+  why;
+- a happy-path promotion demo, only when repair answers, ontology decisions,
+  approval intent, and approval-ready repaired handoff artifacts are present
+  for the same workspace/session.
+
+## Preflight
+
+Use clean, current checkouts:
+
+```bash
+git -C ../Metrics status -sb
+git -C ../SpecGraph status -sb
+git -C ../SpecSpace status -sb
+git -C . status -sb
+```
+
+All four repositories should be on their intended branches. Generated
+`runs/*.json` and `dist/specgraph-public/*` files are normally ignored, but
+they still affect local demos.
+
+Before running Platform smoke, ensure SpecSpace-owned state artifacts in
+`../SpecGraph/runs` belong to the workspace being demonstrated:
+
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+runs = Path("../SpecGraph/runs")
+for name in [
+    "idea_to_spec_repair_rerun_requests.json",
+    "idea_to_spec_candidate_approval_intents.json",
+    "specspace_repair_draft_import_preview.json",
+    "specspace_repair_rerun_request_gate.json",
+]:
+    path = runs / name
+    if not path.exists():
+        print(name, "missing")
+        continue
+    data = json.loads(path.read_text())
+    print(name, data.get("summary"))
+PY
+```
+
+If these artifacts point at another workspace, the gate should block with an
+identity mismatch. That is correct behavior, not a Platform failure.
+
+## 1. Build SpecGraph Product Artifacts
+
+From `../SpecGraph`:
+
+```bash
+make product-workspace-decision-backed-repair-chain
+make product-workspace-repaired-promotion-handoff
+make publish-bundle
+```
+
+Checkpoints:
+
+- `runs/idea_maturity_metrics_report.json` exists;
+- `runs/idea_maturity_metrics_validation_report.json` exists and is `ok`;
+- `runs/repaired_candidate_promotion_handoff_report.json` exists;
+- `dist/specgraph-public/artifact_manifest.json` contains the maturity reports.
+
+Quick check:
+
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+root = Path("../SpecGraph")
+report = json.loads((root / "runs/idea_maturity_metrics_report.json").read_text())
+validation = json.loads((root / "runs/idea_maturity_metrics_validation_report.json").read_text())
+handoff = json.loads((root / "runs/repaired_candidate_promotion_handoff_report.json").read_text())
+
+print("maturity:", report.get("status"), report.get("summary", {}).get("lifecycle_state"))
+print("validation:", validation.get("summary", {}).get("status"))
+print("handoff:", handoff.get("summary", {}).get("status"))
+print("approval-ready:", handoff.get("summary", {}).get("ready_for_candidate_approval"))
+print("unresolved ontology gaps:", handoff.get("summary", {}).get("unresolved_ontology_gap_count"))
+print("unresolved candidate gaps:", handoff.get("summary", {}).get("unresolved_candidate_gap_count"))
+PY
+```
+
+## 2. Start SpecSpace Against The Public Bundle
+
+In one terminal, serve the static SpecGraph bundle:
+
+```bash
+python3 -m http.server 9009 \
+  --bind 127.0.0.1 \
+  --directory ../SpecGraph/dist/specgraph-public
+```
+
+In another terminal, start the SpecSpace API with the product workspace mapped
+to the same bundle:
+
+```bash
+uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt \
+  python viewer/server.py \
+    --host 127.0.0.1 \
+    --port 8001 \
+    --dialog-dir /Users/egor/Development/GitHub/ChatGPTDialogs/canonical_json \
+    --spec-dir /Users/egor/Development/GitHub/0AL/SpecGraph/specs/nodes \
+    --specgraph-dir /Users/egor/Development/GitHub/0AL/SpecGraph \
+    --artifact-base-url http://127.0.0.1:9009 \
+    --product-workspace-artifact-base-url team-decision-log=http://127.0.0.1:9009 \
+    --agent
+```
+
+In a third terminal, start the new SpecSpace UI. Do not start the deprecated
+ContextBuilder UI for this demo.
+
+```bash
+npm run dev --prefix graphspace -- --host 127.0.0.1 --port 5175
+```
+
+Open:
+
+```text
+http://127.0.0.1:5175/team-decision-log
+```
+
+API checkpoint:
+
+```bash
+python3 - <<'PY'
+import json
+import urllib.request
+
+url = "http://127.0.0.1:8001/api/v1/idea-to-spec-workspace?workspace=team-decision-log"
+data = json.load(urllib.request.urlopen(url))
+idea_maturity = data.get("idea_maturity", {})
+
+print("workspace:", data.get("workspace", {}).get("id"))
+print("idea maturity:", idea_maturity.get("status"), "trusted=", idea_maturity.get("trusted"))
+print("validation:", (idea_maturity.get("validation") or {}).get("summary", {}).get("status"))
+print("repair approval ready:", (data.get("repair_session") or {}).get("summary", {}).get("ready_for_candidate_approval"))
+PY
+```
+
+Expected UI checkpoints:
+
+- Product Workspace route renders from GraphSpace, not legacy ContextBuilder;
+- Idea Maturity panel is available and trusted;
+- repair/session/promotion sections explain current blockers;
+- if repaired handoff is not approval-ready, the UI should not offer a fake
+  Git promotion path.
+
+## 3. Run Platform Repair Smoke
+
+From `Platform`:
+
+```bash
+scripts/platform.py product-repair-rerun smoke \
+  --specgraph-dir ../SpecGraph \
+  --build-repaired-handoff \
+  --format json
+```
+
+Expected diagnostic result when the workspace/session state is incomplete:
+
+- `ok: false`;
+- no Git commands executed;
+- no candidate approval decision materialized;
+- no branch, commit, pull request, ontology write, or canonical spec mutation;
+- diagnostics identify the first broken handoff, usually stale SpecSpace-owned
+  rerun request state or unresolved repaired handoff gaps.
+
+Expected happy-path result when the repair request and repaired handoff are
+ready for the same workspace/session:
+
+- `plan_ok: true`;
+- `execution_ok: true`;
+- `publication_ok: true`;
+- `candidate_approval_gate_ok: true`;
+- `ready_to_materialize: true`.
+
+## 4. Validate Candidate Approval Boundary
+
+Diagnostic mode:
+
+```bash
+scripts/platform.py product-candidate-approval approve \
+  --specgraph-dir ../SpecGraph \
+  --workspace-id team-decision-log \
+  --repair-session runs/repaired_idea_to_spec_repair_session.json \
+  --active-candidate runs/repaired_active_idea_to_spec_candidate.json \
+  --promotion-gate runs/repaired_idea_to_spec_promotion_gate.json \
+  --repaired-handoff runs/repaired_candidate_promotion_handoff_report.json \
+  --dry-run \
+  --format json
+```
+
+Expected blocked result:
+
+- `status: candidate_approval_blocked`;
+- `decision_written: false`;
+- diagnostics mention missing approval intent, unresolved gaps, or repaired
+  handoff not ready.
+
+Happy path, after SpecSpace records approval intent and the repaired handoff is
+approval-ready:
+
+```bash
+scripts/platform.py product-candidate-approval approve \
+  --specgraph-dir ../SpecGraph \
+  --workspace-id team-decision-log \
+  --repair-session runs/repaired_idea_to_spec_repair_session.json \
+  --active-candidate runs/repaired_active_idea_to_spec_candidate.json \
+  --promotion-gate runs/repaired_idea_to_spec_promotion_gate.json \
+  --repaired-handoff runs/repaired_candidate_promotion_handoff_report.json \
+  --path runs/materialized_candidate_specs/CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY.yaml \
+  --output ../SpecGraph/runs/platform_candidate_approval_execution_report.json \
+  --decision-output ../SpecGraph/runs/candidate_approval_decision.json
+```
+
+Use the actual promotion paths from the repaired promotion gate, not the example
+path above.
+
+## 5. Promotion Request And Git Service Dry Run
+
+Only run these commands after `candidate_approval_decision.json` is fresh and
+approved.
+
+Build the graph repository plan:
+
+```bash
+scripts/platform.py graph-repository plan \
+  --contract graph-repository-service.example.json \
+  --runs-dir ../SpecGraph/runs \
+  --repaired-handoff ../SpecGraph/runs/repaired_candidate_promotion_handoff_report.json \
+  --output ../SpecGraph/runs/graph_repository_execution_plan.json
+```
+
+Create the report-only promotion request:
+
+```bash
+scripts/platform.py product-candidate-promotion request \
+  --plan ../SpecGraph/runs/graph_repository_execution_plan.json \
+  --approval-decision ../SpecGraph/runs/candidate_approval_decision.json \
+  --output ../SpecGraph/runs/graph_repository_promotion_request.json
+```
+
+Run a dry-run promotion execution:
+
+```bash
+scripts/platform.py product-candidate-promotion execute \
+  --promotion-request ../SpecGraph/runs/graph_repository_promotion_request.json \
+  --approval-decision ../SpecGraph/runs/candidate_approval_decision.json \
+  --repository-dir ../SpecGraph \
+  --workspace-dir /tmp/specgraph-product-promotion-demo-worktree \
+  --dry-run \
+  --open-review-dry-run \
+  --output ../SpecGraph/runs/product_candidate_promotion_execution_report.json
+```
+
+Expected dry-run result:
+
+- no branch, commit, or pull request is created;
+- the execution report explains the planned Git Service operations;
+- SpecSpace can display the resulting product promotion execution surface.
+
+## Current Team Decision Log Demo Status
+
+On the latest local diagnostic run, the Team Decision Log demo produced a
+valid public bundle and trusted Idea Maturity metrics, but did not reach
+candidate approval:
+
+```text
+idea_maturity.status: blocked
+idea_maturity.validation: ok
+repaired_handoff.status: repaired_candidate_promotion_handoff_review_required
+repaired_handoff.ready_for_candidate_approval: false
+unresolved ontology gaps: 10
+unresolved candidate gaps: 3
+```
+
+Platform correctly refused to continue:
+
+```text
+product-repair-rerun smoke: failed before execution because local rerun request
+state belonged to local-subscription-control while the current repair session
+belonged to team-decision-log.
+
+product-candidate-approval approve --dry-run: candidate_approval_blocked
+because approval intent was missing and the repaired handoff still had
+unresolved gaps.
+
+graph-repository plan --repaired-handoff: blocked all Git Service operations
+because the repaired handoff was not approval-ready.
+```
+
+This is a successful diagnostic demo. The next product demo iteration should
+record workspace/session-consistent repair drafts and ontology decisions for
+Team Decision Log, rerun the repaired handoff, and then repeat steps 3-5 for a
+happy-path dry-run promotion.
+
