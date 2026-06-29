@@ -203,6 +203,35 @@ IDEA_MATURITY_DEFAULT_REFS = {
     "validation_report": f"runs/{IDEA_MATURITY_VALIDATION_REPORT_ARTIFACT}",
 }
 IDEA_MATURITY_READINESS_EXPLAINER_LIMIT = 8
+IDEA_MATURITY_REPORT_CONTRACT_FIELDS = (
+    "schema_version",
+    "schema_ref",
+    "validation_report_schema_ref",
+    "validator_id",
+    "validator_version",
+    "compatibility_policy",
+    "compatibility_policy_ref",
+    "metrics_rfc_ref",
+    "proposal_id",
+)
+IDEA_MATURITY_VALIDATOR_METADATA_FIELDS = (
+    "id",
+    "version",
+    "rfc_ref",
+    "schema_ref",
+    "validation_report_schema_ref",
+    "script_ref",
+    "compatibility_policy_ref",
+)
+IDEA_MATURITY_REF_METADATA_FIELDS = {
+    "schema_ref",
+    "validation_report_schema_ref",
+    "compatibility_policy_ref",
+    "metrics_rfc_ref",
+    "rfc_ref",
+    "script_ref",
+}
+REF_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 IDEA_MATURITY_TOP_LEVEL_FALSE_FIELDS = (
     "canonical_mutations_allowed",
     "tracked_artifacts_written",
@@ -2851,6 +2880,68 @@ def idea_maturity_readiness_explainers(
     return valid_count, explainers
 
 
+def string_contains_control_char(value: str) -> bool:
+    return any(ord(char) < 32 or ord(char) == 127 for char in value)
+
+
+def safe_metadata_ref(value: str) -> bool:
+    if string_contains_control_char(value):
+        return False
+    if REF_SCHEME_RE.match(value):
+        return False
+    ref_path = value.split("#", 1)[0]
+    if ref_path.startswith(("/", "\\")):
+        return False
+    if re.match(r"^[A-Za-z]:[\\/]", ref_path):
+        return False
+    normalized = ref_path.replace("\\", "/")
+    if any(part == ".." for part in normalized.split("/")):
+        return False
+    return True
+
+
+def safe_metadata_string(field: str, value: str) -> bool:
+    if string_contains_control_char(value):
+        return False
+    if field in IDEA_MATURITY_REF_METADATA_FIELDS:
+        return safe_metadata_ref(value)
+    return True
+
+
+def compact_scalar_metadata(
+    payload: dict[str, Any],
+    *,
+    fields: tuple[str, ...],
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for field in fields:
+        value = payload.get(field)
+        if isinstance(value, str) and value and safe_metadata_string(field, value):
+            metadata[field] = value
+        elif type(value) is int:
+            metadata[field] = value
+    return metadata
+
+
+def idea_maturity_contract_metadata(
+    metrics_report: dict[str, Any] | None,
+    validation_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    report_contract = compact_scalar_metadata(
+        nested_mapping(metrics_report or {}, "contract"),
+        fields=IDEA_MATURITY_REPORT_CONTRACT_FIELDS,
+    )
+    validator_metadata = compact_scalar_metadata(
+        nested_mapping(validation_report or {}, "validator"),
+        fields=IDEA_MATURITY_VALIDATOR_METADATA_FIELDS,
+    )
+    return {
+        "report": report_contract,
+        "validator": validator_metadata,
+        "available": bool(report_contract or validator_metadata),
+    }
+
+
 def idea_maturity_summary(
     specgraph_dir: Path,
     *,
@@ -3008,6 +3099,10 @@ def idea_maturity_summary(
         "validation_report_count": validation_summary.get("report_count", 0),
         "validation_invalid_count": validation_summary.get("invalid_count", 0),
         "metric_pack_id": (metrics_report or {}).get("metric_pack_id"),
+        "contract": idea_maturity_contract_metadata(
+            metrics_report,
+            validation_report,
+        ),
         "lifecycle_state": derived_state.get("lifecycle_state")
         or metrics.get("lifecycle_state"),
         "candidate_approval_state": derived_state.get("candidate_approval_state")

@@ -701,6 +701,7 @@ class PlatformCliTests(unittest.TestCase):
         validation_status: str = "ok",
         authority_expanded: bool = False,
         include_privacy_boundary: bool = True,
+        include_contract_metadata: bool = True,
     ) -> None:
         runs_dir = specgraph_dir / "runs"
         runs_dir.mkdir(parents=True, exist_ok=True)
@@ -778,6 +779,22 @@ class PlatformCliTests(unittest.TestCase):
                 "runs/platform_product_repair_rerun_publication_report.json",
             ],
         }
+        if include_contract_metadata:
+            metrics_report["contract"] = {
+                "schema_version": 1,
+                "schema_ref": "schemas/idea_maturity_metrics_report.schema.json",
+                "validation_report_schema_ref": (
+                    "schemas/idea_maturity_metrics_validation_report.schema.json"
+                ),
+                "validator_id": "metrics.idea_maturity_metrics.validator.v0.1",
+                "validator_version": "0.1.0",
+                "compatibility_policy": "additive_v1",
+                "compatibility_policy_ref": (
+                    "VALIDATOR_CONTRACT.md#compatibility-policy"
+                ),
+                "metrics_rfc_ref": "Metrics/IDEA_MATURITY_METRICS.md",
+                "proposal_id": "0181",
+            }
         if include_privacy_boundary:
             metrics_report["privacy_boundary"] = {
                 "contains_human_operator_identity": False,
@@ -812,6 +829,20 @@ class PlatformCliTests(unittest.TestCase):
                 }
             ],
         }
+        if include_contract_metadata:
+            validation_report["validator"] = {
+                "id": "metrics.idea_maturity_metrics.validator.v0.1",
+                "version": "0.1.0",
+                "rfc_ref": "IDEA_MATURITY_METRICS.md",
+                "schema_ref": "schemas/idea_maturity_metrics_report.schema.json",
+                "validation_report_schema_ref": (
+                    "schemas/idea_maturity_metrics_validation_report.schema.json"
+                ),
+                "script_ref": "scripts/metrics.py",
+                "compatibility_policy_ref": (
+                    "VALIDATOR_CONTRACT.md#compatibility-policy"
+                ),
+            }
         (runs_dir / "idea_maturity_metrics_report.json").write_text(
             json.dumps(metrics_report),
             encoding="utf-8",
@@ -3891,6 +3922,29 @@ workspaces:
             self.assertEqual(payload["idea_maturity"]["validation_status"], "ok")
             self.assertEqual(payload["idea_maturity"]["lifecycle_state"], "promotion_requested")
             self.assertEqual(payload["idea_maturity"]["failed_gate_count"], 1)
+            self.assertTrue(payload["idea_maturity"]["contract"]["available"])
+            self.assertEqual(
+                payload["idea_maturity"]["contract"]["report"]["schema_ref"],
+                "schemas/idea_maturity_metrics_report.schema.json",
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["contract"]["report"][
+                    "validation_report_schema_ref"
+                ],
+                "schemas/idea_maturity_metrics_validation_report.schema.json",
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["contract"]["report"]["compatibility_policy"],
+                "additive_v1",
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["contract"]["validator"]["id"],
+                "metrics.idea_maturity_metrics.validator.v0.1",
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["contract"]["validator"]["version"],
+                "0.1.0",
+            )
             self.assertEqual(
                 payload["idea_maturity"]["readiness_explainer_count"],
                 1,
@@ -4507,6 +4561,127 @@ workspaces:
                 payload["summary"]["idea_maturity_validation_status"],
                 "ok",
             )
+            self.assertEqual(
+                payload["idea_maturity"]["contract"]["validator"][
+                    "compatibility_policy_ref"
+                ],
+                "VALIDATOR_CONTRACT.md#compatibility-policy",
+            )
+
+    def test_product_candidate_approval_gate_accepts_legacy_maturity_without_contract(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            self.write_idea_maturity_artifacts(
+                specgraph_dir,
+                include_contract_metadata=False,
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["idea_maturity"]["status"], "available")
+            self.assertTrue(payload["idea_maturity"]["trusted"])
+            self.assertFalse(payload["idea_maturity"]["contract"]["available"])
+
+    def test_product_candidate_approval_gate_sanitizes_maturity_contract_metadata(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            self.write_idea_maturity_artifacts(specgraph_dir)
+            metrics_path = (
+                specgraph_dir / "runs" / "idea_maturity_metrics_report.json"
+            )
+            validation_path = (
+                specgraph_dir
+                / "runs"
+                / "idea_maturity_metrics_validation_report.json"
+            )
+            metrics_report = json.loads(metrics_path.read_text(encoding="utf-8"))
+            metrics_report["contract"]["schema_ref"] = "/private/tmp/schema.json"
+            metrics_report["contract"]["validation_report_schema_ref"] = (
+                "../schemas/idea_maturity_metrics_validation_report.schema.json"
+            )
+            metrics_report["contract"]["compatibility_policy_ref"] = (
+                "VALIDATOR_CONTRACT.md#compatibility-policy\nleak"
+            )
+            metrics_report["contract"]["metrics_rfc_ref"] = (
+                "https://example.invalid/IDEA_MATURITY_METRICS.md"
+            )
+            metrics_path.write_text(json.dumps(metrics_report), encoding="utf-8")
+            validation_report = json.loads(
+                validation_path.read_text(encoding="utf-8")
+            )
+            validation_report["validator"]["schema_ref"] = (
+                "file:///private/tmp/schema.json"
+            )
+            validation_report["validator"]["script_ref"] = (
+                "/Users/operator/Metrics/scripts/metrics.py"
+            )
+            validation_report["validator"]["compatibility_policy_ref"] = (
+                "../VALIDATOR_CONTRACT.md#compatibility-policy"
+            )
+            validation_path.write_text(
+                json.dumps(validation_report),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["idea_maturity"]["trusted"])
+            contract = payload["idea_maturity"]["contract"]
+            self.assertTrue(contract["available"])
+            self.assertEqual(
+                contract["report"]["validator_id"],
+                "metrics.idea_maturity_metrics.validator.v0.1",
+            )
+            self.assertEqual(contract["report"]["compatibility_policy"], "additive_v1")
+            self.assertNotIn("schema_ref", contract["report"])
+            self.assertNotIn("validation_report_schema_ref", contract["report"])
+            self.assertNotIn("compatibility_policy_ref", contract["report"])
+            self.assertNotIn("metrics_rfc_ref", contract["report"])
+            self.assertEqual(
+                contract["validator"]["id"],
+                "metrics.idea_maturity_metrics.validator.v0.1",
+            )
+            self.assertEqual(contract["validator"]["version"], "0.1.0")
+            self.assertNotIn("schema_ref", contract["validator"])
+            self.assertNotIn("script_ref", contract["validator"])
+            self.assertNotIn("compatibility_policy_ref", contract["validator"])
 
     def test_product_candidate_approval_gate_bounds_maturity_explainers_after_filtering(
         self,

@@ -246,11 +246,14 @@ When SpecGraph has produced `runs/idea_maturity_metrics_report.json` and
 reports also include a compact `idea_maturity` summary. Platform exposes the
 metrics status, validation status, lifecycle state, blockers, stale refs, failed
 gates, dry-run count, bounded readiness explainers, source refs, and public
-bundle presence. Readiness explainers are operator-facing reasons with source
-evidence and `next_action` text, for example unresolved Pre-SIB findings or
-repair-session blockers. This is report-only telemetry: missing or failed
-maturity metrics make the maturity surface untrusted, but they do not replace
-the concrete repair, approval, and promotion gates.
+bundle presence. When the Metrics contract metadata is present, the same summary
+also surfaces the report schema, validation report schema, validator id/version,
+and compatibility policy refs used to interpret the telemetry. Readiness
+explainers are operator-facing reasons with source evidence and `next_action`
+text, for example unresolved Pre-SIB findings or repair-session blockers. This
+is report-only telemetry: missing or failed maturity metrics make the maturity
+surface untrusted, but they do not replace the concrete repair, approval, and
+promotion gates.
 
 The smoke can also include the repaired handoff and candidate approval gate:
 
