@@ -578,21 +578,22 @@ candidate source, workspace route selection, controlled promotion UI, deployment
 lane isolation, repair-rerun execution, a reproducible rerun smoke contract, and
 Metrics-backed idea maturity visibility are now present. The first UX polish
 slice landed in SpecSpace: the panel links metric groups to lifecycle sections,
-surfaces `next_action` text, and shows rerun trend. The next explainability
-slice connects SpecGraph readiness explainers through SpecSpace and Platform
-reports so operators see "candidate is blocked because these concrete
-conditions remain", not "the score is bad".
+surfaces `next_action` text, and shows rerun trend. The explainability slice now
+connects SpecGraph readiness explainers through SpecSpace and Platform reports
+so operators see "candidate is blocked because these concrete conditions
+remain", not "the score is bad".
+
+The Metrics hardening slice has also landed as a cross-repo contract package:
+Metrics is the source of truth for the Idea Maturity schemas, examples,
+validator CLI, validation-report schema, and compatibility docs; SpecGraph
+emits producer/consumer contract metadata and validator refs; SpecSpace exposes
+the metadata in the Product Workspace; and Platform preserves compact sanitized
+metadata as report-only telemetry. This means Idea Maturity is no longer just a
+local JSON convention inside SpecGraph.
 
 The next valuable implementation choices are:
 
-1. Metrics: harden the Metrics repository as a first-class contract/tool
-   provider, following the Hyperprompt/Ontology pattern where practical:
-   versioned validator CLI, stable JSON Schema, examples, documented invocation
-   from SpecGraph, and compatibility policy. SpecGraph should keep invoking the
-   validator through an explicit contract rather than depending on an implicit
-   neighboring checkout shape. Platform should preserve the resulting contract
-   metadata as report-only telemetry, not as an extra approval gate.
-2. SpecGraph/SpecSpace/Platform: run and preserve a full demo pass for a product
+1. SpecGraph/SpecSpace/Platform: run and preserve a full demo pass for a product
    workspace after the Pre-SIB explainers land. The expected outcome is a
    Product Workspace that shows candidate graph, repair session, Idea Maturity,
    approval readiness, controlled promotion, Git Service execution, review
@@ -628,14 +629,14 @@ The next valuable implementation choices are:
    - **Demo artifact publishing contract.** Clarify how a product workspace
      artifact base is published and selected so bootstrap SpecGraph artifacts
      do not leak into product workspace demos.
-3. Platform: move Product Repair Rerun, candidate approval validation, and Git
+2. Platform: move Product Repair Rerun, candidate approval validation, and Git
    Service execution from local adapter orchestration toward hosted or
    queue-backed service implementation while preserving the same report
    contracts.
-4. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
+3. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
    become structured event-storming input without adding a product-specific
    script.
-5. Ontology/SpecGraph: continue compiler-backed applicability profile import
+4. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 
 ## Operating Notes
