@@ -202,6 +202,7 @@ IDEA_MATURITY_DEFAULT_REFS = {
     "metrics_report": f"runs/{IDEA_MATURITY_METRICS_REPORT_ARTIFACT}",
     "validation_report": f"runs/{IDEA_MATURITY_VALIDATION_REPORT_ARTIFACT}",
 }
+IDEA_MATURITY_READINESS_EXPLAINER_LIMIT = 8
 IDEA_MATURITY_TOP_LEVEL_FALSE_FIELDS = (
     "canonical_mutations_allowed",
     "tracked_artifacts_written",
@@ -2809,6 +2810,47 @@ def idea_maturity_public_artifact_status(
     }
 
 
+def idea_maturity_readiness_explainers(
+    report: dict[str, Any] | None,
+) -> tuple[int, list[dict[str, Any]]]:
+    if not isinstance(report, dict):
+        return 0, []
+    raw_explainers = report.get("readiness_explainers")
+    if not isinstance(raw_explainers, list):
+        return 0, []
+    valid_count = 0
+    explainers: list[dict[str, Any]] = []
+    for item in raw_explainers:
+        if not isinstance(item, dict):
+            continue
+        explainer_id = item.get("id")
+        if not isinstance(explainer_id, str) or not explainer_id:
+            continue
+        valid_count += 1
+        if len(explainers) >= IDEA_MATURITY_READINESS_EXPLAINER_LIMIT:
+            continue
+        proposal_id = item.get("proposal_id")
+        kind = item.get("kind")
+        source = item.get("source")
+        severity = item.get("severity")
+        message = item.get("message")
+        next_action = item.get("next_action")
+        explainers.append(
+            {
+                "id": explainer_id,
+                "proposal_id": proposal_id if isinstance(proposal_id, str) else None,
+                "kind": kind if isinstance(kind, str) else "unknown",
+                "source": source if isinstance(source, str) else None,
+                "severity": severity if isinstance(severity, str) else "unknown",
+                "blocks": string_list(item.get("blocks")),
+                "message": message if isinstance(message, str) else None,
+                "next_action": next_action if isinstance(next_action, str) else None,
+                "evidence_refs": string_list(item.get("evidence_refs")),
+            }
+        )
+    return valid_count, explainers
+
+
 def idea_maturity_summary(
     specgraph_dir: Path,
     *,
@@ -2955,6 +2997,9 @@ def idea_maturity_summary(
     promotion_readiness = nested_mapping(groups, "promotion_readiness")
     review_publication = nested_mapping(groups, "review_publication")
     blockers = string_list(derived_state.get("blockers"))
+    readiness_explainer_count, readiness_explainers = (
+        idea_maturity_readiness_explainers(metrics_report)
+    )
     return {
         "status": status,
         "available": metrics_report is not None and metrics_valid,
@@ -2981,6 +3026,12 @@ def idea_maturity_summary(
         or metrics.get("read_model_publication_state"),
         "blockers": blockers,
         "blocker_count": len(blockers),
+        "readiness_explainer_count": readiness_explainer_count,
+        "readiness_explainer_omitted_count": max(
+            0,
+            readiness_explainer_count - len(readiness_explainers),
+        ),
+        "readiness_explainers": readiness_explainers,
         "stale_ref_count": numeric_metric(
             workflow_friction.get("stale_ref_count", metrics.get("stale_ref_count"))
         ),

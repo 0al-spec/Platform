@@ -755,6 +755,24 @@ class PlatformCliTests(unittest.TestCase):
                 "failed_gate_count": 1,
                 "stale_ref_count": 0,
             },
+            "readiness_explainers": [
+                {
+                    "id": "readiness-explainer.pre-sib-ontology-coverage-gap",
+                    "proposal_id": "0180",
+                    "kind": "pre_sib_finding",
+                    "source": "repaired_pre_sib",
+                    "severity": "high",
+                    "blocks": ["pre_sib_review", "candidate_approval"],
+                    "message": "Ontology coverage is incomplete for the candidate graph.",
+                    "next_action": (
+                        "Inspect Pre-SIB coherence findings and close the referenced "
+                        "candidate graph condition."
+                    ),
+                    "evidence_refs": [
+                        "runs/repaired_pre_sib_coherence_report.json#findings.pre-sib-ontology-coverage-gap"
+                    ],
+                }
+            ],
             "source_artifacts": [
                 "runs/idea_to_spec_repair_session.json",
                 "runs/platform_product_repair_rerun_publication_report.json",
@@ -3874,6 +3892,22 @@ workspaces:
             self.assertEqual(payload["idea_maturity"]["lifecycle_state"], "promotion_requested")
             self.assertEqual(payload["idea_maturity"]["failed_gate_count"], 1)
             self.assertEqual(
+                payload["idea_maturity"]["readiness_explainer_count"],
+                1,
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["readiness_explainers"][0]["kind"],
+                "pre_sib_finding",
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["readiness_explainers"][0]["blocks"],
+                ["pre_sib_review", "candidate_approval"],
+            )
+            self.assertIn(
+                "Inspect Pre-SIB coherence findings",
+                payload["idea_maturity"]["readiness_explainers"][0]["next_action"],
+            )
+            self.assertEqual(
                 payload["idea_maturity"]["public_artifacts"]["published_count"],
                 2,
             )
@@ -4462,8 +4496,73 @@ workspaces:
             self.assertEqual(payload["idea_maturity"]["status"], "available")
             self.assertTrue(payload["idea_maturity"]["trusted"])
             self.assertEqual(
+                payload["idea_maturity"]["readiness_explainer_count"],
+                1,
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["readiness_explainers"][0]["source"],
+                "repaired_pre_sib",
+            )
+            self.assertEqual(
                 payload["summary"]["idea_maturity_validation_status"],
                 "ok",
+            )
+
+    def test_product_candidate_approval_gate_bounds_maturity_explainers_after_filtering(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            self.write_idea_maturity_artifacts(specgraph_dir)
+            metrics_path = specgraph_dir / "runs" / "idea_maturity_metrics_report.json"
+            metrics_report = json.loads(metrics_path.read_text(encoding="utf-8"))
+            metrics_report["readiness_explainers"] = [
+                None,
+                {"kind": "missing_id"},
+                *[
+                    {
+                        "id": f"readiness-explainer.pre-sib-{index}",
+                        "kind": "pre_sib_finding",
+                        "source": "repaired_pre_sib",
+                        "severity": "high",
+                        "blocks": ["candidate_approval"],
+                        "next_action": f"Inspect Pre-SIB finding {index}.",
+                    }
+                    for index in range(10)
+                ],
+            ]
+            metrics_path.write_text(json.dumps(metrics_report), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["idea_maturity"]["readiness_explainer_count"],
+                10,
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["readiness_explainer_omitted_count"],
+                2,
+            )
+            self.assertEqual(len(payload["idea_maturity"]["readiness_explainers"]), 8)
+            self.assertEqual(
+                payload["idea_maturity"]["readiness_explainers"][0]["id"],
+                "readiness-explainer.pre-sib-0",
             )
 
     def test_product_candidate_approval_gate_keeps_invalid_maturity_report_only(

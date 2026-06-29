@@ -245,10 +245,12 @@ When SpecGraph has produced `runs/idea_maturity_metrics_report.json` and
 `runs/idea_maturity_metrics_validation_report.json`, the publish and smoke
 reports also include a compact `idea_maturity` summary. Platform exposes the
 metrics status, validation status, lifecycle state, blockers, stale refs, failed
-gates, dry-run count, source refs, and public bundle presence. This is
-report-only telemetry: missing or failed maturity metrics make the maturity
-surface untrusted, but they do not replace the concrete repair, approval, and
-promotion gates.
+gates, dry-run count, bounded readiness explainers, source refs, and public
+bundle presence. Readiness explainers are operator-facing reasons with source
+evidence and `next_action` text, for example unresolved Pre-SIB findings or
+repair-session blockers. This is report-only telemetry: missing or failed
+maturity metrics make the maturity surface untrusted, but they do not replace
+the concrete repair, approval, and promotion gates.
 
 The smoke can also include the repaired handoff and candidate approval gate:
 
@@ -350,9 +352,9 @@ and the approved paths are safe relative repository paths.
 
 The gate report also carries the same compact `idea_maturity` summary when the
 SpecGraph maturity artifacts are present. The summary helps an operator inspect
-pre-SIB/product maturity, but the gate continues to base readiness on concrete
-handoff artifacts and explicit approved paths. Platform does not apply a score
-threshold from the metrics report.
+pre-SIB/product maturity and its readiness explainers, but the gate continues to
+base readiness on concrete handoff artifacts and explicit approved paths.
+Platform does not apply a score threshold from the metrics report.
 
 When the gate is ready, Platform can materialize the narrow handoff artifact
 that the Git Service already expects:
