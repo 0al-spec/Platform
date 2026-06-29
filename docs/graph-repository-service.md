@@ -536,6 +536,17 @@ scripts/platform.py product-candidate-promotion publish-read-model \
   --output ../SpecGraph/runs/product_candidate_promotion_read_model_publication_report.json
 ```
 
+The corresponding SpecSpace product artifact base should point at that public
+workspace directory, for example:
+
+```text
+team-decision-log=https://specgraph.tech/workspaces/team-decision-log
+```
+
+The root `https://specgraph.tech` artifact base remains the SpecGraph showcase.
+Do not point `/team-decision-log` at the root bundle for a production demo unless
+the intent is explicitly to show a blocked/missing product workspace state.
+
 This wraps `graph-repository publish-read-model` and writes:
 
 ```text

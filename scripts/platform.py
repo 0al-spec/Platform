@@ -12507,7 +12507,13 @@ def product_workspace_artifact_base_urls_from_args(args: argparse.Namespace) -> 
     if not values and legacy_url:
         values = [legacy_url]
     if not values:
-        values = [str(args.artifact_base_url)]
+        values = [
+            "team-decision-log="
+            + default_product_workspace_artifact_base_url(
+                str(args.artifact_base_url),
+                "team-decision-log",
+            )
+        ]
 
     bindings: dict[str, str] = {}
     for value in values:
@@ -12530,6 +12536,13 @@ def product_workspace_artifact_base_urls_from_args(args: argparse.Namespace) -> 
             )
         bindings[workspace_id] = url
     return bindings
+
+
+def default_product_workspace_artifact_base_url(
+    artifact_base_url: str,
+    workspace_id: str,
+) -> str:
+    return f"{artifact_base_url.rstrip('/')}/workspaces/{workspace_id}"
 
 
 def render_timeweb_hyperprompt_environment(runtime: TimewebHyperpromptRuntime) -> str:
