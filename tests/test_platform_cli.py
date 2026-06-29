@@ -694,6 +694,74 @@ class PlatformCliTests(unittest.TestCase):
         for filename, payload in artifacts.items():
             (runs_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
 
+    def write_workspace_state_hygiene_artifact(
+        self,
+        specgraph_dir: Path,
+        *,
+        stale_state_count: int = 1,
+    ) -> Path:
+        runs_dir = specgraph_dir / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        path = runs_dir / "workspace_state_hygiene_report.json"
+        payload = {
+            "api_version": "v1",
+            "artifact_kind": "specspace_idea_to_spec_workspace_state_hygiene",
+            "schema_version": 1,
+            "workspace_id": "idea-alpha-workspace",
+            "candidate_id": "idea-alpha",
+            "repair_session_id": "repair-session-1",
+            "repair_session_ref": "runs/idea_to_spec_repair_session.json",
+            "summary": {
+                "status": "blocked" if stale_state_count else "ready",
+                "usable_state_count": 2,
+                "missing_state_count": 0,
+                "stale_state_count": stale_state_count,
+                "invalid_state_count": 0,
+                "blocking_state_count": stale_state_count,
+                "next_action": (
+                    "Replace the rerun request for the current workspace and repair session."
+                    if stale_state_count
+                    else "Continue with the current idea-to-spec workflow."
+                ),
+            },
+            "states": [
+                {
+                    "kind": "repair_rerun_request",
+                    "status": "stale" if stale_state_count else "usable",
+                    "reason": "workspace_id_mismatch" if stale_state_count else "current_workspace_session_state_present",
+                    "stored_workspace_id": "local-subscription-control"
+                    if stale_state_count
+                    else "idea-alpha-workspace",
+                    "current_workspace_id": "idea-alpha-workspace",
+                    "blocks": ["repair_rerun_smoke", "repair_rerun_execution"],
+                    "next_action": "Replace the rerun request for the current workspace and repair session.",
+                }
+            ],
+            "authority_boundary": {
+                "workspace_state_hygiene_is_authority": False,
+                "may_execute_specgraph": False,
+                "may_execute_platform": False,
+                "may_execute_git_service": False,
+                "may_apply_answers": False,
+                "may_apply_decisions": False,
+                "may_mutate_candidate_artifacts": False,
+                "may_mutate_canonical_specs": False,
+                "may_write_ontology_package": False,
+                "may_accept_ontology_terms": False,
+                "may_create_branch_or_commit": False,
+                "may_open_pull_request": False,
+            },
+            "action_boundary": {
+                "inspect_only": True,
+                "acknowledge_only": True,
+                "may_clear_state": False,
+                "may_apply_state": False,
+                "may_delete_state": False,
+            },
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
     def write_idea_maturity_artifacts(
         self,
         specgraph_dir: Path,
@@ -4331,6 +4399,52 @@ workspaces:
             self.assertTrue(payload["idea_maturity"]["trusted"])
             self.assertEqual(payload["summary"]["idea_maturity_status"], "available")
             self.assertTrue(payload["summary"]["idea_maturity_trusted"])
+
+    def test_product_repair_rerun_smoke_surfaces_workspace_state_hygiene(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            hygiene_path = self.write_workspace_state_hygiene_artifact(specgraph_dir)
+            smoke_report_path = (
+                specgraph_dir / "runs" / "platform_product_repair_rerun_smoke.json"
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-state-hygiene",
+                str(hygiene_path),
+                "--output",
+                str(smoke_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["workspace_state_hygiene"]["status"], "blocked")
+            self.assertTrue(payload["workspace_state_hygiene"]["trusted"])
+            self.assertEqual(
+                payload["workspace_state_hygiene"]["stale_state_count"],
+                1,
+            )
+            self.assertEqual(
+                payload["summary"]["workspace_state_hygiene_status"],
+                "blocked",
+            )
+            self.assertEqual(
+                payload["summary"]["workspace_state_hygiene_stale_state_count"],
+                1,
+            )
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn("workspace_state_hygiene_stale_state", codes)
 
     def test_product_repair_rerun_smoke_resolves_caller_relative_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

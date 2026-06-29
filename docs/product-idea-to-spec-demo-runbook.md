@@ -153,18 +153,34 @@ import urllib.request
 url = "http://127.0.0.1:8001/api/v1/idea-to-spec-workspace?workspace=team-decision-log"
 data = json.load(urllib.request.urlopen(url))
 idea_maturity = data.get("idea_maturity", {})
+state_hygiene = data.get("workspace_state_hygiene", {})
 
 print("workspace:", data.get("workspace", {}).get("id"))
 print("idea maturity:", idea_maturity.get("status"), "trusted=", idea_maturity.get("trusted"))
 print("validation:", (idea_maturity.get("validation") or {}).get("summary", {}).get("status"))
 print("repair approval ready:", (data.get("repair_session") or {}).get("summary", {}).get("ready_for_candidate_approval"))
+print("workspace state:", (state_hygiene.get("summary") or {}).get("status"))
 PY
 ```
+
+Optional Platform preflight evidence:
+
+```bash
+curl -fsS \
+  "http://127.0.0.1:8001/api/v1/idea-to-spec-workspace-state-hygiene?workspace=team-decision-log" \
+  > ../SpecGraph/runs/workspace_state_hygiene_report.json
+```
+
+This captures SpecSpace-owned state hygiene as report-only telemetry for the
+Platform smoke. It helps identify stale local repair drafts, rerun requests, or
+approval intents before they become opaque handoff failures.
 
 Expected UI checkpoints:
 
 - Product Workspace route renders from GraphSpace, not legacy ContextBuilder;
 - Idea Maturity panel is available and trusted;
+- Workspace state preflight is visible and has no stale or invalid blockers for
+  a clean happy path;
 - repair/session/promotion sections explain current blockers;
 - if repaired handoff is not approval-ready, the UI should not offer a fake
   Git promotion path.
@@ -177,6 +193,7 @@ From `Platform`:
 scripts/platform.py product-repair-rerun smoke \
   --specgraph-dir ../SpecGraph \
   --build-repaired-handoff \
+  --workspace-state-hygiene ../SpecGraph/runs/workspace_state_hygiene_report.json \
   --format json
 ```
 

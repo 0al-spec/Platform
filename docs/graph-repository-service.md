@@ -260,6 +260,21 @@ is report-only telemetry: missing or failed maturity metrics make the maturity
 surface untrusted, but they do not replace the concrete repair, approval, and
 promotion gates.
 
+The smoke command can also consume a SpecSpace-owned workspace state hygiene
+report with `--workspace-state-hygiene`. This report is produced by SpecSpace's
+`/api/v1/idea-to-spec-workspace-state-hygiene` endpoint and lets Platform show
+stale or invalid local repair drafts, rerun requests, and approval intents
+before they become confusing handoff failures. The hygiene summary is
+report-only telemetry: stale or invalid state is surfaced as WARN diagnostics,
+while the concrete repair, approval, and promotion gates remain the authority.
+
+```bash
+scripts/platform.py product-repair-rerun smoke \
+  --specgraph-dir ../SpecGraph \
+  --workspace-state-hygiene ../SpecGraph/runs/workspace_state_hygiene_report.json \
+  --output ../SpecGraph/runs/platform_product_repair_rerun_smoke_report.json
+```
+
 The smoke can also include the repaired handoff and candidate approval gate:
 
 ```bash
