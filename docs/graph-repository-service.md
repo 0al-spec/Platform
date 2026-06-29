@@ -246,6 +246,23 @@ that the selected SpecSpace draft request can be validated, executed through the
 single approved SpecGraph make target, published as public-safe artifacts, and
 observed without starting candidate approval or Git Service promotion.
 
+The smoke command has explicit expectation profiles:
+
+- `strict` is the default CI-style contract. Any blocked phase or failed gate is
+  a failed smoke.
+- `diagnostic-blocked` treats an expected repair/approval gate block as a
+  successful diagnostic demo, while still failing authority expansion,
+  malformed reports, missing reports, or dry-run execution/publication.
+- `happy-path-promotion-dry-run` is for repaired demos. It requires the repaired
+  handoff and candidate approval gate to reach the promotion dry-run boundary.
+
+```bash
+scripts/platform.py product-repair-rerun smoke \
+  --specgraph-dir ../SpecGraph \
+  --profile diagnostic-blocked \
+  --format json
+```
+
 When SpecGraph has produced `runs/idea_maturity_metrics_report.json` and
 `runs/idea_maturity_metrics_validation_report.json`, the publish and smoke
 reports also include a compact `idea_maturity` summary. Platform exposes the
@@ -281,6 +298,7 @@ The smoke can also include the repaired handoff and candidate approval gate:
 scripts/platform.py product-repair-rerun smoke \
   --specgraph-dir ../SpecGraph \
   --build-repaired-handoff \
+  --profile happy-path-promotion-dry-run \
   --output ../SpecGraph/runs/platform_product_repair_rerun_smoke_report.json
 ```
 

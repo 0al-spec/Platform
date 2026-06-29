@@ -132,6 +132,11 @@ PRODUCT_REPAIR_RERUN_PUBLICATION_REPORT_KIND = (
     "platform_product_repair_rerun_publication_report"
 )
 PRODUCT_REPAIR_RERUN_SMOKE_REPORT_KIND = "platform_product_repair_rerun_smoke_report"
+PRODUCT_REPAIR_RERUN_SMOKE_PROFILES = (
+    "strict",
+    "diagnostic-blocked",
+    "happy-path-promotion-dry-run",
+)
 PRODUCT_REPAIR_RERUN_REQUEST_KIND = (
     "specspace_idea_to_spec_repair_rerun_request_state"
 )
@@ -7681,6 +7686,83 @@ def product_repair_smoke_report_ref(path: Path) -> dict[str, Any]:
     }
 
 
+def product_repair_smoke_profile_evaluation(
+    *,
+    profile: str,
+    strict_ok: bool,
+    phase_payloads: dict[str, dict[str, Any]],
+    diagnostics: list[Diagnostic],
+    build_repaired_handoff: bool,
+) -> dict[str, Any]:
+    error_codes = [
+        diagnostic.code for diagnostic in diagnostics if diagnostic.level == "ERROR"
+    ]
+    plan = phase_payloads.get("plan") or {}
+    candidate_approval_gate = phase_payloads.get("candidate_approval_gate") or {}
+    diagnostic_block_observed = (
+        bool(plan) and plan.get("ready_to_execute") is not True
+    ) or (
+        bool(candidate_approval_gate)
+        and candidate_approval_gate.get("ready_to_materialize") is not True
+    )
+    authority_or_infra_error = any(
+        code
+        in {
+            "product_repair_rerun_smoke_authority_expanded",
+            "product_repair_rerun_smoke_output_json_invalid",
+            "product_repair_rerun_smoke_output_shape_invalid",
+            "product_repair_rerun_smoke_output_missing",
+            "product_repair_rerun_smoke_execution_dry_run",
+            "product_repair_rerun_smoke_publication_dry_run",
+        }
+        for code in error_codes
+    )
+    candidate_gate_ready = (
+        candidate_approval_gate.get("ok") is True
+        and candidate_approval_gate.get("ready_to_materialize") is True
+    )
+    if profile == "diagnostic-blocked":
+        ok = (
+            (not strict_ok)
+            and diagnostic_block_observed
+            and not authority_or_infra_error
+        )
+        return {
+            "profile": profile,
+            "ok": ok,
+            "strict_ok": strict_ok,
+            "expected": "repair or approval gate blocks before mutation authority expands",
+            "observed": (
+                "expected_diagnostic_block"
+                if diagnostic_block_observed
+                else "no_diagnostic_block"
+            ),
+            "diagnostic_block_observed": diagnostic_block_observed,
+            "authority_or_infra_error": authority_or_infra_error,
+        }
+    if profile == "happy-path-promotion-dry-run":
+        ok = strict_ok and (not build_repaired_handoff or candidate_gate_ready)
+        return {
+            "profile": profile,
+            "ok": ok,
+            "strict_ok": strict_ok,
+            "expected": (
+                "repair rerun, publication, and candidate approval gate reach "
+                "promotion dry-run boundary"
+            ),
+            "observed": "happy_path_ready" if ok else "happy_path_not_ready",
+            "candidate_approval_gate_ready": candidate_gate_ready,
+            "build_repaired_handoff": build_repaired_handoff,
+        }
+    return {
+        "profile": profile,
+        "ok": strict_ok,
+        "strict_ok": strict_ok,
+        "expected": "all smoke phases pass with no errors",
+        "observed": "strict_passed" if strict_ok else "strict_failed",
+    }
+
+
 def product_repair_repaired_promotion_paths(specgraph_dir: Path) -> list[str]:
     promotion_gate_path = (
         specgraph_dir
@@ -8041,15 +8123,24 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
     expected_phase_keys = ["plan", "execution", "publication"]
     if args.build_repaired_handoff:
         expected_phase_keys.append("candidate_approval_gate")
-    ok = error_count == 0 and all(
+    strict_ok = error_count == 0 and all(
         phase_payloads.get(key, {}).get("ok") is True
         for key in expected_phase_keys
     )
+    profile_evaluation = product_repair_smoke_profile_evaluation(
+        profile=args.profile,
+        strict_ok=strict_ok,
+        phase_payloads=phase_payloads,
+        diagnostics=diagnostics,
+        build_repaired_handoff=args.build_repaired_handoff,
+    )
+    ok = profile_evaluation["ok"] is True
     report = {
         "schema_version": 1,
         "artifact_kind": PRODUCT_REPAIR_RERUN_SMOKE_REPORT_KIND,
         "generated_at": utc_now_iso(),
         "ok": ok,
+        "profile": profile_evaluation,
         "specgraph_dir": str(specgraph_dir),
         "canonical_mutations_allowed": False,
         "tracked_artifacts_written": False,
@@ -8084,6 +8175,12 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
         "summary": {
             "status": "passed" if ok else "failed",
+            "profile": args.profile,
+            "profile_status": (
+                "passed" if profile_evaluation["ok"] is True else "failed"
+            ),
+            "profile_observed": profile_evaluation.get("observed"),
+            "strict_status": "passed" if strict_ok else "failed",
             "error_count": error_count,
             "plan_ok": phase_payloads.get("plan", {}).get("ok") is True,
             "execution_ok": phase_payloads.get("execution", {}).get("ok") is True,
@@ -13852,6 +13949,18 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Include the repaired promotion handoff target, public artifact "
             "verification, and candidate approval gate check in the smoke."
+        ),
+    )
+    product_repair_smoke_parser.add_argument(
+        "--profile",
+        choices=PRODUCT_REPAIR_RERUN_SMOKE_PROFILES,
+        default="strict",
+        help=(
+            "Smoke expectation profile. strict preserves historical behavior; "
+            "diagnostic-blocked treats an expected repair/approval gate block as "
+            "a successful diagnostic demo; happy-path-promotion-dry-run requires "
+            "the repaired handoff and candidate approval gate to reach the "
+            "promotion dry-run boundary."
         ),
     )
     product_repair_smoke_parser.add_argument(

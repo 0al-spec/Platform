@@ -193,22 +193,40 @@ From `Platform`:
 scripts/platform.py product-repair-rerun smoke \
   --specgraph-dir ../SpecGraph \
   --build-repaired-handoff \
+  --profile diagnostic-blocked \
   --workspace-state-hygiene ../SpecGraph/runs/workspace_state_hygiene_report.json \
   --format json
 ```
 
 Expected diagnostic result when the workspace/session state is incomplete:
 
-- `ok: false`;
+- `ok: true`;
+- `summary.profile: diagnostic-blocked`;
+- `summary.strict_status: failed`;
 - no Git commands executed;
 - no candidate approval decision materialized;
 - no branch, commit, pull request, ontology write, or canonical spec mutation;
 - diagnostics identify the first broken handoff, usually stale SpecSpace-owned
   rerun request state or unresolved repaired handoff gaps.
 
+For a happy-path Team Decision Log demo after SpecGraph has produced the
+workspace/session-consistent repair pack:
+
+```bash
+scripts/platform.py product-repair-rerun smoke \
+  --specgraph-dir ../SpecGraph \
+  --build-repaired-handoff \
+  --profile happy-path-promotion-dry-run \
+  --workspace-state-hygiene ../SpecGraph/runs/workspace_state_hygiene_report.json \
+  --format json
+```
+
 Expected happy-path result when the repair request and repaired handoff are
 ready for the same workspace/session:
 
+- `ok: true`;
+- `summary.profile: happy-path-promotion-dry-run`;
+- `summary.strict_status: passed`;
 - `plan_ok: true`;
 - `execution_ok: true`;
 - `publication_ok: true`;
@@ -301,11 +319,10 @@ Expected dry-run result:
 - the execution report explains the planned Git Service operations;
 - SpecSpace can display the resulting product promotion execution surface.
 
-## Current Team Decision Log Demo Status
+## Team Decision Log Demo Status
 
-On the latest local diagnostic run, the Team Decision Log demo produced a
-valid public bundle and trusted Idea Maturity metrics, but did not reach
-candidate approval:
+The historical Team Decision Log diagnostic run produced a valid public bundle
+and trusted Idea Maturity metrics, but did not reach candidate approval:
 
 ```text
 idea_maturity.status: blocked
@@ -331,7 +348,11 @@ graph-repository plan --repaired-handoff: blocked all Git Service operations
 because the repaired handoff was not approval-ready.
 ```
 
-This is a successful diagnostic demo. The next product demo iteration should
-record workspace/session-consistent repair drafts and ontology decisions for
-Team Decision Log, rerun the repaired handoff, and then repeat steps 3-5 for a
-happy-path dry-run promotion.
+This remains a successful diagnostic demo when run with
+`--profile diagnostic-blocked`.
+
+For the happy-path demo, SpecGraph provides a workspace/session-consistent Team
+Decision Log repair pack. Run the SpecGraph happy-path repair pack target first,
+then run the Platform smoke with `--profile happy-path-promotion-dry-run`. That
+path should reach candidate approval gate readiness without materializing the
+approval decision and without starting Git Service promotion.
