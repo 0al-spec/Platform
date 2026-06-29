@@ -322,10 +322,13 @@ The Timeweb renderer also enables SpecSpace HTTP-provider Hyperprompt compile
 with a `/tmp` scratch workspace and bounded runtime limits; use
 `--disable-hyperprompt-http-compile` for a manifest-level rollback.
 Use `--product-workspace-artifact-base-url` or
-`SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL` when the active product
-workspace should read a separate public-safe artifact bundle from the root
-SpecGraph showcase. The older `--team-decision-log-artifact-base-url` flag
-remains as a compatibility alias for the first pilot.
+`SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL` when a product workspace should
+read a separate public-safe artifact bundle from the root SpecGraph showcase.
+If no product workspace artifact base is provided, Platform derives the Team
+Decision Log demo base as
+`<SPECSPACE_ARTIFACT_BASE_URL>/workspaces/team-decision-log`. The older
+`--team-decision-log-artifact-base-url` flag remains as a compatibility alias
+for the first pilot.
 The GitHub Actions workflow `Timeweb Publish` is the production Timeweb deploy
 publisher. SpecSpace CI produces the service image lock and triggers this
 workflow; Platform renders, validates, and publishes the `timeweb-deploy` branch

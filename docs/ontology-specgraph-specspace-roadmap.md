@@ -621,16 +621,18 @@ The next valuable implementation choices are:
      `strict`, `diagnostic-blocked`, and `happy-path-promotion-dry-run`
      expectation profiles so expected gate blocks are not confused with
      unexpected execution failures.
-   - **Product ontology gap review UX.** Make bind, alias,
+   - **Product ontology gap review UX.** In progress. Make bind, alias,
      project-local-term proposal, reject, and defer decisions easier to review
      from SpecSpace, and preview their effect on Idea Maturity and approval
      readiness.
    - **Promotion readiness explainability polish.** Group blockers by owner
      and next action: SpecSpace state, SpecGraph repair/ontology gaps,
      Platform approval gates, and Git Service handoff.
-   - **Demo artifact publishing contract.** Clarify how a product workspace
-     artifact base is published and selected so bootstrap SpecGraph artifacts
-     do not leak into product workspace demos.
+   - **Demo artifact publishing contract.** Done in Platform. The Timeweb
+     deployment contract now derives the Team Decision Log demo artifact base
+     as `<root artifact base>/workspaces/team-decision-log` unless an explicit
+     `WORKSPACE_ID=URL` override is provided, so product routes do not silently
+     inherit the root SpecGraph showcase bundle.
 2. Platform: move Product Repair Rerun, candidate approval validation, and Git
    Service execution from local adapter orchestration toward hosted or
    queue-backed service implementation while preserving the same report

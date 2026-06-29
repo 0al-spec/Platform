@@ -65,14 +65,21 @@ public-safe artifact bundle:
 
 ```text
 SPECSPACE_ARTIFACT_BASE_URL=https://specgraph.tech
-SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL=https://artifacts.example/team-decision-log
+SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL=team-decision-log=https://specgraph.tech/workspaces/team-decision-log
 ```
 
 If `SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL` is omitted, Platform renders
-the active product workspace route with the same artifact base URL as the root
-SpecGraph workspace. SpecSpace still consumes it through a product workspace
-provider, so the route reads `runs/candidate_spec_graph.json` instead of
-bootstrap `specs/nodes/*.yaml`.
+the Team Decision Log demo route with a derived product artifact base:
+
+```text
+https://specgraph.tech/workspaces/team-decision-log
+```
+
+The root SpecGraph showcase continues to use `SPECSPACE_ARTIFACT_BASE_URL`.
+The product route consumes its artifact base through a product workspace
+provider and reads product `runs/*.json` surfaces such as
+`runs/candidate_spec_graph.json`. This keeps bootstrap/self-evolution artifacts
+from becoming the default data source for `/team-decision-log`.
 
 ## Local Compose Entry Point
 

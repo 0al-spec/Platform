@@ -313,11 +313,19 @@ class PlatformDeployTests(unittest.TestCase):
                 compose,
             )
             self.assertIn("--product-workspace-artifact-base-url", compose)
+            self.assertIn(
+                '"team-decision-log=https://specgraph.tech/workspaces/team-decision-log"',
+                compose,
+            )
             self.assertEqual(manifest["artifact_kind"], "platform_timeweb_deploy_manifest")
             self.assertEqual(manifest["release_commit"], "abc123")
             self.assertEqual(
                 manifest["product_workspace_artifact_base_urls"],
-                {"team-decision-log": "https://specgraph.tech"},
+                {
+                    "team-decision-log": (
+                        "https://specgraph.tech/workspaces/team-decision-log"
+                    )
+                },
             )
             self.assertTrue(manifest["hyperprompt_http_compile_enabled"])
             self.assertEqual(manifest["hyperprompt_work_dir"], "/tmp")
@@ -404,6 +412,11 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertIn(
             'product_workspace_artifact_base_url="'
             '${TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL:-',
+            publish_script,
+        )
+        self.assertIn(
+            'default_team_decision_log_artifact_base_url="'
+            '${artifact_base_url%/}/workspaces/team-decision-log"',
             publish_script,
         )
         self.assertEqual(
