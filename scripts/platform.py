@@ -3198,6 +3198,15 @@ def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
         path,
         label="workspace_state_hygiene",
     )
+    if not status.get("present"):
+        diagnostics.append(
+            Diagnostic(
+                level="WARN",
+                code="workspace_state_hygiene_missing",
+                subject=str(path),
+                message="workspace state hygiene report was requested but the file does not exist",
+            )
+        )
     if payload is None:
         return {
             "status": "invalid" if status.get("present") else "missing",

@@ -4446,6 +4446,37 @@ workspaces:
             codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
             self.assertIn("workspace_state_hygiene_stale_state", codes)
 
+    def test_product_repair_rerun_smoke_warns_on_missing_workspace_state_hygiene(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            missing_hygiene_path = (
+                specgraph_dir / "runs" / "missing_workspace_state_hygiene.json"
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-state-hygiene",
+                str(missing_hygiene_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["workspace_state_hygiene"]["status"], "missing")
+            self.assertFalse(payload["workspace_state_hygiene"]["trusted"])
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn("workspace_state_hygiene_missing", codes)
+
     def test_product_repair_rerun_smoke_resolves_caller_relative_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
