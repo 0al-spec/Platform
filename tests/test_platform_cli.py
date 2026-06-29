@@ -4601,6 +4601,88 @@ workspaces:
             self.assertTrue(payload["idea_maturity"]["trusted"])
             self.assertFalse(payload["idea_maturity"]["contract"]["available"])
 
+    def test_product_candidate_approval_gate_sanitizes_maturity_contract_metadata(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            self.write_idea_maturity_artifacts(specgraph_dir)
+            metrics_path = (
+                specgraph_dir / "runs" / "idea_maturity_metrics_report.json"
+            )
+            validation_path = (
+                specgraph_dir
+                / "runs"
+                / "idea_maturity_metrics_validation_report.json"
+            )
+            metrics_report = json.loads(metrics_path.read_text(encoding="utf-8"))
+            metrics_report["contract"]["schema_ref"] = "/private/tmp/schema.json"
+            metrics_report["contract"]["validation_report_schema_ref"] = (
+                "../schemas/idea_maturity_metrics_validation_report.schema.json"
+            )
+            metrics_report["contract"]["compatibility_policy_ref"] = (
+                "VALIDATOR_CONTRACT.md#compatibility-policy\nleak"
+            )
+            metrics_report["contract"]["metrics_rfc_ref"] = (
+                "https://example.invalid/IDEA_MATURITY_METRICS.md"
+            )
+            metrics_path.write_text(json.dumps(metrics_report), encoding="utf-8")
+            validation_report = json.loads(
+                validation_path.read_text(encoding="utf-8")
+            )
+            validation_report["validator"]["schema_ref"] = (
+                "file:///private/tmp/schema.json"
+            )
+            validation_report["validator"]["script_ref"] = (
+                "/Users/operator/Metrics/scripts/metrics.py"
+            )
+            validation_report["validator"]["compatibility_policy_ref"] = (
+                "../VALIDATOR_CONTRACT.md#compatibility-policy"
+            )
+            validation_path.write_text(
+                json.dumps(validation_report),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["idea_maturity"]["trusted"])
+            contract = payload["idea_maturity"]["contract"]
+            self.assertTrue(contract["available"])
+            self.assertEqual(
+                contract["report"]["validator_id"],
+                "metrics.idea_maturity_metrics.validator.v0.1",
+            )
+            self.assertEqual(contract["report"]["compatibility_policy"], "additive_v1")
+            self.assertNotIn("schema_ref", contract["report"])
+            self.assertNotIn("validation_report_schema_ref", contract["report"])
+            self.assertNotIn("compatibility_policy_ref", contract["report"])
+            self.assertNotIn("metrics_rfc_ref", contract["report"])
+            self.assertEqual(
+                contract["validator"]["id"],
+                "metrics.idea_maturity_metrics.validator.v0.1",
+            )
+            self.assertEqual(contract["validator"]["version"], "0.1.0")
+            self.assertNotIn("schema_ref", contract["validator"])
+            self.assertNotIn("script_ref", contract["validator"])
+            self.assertNotIn("compatibility_policy_ref", contract["validator"])
+
     def test_product_candidate_approval_gate_bounds_maturity_explainers_after_filtering(
         self,
     ) -> None:
