@@ -4761,6 +4761,44 @@ workspaces:
                 codes,
             )
 
+    def test_product_repair_rerun_smoke_allows_missing_optional_hygiene_action_apply_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            hygiene_path = self.write_workspace_state_hygiene_artifact(specgraph_dir)
+            hygiene = json.loads(hygiene_path.read_text(encoding="utf-8"))
+            hygiene["recommended_actions"][0]["authority_boundary"].pop(
+                "may_apply_state",
+                None,
+            )
+            hygiene_path.write_text(json.dumps(hygiene), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-state-hygiene",
+                str(hygiene_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["workspace_state_hygiene"]["trusted"])
+            subjects = {
+                diagnostic["subject"] for diagnostic in payload["diagnostics"]
+            }
+            self.assertNotIn(
+                "workspace_state_hygiene.recommended_actions[0].authority_boundary.may_apply_state",
+                subjects,
+            )
+
     def test_product_repair_rerun_smoke_preserves_zero_hygiene_action_counts(
         self,
     ) -> None:

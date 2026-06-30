@@ -3311,7 +3311,7 @@ def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
                 )
             )
         for field in WORKSPACE_STATE_HYGIENE_RECOMMENDED_ACTION_FALSE_FIELDS:
-            if item_boundary.get(field) is not False:
+            if field in item_boundary and item_boundary.get(field) is not False:
                 diagnostics.append(
                     Diagnostic(
                         level="WARN",
