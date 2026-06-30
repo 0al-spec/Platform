@@ -758,6 +758,7 @@ class PlatformCliTests(unittest.TestCase):
                         "may_write_ontology_package": False,
                         "may_accept_ontology_terms": False,
                         "may_clear_state": False,
+                        "may_apply_state": False,
                         "may_delete_state": False,
                         "may_create_branch_or_commit": False,
                         "may_open_pull_request": False,
@@ -4723,6 +4724,78 @@ workspaces:
             self.assertIn(
                 "workspace_state_hygiene_recommended_action_boundary_expanded",
                 codes,
+            )
+
+    def test_product_repair_rerun_smoke_rejects_hygiene_action_apply_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            hygiene_path = self.write_workspace_state_hygiene_artifact(specgraph_dir)
+            hygiene = json.loads(hygiene_path.read_text(encoding="utf-8"))
+            hygiene["recommended_actions"][0]["authority_boundary"][
+                "may_apply_state"
+            ] = True
+            hygiene_path.write_text(json.dumps(hygiene), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-state-hygiene",
+                str(hygiene_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["workspace_state_hygiene"]["trusted"])
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "workspace_state_hygiene_recommended_action_boundary_expanded",
+                codes,
+            )
+
+    def test_product_repair_rerun_smoke_preserves_zero_hygiene_action_counts(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            hygiene_path = self.write_workspace_state_hygiene_artifact(
+                specgraph_dir,
+                stale_state_count=0,
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-state-hygiene",
+                str(hygiene_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["workspace_state_hygiene"]["recommended_action_count"],
+                0,
+            )
+            self.assertEqual(
+                payload["workspace_state_hygiene"][
+                    "enabled_recommended_action_count"
+                ],
+                0,
             )
 
     def test_product_repair_rerun_smoke_warns_on_missing_workspace_state_hygiene(

@@ -281,6 +281,7 @@ WORKSPACE_STATE_HYGIENE_RECOMMENDED_ACTION_FALSE_FIELDS = (
     "may_write_ontology_package",
     "may_accept_ontology_terms",
     "may_clear_state",
+    "may_apply_state",
     "may_delete_state",
     "may_create_branch_or_commit",
     "may_open_pull_request",
@@ -3386,6 +3387,16 @@ def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
             for diagnostic in diagnostics
         )
     )
+    recommended_action_count = numeric_metric(summary.get("recommended_action_count"))
+    if recommended_action_count is None:
+        recommended_action_count = len(recommended_actions)
+    enabled_recommended_action_count = numeric_metric(
+        summary.get("enabled_recommended_action_count")
+    )
+    if enabled_recommended_action_count is None:
+        enabled_recommended_action_count = sum(
+            1 for item in recommended_actions if item.get("enabled") is True
+        )
     return {
         "status": summary.get("status") if isinstance(summary.get("status"), str) else "unknown",
         "available": True,
@@ -3408,14 +3419,8 @@ def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
         "stale_state_count": numeric_metric(summary.get("stale_state_count")),
         "invalid_state_count": numeric_metric(summary.get("invalid_state_count")),
         "blocking_state_count": numeric_metric(summary.get("blocking_state_count")),
-        "recommended_action_count": numeric_metric(
-            summary.get("recommended_action_count")
-        )
-        or len(recommended_actions),
-        "enabled_recommended_action_count": numeric_metric(
-            summary.get("enabled_recommended_action_count")
-        )
-        or sum(1 for item in recommended_actions if item.get("enabled") is True),
+        "recommended_action_count": recommended_action_count,
+        "enabled_recommended_action_count": enabled_recommended_action_count,
         "next_action": summary.get("next_action")
         if isinstance(summary.get("next_action"), str)
         else None,
