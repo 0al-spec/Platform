@@ -12517,6 +12517,14 @@ def product_workspace_artifact_base_urls_from_args(args: argparse.Namespace) -> 
 
     bindings: dict[str, str] = {}
     for value in values:
+        if "=" not in value and value.rstrip("/") == str(args.artifact_base_url).rstrip("/"):
+            value = (
+                "team-decision-log="
+                + default_product_workspace_artifact_base_url(
+                    str(args.artifact_base_url),
+                    "team-decision-log",
+                )
+            )
         workspace_id, url = (
             value.split("=", 1)
             if "=" in value

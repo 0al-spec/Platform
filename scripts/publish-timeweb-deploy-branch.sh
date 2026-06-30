@@ -7,7 +7,14 @@ remote="${PLATFORM_TIMEWEB_DEPLOY_REMOTE:-origin}"
 release_commit="${PLATFORM_RELEASE_COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 artifact_base_url="${TIMEWEB_REQUIRED_ARTIFACT_BASE_URL:-https://specgraph.tech}"
 default_team_decision_log_artifact_base_url="${artifact_base_url%/}/workspaces/team-decision-log"
-product_workspace_artifact_base_url="${TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL:-${TIMEWEB_REQUIRED_TEAM_DECISION_LOG_ARTIFACT_BASE_URL:-$default_team_decision_log_artifact_base_url}}"
+raw_product_workspace_artifact_base_url="${TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL:-${TIMEWEB_REQUIRED_TEAM_DECISION_LOG_ARTIFACT_BASE_URL:-}}"
+if [[ -z "$raw_product_workspace_artifact_base_url" ]]; then
+  product_workspace_artifact_base_url="$default_team_decision_log_artifact_base_url"
+elif [[ "$raw_product_workspace_artifact_base_url" != *=* && "${raw_product_workspace_artifact_base_url%/}" == "${artifact_base_url%/}" ]]; then
+  product_workspace_artifact_base_url="$default_team_decision_log_artifact_base_url"
+else
+  product_workspace_artifact_base_url="$raw_product_workspace_artifact_base_url"
+fi
 specpm_registry_url="${TIMEWEB_REQUIRED_SPECPM_REGISTRY_URL:-https://specpm.dev}"
 
 if [[ -z "$generated_dir" ]]; then
