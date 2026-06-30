@@ -283,7 +283,10 @@ report with `--workspace-state-hygiene`. This report is produced by SpecSpace's
 stale or invalid local repair drafts, rerun requests, and approval intents
 before they become confusing handoff failures. The hygiene summary is
 report-only telemetry: stale or invalid state is surfaced as WARN diagnostics,
-while the concrete repair, approval, and promotion gates remain the authority.
+and typed `recommended_actions` are copied into the smoke report so operators can
+see the next safe rebuild/recreate step. These actions remain operator hints;
+Platform does not execute them, clear SpecSpace state, or replace the concrete
+repair, approval, and promotion gates.
 
 ```bash
 scripts/platform.py product-repair-rerun smoke \

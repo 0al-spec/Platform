@@ -207,7 +207,10 @@ Expected diagnostic result when the workspace/session state is incomplete:
 - no candidate approval decision materialized;
 - no branch, commit, pull request, ontology write, or canonical spec mutation;
 - diagnostics identify the first broken handoff, usually stale SpecSpace-owned
-  rerun request state or unresolved repaired handoff gaps.
+  rerun request state or unresolved repaired handoff gaps;
+- `workspace_state_hygiene.recommended_actions` names the next safe operator
+  step, such as rebuilding the repair draft import preview or recreating the
+  rerun request for the current repair session.
 
 For a happy-path Team Decision Log demo after SpecGraph has produced the
 workspace/session-consistent repair pack:

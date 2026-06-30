@@ -723,7 +723,49 @@ class PlatformCliTests(unittest.TestCase):
                     if stale_state_count
                     else "Continue with the current idea-to-spec workflow."
                 ),
+                "recommended_action_count": 1 if stale_state_count else 0,
+                "enabled_recommended_action_count": 0,
             },
+            "recommended_actions": [
+                {
+                    "id": "workspace_state.recreate_repair_rerun_request",
+                    "label": "Recreate repair rerun request",
+                    "target_state": "repair_rerun_request",
+                    "target_section": "idea-to-spec-repair-review",
+                    "requires_current_repair_session": True,
+                    "workspace_id": "idea-alpha-workspace",
+                    "candidate_id": "idea-alpha",
+                    "repair_session_id": "repair-session-1",
+                    "repair_session_ref": "runs/idea_to_spec_repair_session.json",
+                    "enabled": False,
+                    "blockers": ["Rebuild repair draft import preview first."],
+                    "ui_intent": "create_repair_rerun_request",
+                    "command_hint": None,
+                    "evidence_refs": [
+                        "specspace-state://idea_to_spec_repair_rerun_requests.json",
+                        "runs/idea_to_spec_repair_session.json",
+                    ],
+                    "authority_boundary": {
+                        "inspect_only": True,
+                        "operator_intent_only": True,
+                        "may_execute_specgraph": False,
+                        "may_execute_platform": False,
+                        "may_execute_git_service": False,
+                        "may_apply_answers": False,
+                        "may_apply_decisions": False,
+                        "may_mutate_candidate_artifacts": False,
+                        "may_mutate_canonical_specs": False,
+                        "may_write_ontology_package": False,
+                        "may_accept_ontology_terms": False,
+                        "may_clear_state": False,
+                        "may_delete_state": False,
+                        "may_create_branch_or_commit": False,
+                        "may_open_pull_request": False,
+                    },
+                }
+            ]
+            if stale_state_count
+            else [],
             "states": [
                 {
                     "kind": "repair_rerun_request",
@@ -4628,8 +4670,60 @@ workspaces:
                 payload["summary"]["workspace_state_hygiene_stale_state_count"],
                 1,
             )
+            self.assertEqual(
+                payload["summary"][
+                    "workspace_state_hygiene_recommended_action_count"
+                ],
+                1,
+            )
+            self.assertEqual(
+                payload["workspace_state_hygiene"]["recommended_actions"][0][
+                    "id"
+                ],
+                "workspace_state.recreate_repair_rerun_request",
+            )
+            self.assertFalse(
+                payload["workspace_state_hygiene"]["recommended_actions"][0][
+                    "enabled"
+                ]
+            )
             codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
             self.assertIn("workspace_state_hygiene_stale_state", codes)
+
+    def test_product_repair_rerun_smoke_rejects_hygiene_action_authority_expansion(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            hygiene_path = self.write_workspace_state_hygiene_artifact(specgraph_dir)
+            hygiene = json.loads(hygiene_path.read_text(encoding="utf-8"))
+            hygiene["recommended_actions"][0]["authority_boundary"][
+                "may_execute_platform"
+            ] = True
+            hygiene_path.write_text(json.dumps(hygiene), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "smoke",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-state-hygiene",
+                str(hygiene_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["workspace_state_hygiene"]["trusted"])
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "workspace_state_hygiene_recommended_action_boundary_expanded",
+                codes,
+            )
 
     def test_product_repair_rerun_smoke_warns_on_missing_workspace_state_hygiene(
         self,
