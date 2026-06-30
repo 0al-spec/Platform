@@ -270,6 +270,22 @@ WORKSPACE_STATE_HYGIENE_ACTION_FALSE_FIELDS = (
     "may_apply_state",
     "may_delete_state",
 )
+WORKSPACE_STATE_HYGIENE_RECOMMENDED_ACTION_FALSE_FIELDS = (
+    "may_execute_specgraph",
+    "may_execute_platform",
+    "may_execute_git_service",
+    "may_apply_answers",
+    "may_apply_decisions",
+    "may_mutate_candidate_artifacts",
+    "may_mutate_canonical_specs",
+    "may_write_ontology_package",
+    "may_accept_ontology_terms",
+    "may_clear_state",
+    "may_apply_state",
+    "may_delete_state",
+    "may_create_branch_or_commit",
+    "may_open_pull_request",
+)
 PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS = {
     "rerun_request": "runs/idea_to_spec_repair_rerun_requests.json",
     "import_preview": "runs/specspace_repair_draft_import_preview.json",
@@ -3199,8 +3215,11 @@ def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
             "stale_state_count": 0,
             "invalid_state_count": 0,
             "blocking_state_count": 0,
+            "recommended_action_count": 0,
+            "enabled_recommended_action_count": 0,
             "next_action": "Provide a SpecSpace workspace state hygiene report for preflight diagnostics.",
             "states": [],
+            "recommended_actions": [],
             "diagnostics": [],
         }
     payload, status, diagnostics = load_optional_json_mapping(
@@ -3231,8 +3250,11 @@ def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
             "stale_state_count": 0,
             "invalid_state_count": 0,
             "blocking_state_count": 0,
+            "recommended_action_count": 0,
+            "enabled_recommended_action_count": 0,
             "next_action": "Repair or publish workspace state hygiene before smoke.",
             "states": [],
+            "recommended_actions": [],
             "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
         }
     if payload.get("artifact_kind") != WORKSPACE_STATE_HYGIENE_KIND:
@@ -3266,6 +3288,67 @@ def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
                     message="workspace state hygiene must not grant state mutation",
                 )
             )
+    recommended_actions = []
+    raw_actions = payload.get("recommended_actions")
+    action_items = raw_actions if isinstance(raw_actions, list) else []
+    for index, item in enumerate(action_items):
+        if not isinstance(item, dict):
+            continue
+        item_boundary = nested_mapping(item, "authority_boundary")
+        if (
+            item_boundary.get("inspect_only") is not True
+            or item_boundary.get("operator_intent_only") is not True
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="WARN",
+                    code="workspace_state_hygiene_recommended_action_boundary_expanded",
+                    subject=f"workspace_state_hygiene.recommended_actions[{index}].authority_boundary",
+                    message=(
+                        "workspace state hygiene recommended actions must remain "
+                        "operator-intent-only"
+                    ),
+                )
+            )
+        for field in WORKSPACE_STATE_HYGIENE_RECOMMENDED_ACTION_FALSE_FIELDS:
+            if item_boundary.get(field) is not False:
+                diagnostics.append(
+                    Diagnostic(
+                        level="WARN",
+                        code="workspace_state_hygiene_recommended_action_boundary_expanded",
+                        subject=(
+                            "workspace_state_hygiene.recommended_actions"
+                            f"[{index}].authority_boundary.{field}"
+                        ),
+                        message=(
+                            "workspace state hygiene recommended actions must "
+                            "not grant execution or mutation authority"
+                        ),
+                    )
+                )
+        recommended_actions.append(
+            {
+                "id": item.get("id") if isinstance(item.get("id"), str) else "unknown",
+                "label": item.get("label")
+                if isinstance(item.get("label"), str)
+                else None,
+                "target_state": item.get("target_state")
+                if isinstance(item.get("target_state"), str)
+                else None,
+                "target_section": item.get("target_section")
+                if isinstance(item.get("target_section"), str)
+                else None,
+                "enabled": item.get("enabled") is True,
+                "blockers": string_list(item.get("blockers")),
+                "ui_intent": item.get("ui_intent")
+                if isinstance(item.get("ui_intent"), str)
+                else None,
+                "command_hint": item.get("command_hint")
+                if isinstance(item.get("command_hint"), str)
+                else None,
+                "evidence_refs": string_list(item.get("evidence_refs")),
+            }
+        )
     summary = nested_mapping(payload, "summary")
     states = []
     raw_states = payload.get("states")
@@ -3299,10 +3382,21 @@ def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
                 "workspace_state_hygiene_kind_mismatch",
                 "workspace_state_hygiene_authority_expanded",
                 "workspace_state_hygiene_action_expanded",
+                "workspace_state_hygiene_recommended_action_boundary_expanded",
             }
             for diagnostic in diagnostics
         )
     )
+    recommended_action_count = numeric_metric(summary.get("recommended_action_count"))
+    if recommended_action_count is None:
+        recommended_action_count = len(recommended_actions)
+    enabled_recommended_action_count = numeric_metric(
+        summary.get("enabled_recommended_action_count")
+    )
+    if enabled_recommended_action_count is None:
+        enabled_recommended_action_count = sum(
+            1 for item in recommended_actions if item.get("enabled") is True
+        )
     return {
         "status": summary.get("status") if isinstance(summary.get("status"), str) else "unknown",
         "available": True,
@@ -3325,10 +3419,13 @@ def workspace_state_hygiene_summary(path: Path | None) -> dict[str, Any]:
         "stale_state_count": numeric_metric(summary.get("stale_state_count")),
         "invalid_state_count": numeric_metric(summary.get("invalid_state_count")),
         "blocking_state_count": numeric_metric(summary.get("blocking_state_count")),
+        "recommended_action_count": recommended_action_count,
+        "enabled_recommended_action_count": enabled_recommended_action_count,
         "next_action": summary.get("next_action")
         if isinstance(summary.get("next_action"), str)
         else None,
         "states": states[:12],
+        "recommended_actions": recommended_actions[:12],
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
     }
 
@@ -8259,6 +8356,13 @@ def product_repair_rerun_smoke(args: argparse.Namespace) -> int:
             "workspace_state_hygiene_invalid_state_count": hygiene_summary[
                 "invalid_state_count"
             ],
+            "workspace_state_hygiene_recommended_action_count": hygiene_summary[
+                "recommended_action_count"
+            ],
+            "workspace_state_hygiene_enabled_recommended_action_count": hygiene_summary[
+                "enabled_recommended_action_count"
+            ],
+            "workspace_state_hygiene_next_action": hygiene_summary["next_action"],
             "candidate_approval_approved_path_count": candidate_approval_summary.get(
                 "approved_path_count",
                 0,
