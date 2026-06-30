@@ -383,3 +383,57 @@ product-candidate-promotion execute --dry-run --open-review-dry-run:
 This reaches candidate approval, promotion request, and Git Service dry-run
 visibility without creating a branch, commit, pull request, ontology write, or
 canonical spec mutation.
+
+## Production Team Decision Log Smoke Status
+
+After the Timeweb product artifact base fix and the SpecGraph workspace bundle
+publish slice, the production Team Decision Log route now resolves product
+workspace artifacts from the workspace-specific static base:
+
+```text
+https://specgraph.space/team-decision-log
+https://specgraph.tech/workspaces/team-decision-log/artifact_manifest.json
+```
+
+Expected production routing checks:
+
+```text
+GET https://specgraph.tech/workspaces/team-decision-log/artifact_manifest.json -> 200
+GET https://specgraph.tech/workspaces/team-decision-log/runs/idea_maturity_metrics_report.json -> 200
+GET https://specgraph.tech/workspaces/team-decision-log/runs/repaired_candidate_promotion_handoff_report.json -> 200
+```
+
+The latest production smoke confirmed that `/team-decision-log` no longer reads
+the root SpecGraph showcase bundle. The SpecSpace workspace API reported an
+`http-product-workspace` provider with:
+
+```text
+artifact_base_url: https://specgraph.tech/workspaces/team-decision-log
+selected_workspace_id: team-decision-log
+missing_artifact_count: 0
+idea_maturity: available, trusted=true
+repaired_handoff.ready_for_candidate_approval: true
+resolved_ontology_gap_count: 11
+unresolved_ontology_gap_count: 0
+promotion_path_count: 6
+```
+
+The remaining production blocker is not static artifact routing. It is
+SpecSpace-owned mutable state hygiene: production can still hold stale
+draft/request/gate state from an older repair session while the published
+read-only happy-path bundle is already approval-ready. In that case the guided
+flow should stay blocked and explain the next safe action, for example:
+
+```text
+workspace_state_hygiene.status: blocked
+repair_drafts: missing
+repair_rerun_request: missing
+candidate_approval_intent: missing
+repair_draft_import_preview: stale repair_session_ref_mismatch
+repair_rerun_request_gate: stale repair_session_ref_mismatch
+next_action: Rebuild repair_draft_import_preview for the current repair session.
+```
+
+Treat this as a separate UX/policy task. SpecSpace should not silently mutate or
+clear operator-owned state; it should make the stale state visible and require an
+explicit safe operator action.

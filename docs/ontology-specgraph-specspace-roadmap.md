@@ -625,14 +625,23 @@ The next valuable implementation choices are:
      project-local-term proposal, reject, and defer decisions easier to review
      from SpecSpace, and preview their effect on Idea Maturity and approval
      readiness.
+   - **Production mutable state policy.** New follow-up after the production
+     smoke. Product workspace static routing is fixed and `/team-decision-log`
+     reads the workspace-specific bundle, but production SpecSpace-owned
+     draft/request/gate state can still be stale relative to the published
+     happy-path repair session. Define the UX/policy for explicit operator
+     refresh or rebuild actions without granting SpecSpace authority to silently
+     clear or mutate repair state.
    - **Promotion readiness explainability polish.** Group blockers by owner
      and next action: SpecSpace state, SpecGraph repair/ontology gaps,
      Platform approval gates, and Git Service handoff.
    - **Demo artifact publishing contract.** Done in Platform. The Timeweb
      deployment contract now derives the Team Decision Log demo artifact base
      as `<root artifact base>/workspaces/team-decision-log` unless an explicit
-     `WORKSPACE_ID=URL` override is provided, so product routes do not silently
-     inherit the root SpecGraph showcase bundle.
+     `WORKSPACE_ID=URL` override is provided, and the production smoke confirmed
+     that the workspace manifest and approval-ready repaired handoff are served
+     from `https://specgraph.tech/workspaces/team-decision-log` instead of the
+     root SpecGraph showcase bundle.
 2. Platform: move Product Repair Rerun, candidate approval validation, and Git
    Service execution from local adapter orchestration toward hosted or
    queue-backed service implementation while preserving the same report
