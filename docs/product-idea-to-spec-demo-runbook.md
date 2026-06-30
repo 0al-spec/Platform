@@ -440,3 +440,57 @@ next_action: Rebuild repair_draft_import_preview for the current repair session.
 Treat this as a separate UX/policy task. SpecSpace should not silently mutate or
 clear operator-owned state; it should make the stale state visible and require an
 explicit safe operator action.
+
+## Manual Repair Loop Smoke Status
+
+The manual repair loop smoke exercises the operator path rather than the
+pre-seeded happy-path fixture pack. In the latest end-to-end run, operator-owned
+drafts created through SpecSpace were accepted as handoff state, imported by
+SpecGraph, and carried through to the same controlled promotion dry-run boundary:
+
+```text
+SpecSpace UI repair drafts
+  -> SpecSpace-owned draft and rerun request state
+  -> SpecGraph import preview and request gate
+  -> SpecGraph repair-draft rerun
+  -> repaired handoff ready_for_candidate_approval=true
+  -> Platform candidate approval materialization
+  -> Platform promotion request
+  -> Git Service dry-run
+```
+
+Confirmed smoke result:
+
+```text
+manual repair drafts: accepted by SpecSpace-owned state
+SpecGraph rerun: produced repaired candidate handoff
+repaired handoff: approval-ready
+workspace hygiene: consumed source state treated as usable, not stale
+candidate approval decision: materialized
+promotion request: promotion_ready=true
+Git Service dry-run: ok=true
+worktree_created: false
+commit_created: false
+pull_request_opened: false
+read_model_published: false
+```
+
+This confirms the downstream product flow is usable without relying only on the
+fixture repair pack. The important lifecycle rule is that source drafts, rerun
+requests, import previews, and request gates may legitimately refer to the
+original repair session after a repaired handoff is selected. When the repaired
+handoff records them as provenance, they are consumed source state rather than
+stale state. The next safe operator action after an approval-ready repaired
+handoff is candidate approval intent, not a forced rebuild of the already
+consumed source handoff.
+
+Authority boundaries remain unchanged:
+
+- SpecSpace stores operator intent but does not execute SpecGraph, Platform, or
+  Git Service.
+- SpecGraph builds review-only rerun and repaired handoff artifacts but does not
+  mutate canonical specs, write Ontology packages, or accept ontology terms.
+- Platform materializes candidate approval and promotion handoff artifacts only
+  after gates pass.
+- Git Service dry-run does not create a worktree, commit, pull request, or read
+  model publication.
