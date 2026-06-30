@@ -621,17 +621,17 @@ The next valuable implementation choices are:
      `strict`, `diagnostic-blocked`, and `happy-path-promotion-dry-run`
      expectation profiles so expected gate blocks are not confused with
      unexpected execution failures.
-   - **Product ontology gap review UX.** In progress. Make bind, alias,
-     project-local-term proposal, reject, and defer decisions easier to review
-     from SpecSpace, and preview their effect on Idea Maturity and approval
-     readiness.
-   - **Production mutable state policy.** New follow-up after the production
-     smoke. Product workspace static routing is fixed and `/team-decision-log`
-     reads the workspace-specific bundle, but production SpecSpace-owned
-     draft/request/gate state can still be stale relative to the published
-     happy-path repair session. Define the UX/policy for explicit operator
-     refresh or rebuild actions without granting SpecSpace authority to silently
-     clear or mutate repair state.
+   - **Product ontology and spec gap review UX.** Done for the current manual
+     repair loop. SpecSpace can capture operator-owned drafts for ontology gaps
+     and product/spec gaps, validate the structured answers, and pass compatible
+     handoff state into the SpecGraph import/rerun path without gaining apply or
+     execution authority.
+   - **Production mutable state policy.** Done for the current manual repair
+     loop. Product workspace static routing is fixed and `/team-decision-log`
+     reads the workspace-specific bundle; SpecSpace surfaces stale/missing
+     draft/request/gate state with recommended safe operator actions; and
+     consumed source state from the original repair session is treated as usable
+     provenance once a repaired handoff records it.
    - **Promotion readiness explainability polish.** Group blockers by owner
      and next action: SpecSpace state, SpecGraph repair/ontology gaps,
      Platform approval gates, and Git Service handoff.
@@ -648,7 +648,9 @@ The next valuable implementation choices are:
    contracts.
 3. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
    become structured event-storming input without adding a product-specific
-   script.
+   script. This is now the next major product layer after the manual downstream
+   loop reached approval decision, promotion request, and Git Service dry-run
+   boundaries without canonical spec, Ontology, or Git mutations.
 4. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 
