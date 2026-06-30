@@ -390,6 +390,68 @@ class PlatformDeployTests(unittest.TestCase):
             )
             self.assertTrue(json.loads(result.stdout)["valid"])
 
+    def test_timeweb_render_treats_bare_root_product_base_as_default(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--artifact-base-url",
+                "https://specgraph.tech",
+                "--product-workspace-artifact-base-url",
+                "https://specgraph.tech",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads(
+                (output_dir / "platform-timeweb-deploy.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                manifest["product_workspace_artifact_base_urls"],
+                {
+                    "team-decision-log": (
+                        "https://specgraph.tech/workspaces/team-decision-log"
+                    )
+                },
+            )
+
+    def test_timeweb_render_keeps_explicit_root_product_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--artifact-base-url",
+                "https://specgraph.tech",
+                "--product-workspace-artifact-base-url",
+                "team-decision-log=https://specgraph.tech",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads(
+                (output_dir / "platform-timeweb-deploy.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                manifest["product_workspace_artifact_base_urls"],
+                {"team-decision-log": "https://specgraph.tech"},
+            )
+
     def test_timeweb_publish_threads_product_workspace_artifact_base_url(self) -> None:
         workflow = (
             REPO_ROOT / ".github" / "workflows" / "timeweb-publish.yml"
@@ -401,17 +463,21 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertIn("product_workspace_artifact_base_url:", workflow)
         self.assertIn(
             "--product-workspace-artifact-base-url "
-            '"${{ inputs.product_workspace_artifact_base_url || inputs.artifact_base_url }}"',
+            '"${{ inputs.product_workspace_artifact_base_url }}"',
             workflow,
         )
         self.assertIn(
             "TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL: "
-            "${{ inputs.product_workspace_artifact_base_url || inputs.artifact_base_url }}",
+            "${{ inputs.product_workspace_artifact_base_url }}",
             workflow,
         )
         self.assertIn(
-            'product_workspace_artifact_base_url="'
+            'raw_product_workspace_artifact_base_url="'
             '${TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL:-',
+            publish_script,
+        )
+        self.assertIn(
+            '"$raw_product_workspace_artifact_base_url" != *=*',
             publish_script,
         )
         self.assertIn(
