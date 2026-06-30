@@ -412,7 +412,7 @@ artifact_base_url: https://specgraph.tech/workspaces/team-decision-log
 selected_workspace_id: team-decision-log
 missing_artifact_count: 0
 idea_maturity: available, trusted=true
-repaired handoff: ready_for_candidate_approval=true
+repaired_handoff.ready_for_candidate_approval: true
 resolved_ontology_gap_count: 11
 unresolved_ontology_gap_count: 0
 promotion_path_count: 6
