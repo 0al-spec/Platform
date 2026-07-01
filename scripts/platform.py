@@ -3216,11 +3216,21 @@ def idea_maturity_summary(
                 answer_materialization.get(
                     "aggregate_answer_count", metrics.get("aggregate_answer_count")
                 )
-            ),
+            )
+            or 0,
+            "dismissed_answer_count": numeric_metric(
+                answer_materialization.get(
+                    "dismissed_answer_count", metrics.get("dismissed_answer_count")
+                )
+            )
+            or 0,
             "closure_evidence_answer_count": numeric_metric(
                 answer_materialization.get(
                     "closure_evidence_answer_count",
-                    metrics.get("closure_evidence_answer_count"),
+                    metrics.get(
+                        "closure_evidence_answer_count",
+                        metrics.get("materialized_answer_count"),
+                    ),
                 )
             ),
             "ordinary_unmaterialized_answer_count": numeric_metric(

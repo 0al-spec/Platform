@@ -852,6 +852,7 @@ class PlatformCliTests(unittest.TestCase):
                     "accepted_answer_count": 3,
                     "per_gap_materialized_answer_count": 2,
                     "aggregate_answer_count": 1,
+                    "dismissed_answer_count": 0,
                     "closure_evidence_answer_count": 3,
                     "ordinary_unmaterialized_answer_count": 0,
                 },
@@ -876,6 +877,7 @@ class PlatformCliTests(unittest.TestCase):
                 "accepted_answer_count": 3,
                 "per_gap_materialized_answer_count": 2,
                 "aggregate_answer_count": 1,
+                "dismissed_answer_count": 0,
                 "closure_evidence_answer_count": 3,
                 "ordinary_unmaterialized_answer_count": 0,
             },
@@ -4347,16 +4349,15 @@ workspaces:
                 ["pre_sib_review", "candidate_approval"],
             )
             self.assertEqual(
-                payload["idea_maturity"]["answer_materialization"][
-                    "aggregate_answer_count"
-                ],
-                1,
-            )
-            self.assertEqual(
-                payload["idea_maturity"]["answer_materialization"][
-                    "ordinary_unmaterialized_answer_count"
-                ],
-                0,
+                payload["idea_maturity"]["answer_materialization"],
+                {
+                    "accepted_answer_count": 3,
+                    "per_gap_materialized_answer_count": 2,
+                    "aggregate_answer_count": 1,
+                    "dismissed_answer_count": 0,
+                    "closure_evidence_answer_count": 3,
+                    "ordinary_unmaterialized_answer_count": 0,
+                },
             )
             self.assertIn(
                 "Inspect Pre-SIB coherence findings",
@@ -4369,6 +4370,82 @@ workspaces:
             self.assertEqual(
                 payload["summary"]["idea_maturity_status"],
                 "available",
+            )
+
+    def test_product_repair_rerun_publish_uses_legacy_answer_accounting_fallback(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            self.write_idea_maturity_artifacts(specgraph_dir)
+            metrics_path = specgraph_dir / "runs" / "idea_maturity_metrics_report.json"
+            metrics_report = json.loads(metrics_path.read_text(encoding="utf-8"))
+            metrics_report["groups"].pop("answer_materialization")
+            metrics_report["metrics"] = {
+                "accepted_answer_count": 4,
+                "materialized_answer_count": 2,
+                "unmaterialized_answer_count": 2,
+            }
+            metrics_path.write_text(
+                json.dumps(metrics_report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            execution_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_execution.json"
+            )
+            publication_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_publication.json"
+            )
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+            execute_result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--output",
+                str(execution_report_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(execute_result.returncode, 0, execute_result.stderr)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "publish",
+                "--execution-report",
+                str(execution_report_path),
+                "--output",
+                str(publication_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["idea_maturity"]["answer_materialization"],
+                {
+                    "accepted_answer_count": 4,
+                    "per_gap_materialized_answer_count": 2,
+                    "aggregate_answer_count": 0,
+                    "dismissed_answer_count": 0,
+                    "closure_evidence_answer_count": 2,
+                    "ordinary_unmaterialized_answer_count": 2,
+                },
             )
 
     def test_product_repair_rerun_publish_verifies_repaired_bundle(
