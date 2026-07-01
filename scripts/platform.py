@@ -3153,6 +3153,7 @@ def idea_maturity_summary(
     derived_state = nested_mapping(metrics_report or {}, "derived_state")
     metrics = nested_mapping(metrics_report or {}, "metrics")
     groups = nested_mapping(metrics_report or {}, "groups")
+    answer_materialization = nested_mapping(groups, "answer_materialization")
     workflow_friction = nested_mapping(groups, "workflow_friction")
     promotion_readiness = nested_mapping(groups, "promotion_readiness")
     review_publication = nested_mapping(groups, "review_publication")
@@ -3196,6 +3197,42 @@ def idea_maturity_summary(
             readiness_explainer_count - len(readiness_explainers),
         ),
         "readiness_explainers": readiness_explainers,
+        "answer_materialization": {
+            "accepted_answer_count": numeric_metric(
+                answer_materialization.get(
+                    "accepted_answer_count", metrics.get("accepted_answer_count")
+                )
+            ),
+            "per_gap_materialized_answer_count": numeric_metric(
+                answer_materialization.get(
+                    "per_gap_materialized_answer_count",
+                    metrics.get(
+                        "per_gap_materialized_answer_count",
+                        metrics.get("materialized_answer_count"),
+                    ),
+                )
+            ),
+            "aggregate_answer_count": numeric_metric(
+                answer_materialization.get(
+                    "aggregate_answer_count", metrics.get("aggregate_answer_count")
+                )
+            ),
+            "closure_evidence_answer_count": numeric_metric(
+                answer_materialization.get(
+                    "closure_evidence_answer_count",
+                    metrics.get("closure_evidence_answer_count"),
+                )
+            ),
+            "ordinary_unmaterialized_answer_count": numeric_metric(
+                answer_materialization.get(
+                    "ordinary_unmaterialized_answer_count",
+                    metrics.get(
+                        "ordinary_unmaterialized_answer_count",
+                        metrics.get("unmaterialized_answer_count"),
+                    ),
+                )
+            ),
+        },
         "stale_ref_count": numeric_metric(
             workflow_friction.get("stale_ref_count", metrics.get("stale_ref_count"))
         ),

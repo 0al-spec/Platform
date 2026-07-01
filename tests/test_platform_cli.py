@@ -848,6 +848,13 @@ class PlatformCliTests(unittest.TestCase):
                 "review_status": "not_available",
             },
             "groups": {
+                "answer_materialization": {
+                    "accepted_answer_count": 3,
+                    "per_gap_materialized_answer_count": 2,
+                    "aggregate_answer_count": 1,
+                    "closure_evidence_answer_count": 3,
+                    "ordinary_unmaterialized_answer_count": 0,
+                },
                 "workflow_friction": {
                     "dry_run_count": 1,
                     "failed_gate_count": 1,
@@ -866,6 +873,11 @@ class PlatformCliTests(unittest.TestCase):
                 "dry_run_count": 1,
                 "failed_gate_count": 1,
                 "stale_ref_count": 0,
+                "accepted_answer_count": 3,
+                "per_gap_materialized_answer_count": 2,
+                "aggregate_answer_count": 1,
+                "closure_evidence_answer_count": 3,
+                "ordinary_unmaterialized_answer_count": 0,
             },
             "readiness_explainers": [
                 {
@@ -4333,6 +4345,18 @@ workspaces:
             self.assertEqual(
                 payload["idea_maturity"]["readiness_explainers"][0]["blocks"],
                 ["pre_sib_review", "candidate_approval"],
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["answer_materialization"][
+                    "aggregate_answer_count"
+                ],
+                1,
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["answer_materialization"][
+                    "ordinary_unmaterialized_answer_count"
+                ],
+                0,
             )
             self.assertIn(
                 "Inspect Pre-SIB coherence findings",
