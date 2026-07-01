@@ -1398,6 +1398,20 @@ publish-bundle:
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
 
+    def write_real_idea_answer_continuation_makefile(self, specgraph_dir: Path) -> None:
+        makefile = """\
+real-idea-intake-continue-from-specspace-answers:
+\t@mkdir -p $(REAL_IDEA_SMOKE_RUN_DIR)
+\t@printf '%s\\n' '{"artifact_kind":"specspace_real_idea_answer_import_preview","contract_ref":"specgraph.idea-to-spec.specspace-real-idea-answer-import-preview.v0.1","readiness":{"ready":true,"review_state":"specspace_real_idea_answers_ready_for_continuation"},"summary":{"status":"specspace_real_idea_answers_ready_for_continuation","answer_count":1,"accepted_answer_count":1},"authority_boundary":{"may_execute_specgraph":false,"may_execute_platform":false,"may_apply_answers":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_prompt_published":false,"raw_model_output_published":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/specspace_real_idea_answer_import_preview.json
+\t@printf '%s\\n' '{"artifact_kind":"real_idea_answer_continuation_report","contract_ref":"specgraph.idea-to-spec.real-idea-answer-continuation.v0.1","readiness":{"ready":true,"review_state":"real_idea_answer_continuation_ready"},"summary":{"status":"real_idea_answer_continuation_ready","answer_count":1,"accepted_answer_count":1},"authority_boundary":{"may_execute_specgraph":false,"may_execute_platform":false,"may_apply_answers":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_prompt_published":false,"raw_model_output_published":false},"outputs":{"validated_answers":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_intake_clarification_answers.json"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/real_idea_answer_continuation_report.json
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_clarification_answer_set","answers":[{"request_id":"clarification.intake.domain","answer_kind":"answer_question","status":"accepted_for_candidate"}]}' > $(REAL_IDEA_SMOKE_RUN_DIR)/real_idea_answer_set.json
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_clarification_answers","readiness":{"ready":true,"review_state":"answers_ready_for_rerun"},"summary":{"accepted_answer_count":1}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/idea_intake_clarification_answers.json
+\t@printf '%s\\n' '{"artifact_kind":"user_idea_intake_session","readiness":{"ready":true,"review_state":"ready_for_event_storming_intake"},"summary":{"status":"ready_for_event_storming_intake"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/clarified_user_idea_intake_session.json
+\t@printf '%s\\n' '{"artifact_kind":"intake_session_candidate_source_report","readiness":{"ready":true,"review_state":"candidate_source_ready"},"summary":{"status":"candidate_source_ready"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/intake_session_candidate_source_report.json
+\t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","readiness":{"ready":false,"review_state":"active_candidate_review_required"},"summary":{"status":"active_candidate_review_required","candidate_id":"idea-alpha"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json
+"""
+        (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+
     def build_graph_repository_execution_plan(
         self,
         tmp_root: Path,
@@ -3741,6 +3755,159 @@ workspaces:
             )
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
             self.assertEqual(payload["summary"]["workspace_id"], "idea-alpha-workspace")
+
+    def test_product_real_idea_continuation_execute_runs_specgraph_target(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            output = (
+                specgraph_dir
+                / "runs"
+                / "platform_real_idea_answer_continuation_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            persisted = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload, persisted)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_real_idea_answer_continuation_execution_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["dry_run"])
+            self.assertEqual(
+                payload["target_make"]["target"],
+                "real-idea-intake-continue-from-specspace-answers",
+            )
+            self.assertEqual(
+                payload["target_make"]["variables"]["REAL_IDEA_SMOKE_RUN_DIR"],
+                "runs/idea-alpha",
+            )
+            self.assertEqual(payload["command_result"]["returncode"], 0)
+            self.assertTrue(payload["output_artifacts"]["import_preview"]["ready"])
+            self.assertTrue(
+                payload["output_artifacts"]["continuation_report"]["ready"]
+            )
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_real_idea_continuation_execute_supports_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--dry-run",
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(payload["summary"]["status"], "dry_run")
+            self.assertFalse(
+                payload["authority_boundary"]["executes_specgraph_make_target"]
+            )
+
+    def test_product_real_idea_continuation_rejects_run_dir_outside_specgraph(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            outside_dir = Path(tmp_dir) / "outside"
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                str(outside_dir),
+                "--dry-run",
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_answer_continuation_run_dir_outside_specgraph",
+                codes,
+            )
+            self.assertEqual(payload["output_artifacts"], {})
+
+    def test_product_real_idea_continuation_rejects_output_authority_expansion(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            makefile = (specgraph_dir / "Makefile").read_text(encoding="utf-8")
+            makefile = makefile.replace(
+                '"may_create_branch_or_commit":false',
+                '"may_create_branch_or_commit":true',
+                1,
+            )
+            (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_answer_continuation_output_authority_expanded",
+                codes,
+            )
+            self.assertEqual(
+                payload["output_artifacts"]["import_preview"]["authority_boundary"][
+                    "may_create_branch_or_commit"
+                ],
+                True,
+            )
 
     def test_product_repair_rerun_plan_rejects_authority_expansion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

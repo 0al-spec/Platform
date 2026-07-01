@@ -494,3 +494,38 @@ Authority boundaries remain unchanged:
   after gates pass.
 - Git Service dry-run does not create a worktree, commit, pull request, or read
   model publication.
+
+## Real Idea Answer Continuation Handoff
+
+After SpecSpace stores real-idea clarification answers, Platform can run the
+controlled continuation handoff without giving SpecSpace execution authority:
+
+```bash
+scripts/platform.py product-real-idea-continuation execute \
+  --specgraph-dir ../SpecGraph \
+  --run-dir runs/<idea-smoke-run> \
+  --format json
+```
+
+The command runs the fixed SpecGraph target:
+
+```text
+real-idea-intake-continue-from-specspace-answers
+```
+
+It writes:
+
+```text
+runs/platform_real_idea_answer_continuation_execution_report.json
+```
+
+and verifies that the run directory contains the expected import preview,
+continuation report, validated answers, clarified intake session, candidate
+source bridge report, and active candidate artifact.
+
+This is still pre-promotion orchestration:
+
+- no Git branch, commit, pull request, or read-model publication;
+- no canonical spec mutation;
+- no Ontology package write or term acceptance;
+- no browser-side execution authority.
