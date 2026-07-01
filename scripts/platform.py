@@ -207,11 +207,11 @@ REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET = (
     "real-idea-intake-continue-from-specspace-answers"
 )
 REAL_IDEA_ANSWER_CONTINUATION_OUTPUTS = {
-    "import_preview": "real_idea_smoke/specspace_real_idea_answer_import_preview.json",
-    "continuation_report": "real_idea_smoke/real_idea_answer_continuation_report.json",
-    "answer_set": "real_idea_smoke/real_idea_answer_set.json",
+    "import_preview": "specspace_real_idea_answer_import_preview.json",
+    "continuation_report": "real_idea_answer_continuation_report.json",
+    "answer_set": "real_idea_answer_set.json",
     "validated_answers": "idea_intake_clarification_answers.json",
-    "clarified_session": "real_idea_smoke/clarified_user_idea_intake_session.json",
+    "clarified_session": "clarified_user_idea_intake_session.json",
     "candidate_source_report": "intake_session_candidate_source_report.json",
     "active_candidate": "active_idea_to_spec_candidate.json",
 }
