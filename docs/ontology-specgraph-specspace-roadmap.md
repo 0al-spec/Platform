@@ -646,11 +646,15 @@ The next valuable implementation choices are:
    Service execution from local adapter orchestration toward hosted or
    queue-backed service implementation while preserving the same report
    contracts.
-3. SpecSpace/SpecGraph: add a real idea intake surface so a new product idea can
-   become structured event-storming input without adding a product-specific
-   script. This is now the next major product layer after the manual downstream
-   loop reached approval decision, promotion request, and Git Service dry-run
-   boundaries without canonical spec, Ontology, or Git mutations.
+3. SpecSpace/SpecGraph/Platform: continue hardening the real idea intake
+   surface. The first-class answer authoring and continuation handoff are now
+   in place: SpecSpace can store operator-owned clarification answers, SpecGraph
+   can import/materialize them into a clarified intake session and active
+   candidate, and Platform can execute the fixed
+   `product-real-idea-continuation execute` handoff without Git, Ontology, or
+   canonical spec mutation authority. Remaining work is product UX polish,
+   richer project-local ontology review, and better candidate overview
+   narration.
 4. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 

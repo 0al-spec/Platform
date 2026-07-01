@@ -200,6 +200,30 @@ PRODUCT_REPAIR_RERUN_PUBLIC_PATHS = (
 PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS = tuple(
     PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.values()
 )
+REAL_IDEA_ANSWER_CONTINUATION_EXECUTION_REPORT_KIND = (
+    "platform_real_idea_answer_continuation_execution_report"
+)
+REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET = (
+    "real-idea-intake-continue-from-specspace-answers"
+)
+REAL_IDEA_ANSWER_CONTINUATION_OUTPUTS = {
+    "import_preview": "real_idea_smoke/specspace_real_idea_answer_import_preview.json",
+    "continuation_report": "real_idea_smoke/real_idea_answer_continuation_report.json",
+    "answer_set": "real_idea_smoke/real_idea_answer_set.json",
+    "validated_answers": "idea_intake_clarification_answers.json",
+    "clarified_session": "real_idea_smoke/clarified_user_idea_intake_session.json",
+    "candidate_source_report": "intake_session_candidate_source_report.json",
+    "active_candidate": "active_idea_to_spec_candidate.json",
+}
+REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS = {
+    "import_preview": "specspace_real_idea_answer_import_preview",
+    "continuation_report": "real_idea_answer_continuation_report",
+    "answer_set": "idea_to_spec_clarification_answer_set",
+    "validated_answers": "idea_to_spec_clarification_answers",
+    "clarified_session": "user_idea_intake_session",
+    "candidate_source_report": "intake_session_candidate_source_report",
+    "active_candidate": "active_idea_to_spec_candidate",
+}
 IDEA_MATURITY_METRICS_REPORT_ARTIFACT = "idea_maturity_metrics_report.json"
 IDEA_MATURITY_VALIDATION_REPORT_ARTIFACT = (
     "idea_maturity_metrics_validation_report.json"
@@ -5251,6 +5275,21 @@ def product_repair_repaired_handoff_make_command(
     return command
 
 
+def real_idea_answer_continuation_make_command(
+    *,
+    run_dir_ref: str,
+    python: str | None = None,
+) -> list[str]:
+    command = [
+        "make",
+        REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET,
+        f"REAL_IDEA_SMOKE_RUN_DIR={run_dir_ref}",
+    ]
+    if python:
+        command.append(f"PYTHON={python}")
+    return command
+
+
 def product_repair_output_record(path: Path) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if path.is_file():
@@ -5270,6 +5309,53 @@ def product_repair_output_record(path: Path) -> dict[str, Any]:
         or nested_mapping(payload, "readiness").get("review_state"),
         "sha256": file_sha256(path),
     }
+
+
+def real_idea_answer_continuation_output_records(
+    *,
+    run_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    return {
+        key: product_repair_output_record(run_dir / rel_path)
+        for key, rel_path in REAL_IDEA_ANSWER_CONTINUATION_OUTPUTS.items()
+    }
+
+
+def real_idea_answer_continuation_output_diagnostics(
+    output_records: dict[str, dict[str, Any]],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for key, expected_kind in REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS.items():
+        record = output_records.get(key, {})
+        if record.get("present") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_output_missing",
+                    subject=f"outputs.{key}",
+                    message=f"SpecGraph continuation target must produce {key}",
+                )
+            )
+            continue
+        if record.get("artifact_kind") != expected_kind:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_output_kind_mismatch",
+                    subject=f"outputs.{key}.artifact_kind",
+                    message=f"expected {expected_kind}",
+                )
+            )
+        if key in {"import_preview", "continuation_report"} and record.get("ready") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_output_not_ready",
+                    subject=f"outputs.{key}.readiness.ready",
+                    message=f"SpecGraph continuation output {key} must be ready",
+                )
+            )
+    return diagnostics
 
 
 def product_repair_output_diagnostics(
@@ -5637,6 +5723,189 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
                     }
                 ],
                 [("status", "STATUS"), ("outputs", "OUTPUTS")],
+            )
+        )
+    return 0 if ok else 1
+
+
+def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
+    specgraph_dir = Path(args.specgraph_dir).resolve()
+    diagnostics = product_repair_specgraph_checkout_diagnostics(
+        specgraph_dir,
+        code_prefix="real_idea_answer_continuation",
+        subject="specgraph_dir",
+    )
+    raw_run_dir = Path(args.run_dir)
+    run_dir = (
+        raw_run_dir.resolve()
+        if raw_run_dir.is_absolute()
+        else (specgraph_dir / raw_run_dir).resolve()
+    )
+    try:
+        run_dir_ref = run_dir.relative_to(specgraph_dir).as_posix()
+    except ValueError:
+        run_dir_ref = str(raw_run_dir)
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_run_dir_outside_specgraph",
+                subject="run_dir",
+                message="run-dir must resolve inside the SpecGraph checkout",
+            )
+        )
+    if run_dir_ref in {"", "."}:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_run_dir_invalid",
+                subject="run_dir",
+                message="run-dir must name a dedicated child directory",
+            )
+        )
+    output_path = (
+        Path(args.output)
+        if args.output
+        else specgraph_dir / "runs" / "platform_real_idea_answer_continuation_execution_report.json"
+    )
+    command = real_idea_answer_continuation_make_command(
+        run_dir_ref=run_dir_ref,
+        python=args.python,
+    )
+    command_result: dict[str, Any] | None = None
+    started_at = utc_now_iso()
+    if not diagnostics and not args.dry_run:
+        completed = subprocess.run(
+            command,
+            cwd=specgraph_dir,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": completed.returncode,
+            "stdout": completed.stdout[-4000:],
+            "stderr": completed.stderr[-4000:],
+        }
+        if completed.returncode != 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_make_failed",
+                    subject=REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET,
+                    message=(
+                        "SpecGraph real-idea answer continuation target failed "
+                        f"with exit code {completed.returncode}"
+                    ),
+                )
+            )
+    elif args.dry_run:
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "dry_run": True,
+        }
+    output_records = real_idea_answer_continuation_output_records(run_dir=run_dir)
+    if not diagnostics and not args.dry_run:
+        diagnostics.extend(
+            real_idea_answer_continuation_output_diagnostics(output_records)
+        )
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and (args.dry_run or command_result is not None)
+    operation_status = "failed"
+    operation_reason = "execution_failed"
+    if args.dry_run:
+        operation_status = "dry_run"
+        operation_reason = "dry_run"
+    elif command_result is None:
+        operation_status = "skipped"
+        operation_reason = "execution_not_started"
+    elif command_result.get("returncode") == 0:
+        operation_status = "succeeded"
+        operation_reason = "SpecGraph real-idea answer continuation target executed"
+    operations = [
+        {
+            "name": "execute_specgraph_real_idea_answer_continuation",
+            "status": operation_status,
+            "reason": operation_reason,
+            "evidence": [REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET],
+        }
+    ]
+    report = {
+        "schema_version": 1,
+        "artifact_kind": REAL_IDEA_ANSWER_CONTINUATION_EXECUTION_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "started_at": started_at,
+        "specgraph_dir": str(specgraph_dir),
+        "run_dir": run_dir_ref,
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "authority_boundary": {
+            "executes_specgraph_make_target": not args.dry_run and command_result is not None,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "accepts_ontology_terms": False,
+            "mutates_canonical_specs": False,
+            "publishes_private_artifacts": False,
+        },
+        "target_make": {
+            "target": REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET,
+            "cwd": str(specgraph_dir),
+            "variables": {"REAL_IDEA_SMOKE_RUN_DIR": run_dir_ref},
+        },
+        "command": command,
+        "command_result": command_result,
+        "operations": operations,
+        "output_artifacts": output_records,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "completed" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
+            "error_count": error_count,
+            "output_artifact_count": len(output_records),
+            "import_preview_digest": nested_mapping(
+                output_records,
+                "import_preview",
+            ).get("sha256"),
+            "continuation_report_digest": nested_mapping(
+                output_records,
+                "continuation_report",
+            ).get("sha256"),
+            "active_candidate_status": nested_mapping(
+                output_records,
+                "active_candidate",
+            ).get("status"),
+        },
+    }
+    if not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": report["summary"]["status"],
+                        "run_dir": run_dir_ref,
+                        "outputs": str(len(output_records)),
+                    }
+                ],
+                [("status", "STATUS"), ("run_dir", "RUN DIR"), ("outputs", "OUTPUTS")],
             )
         )
     return 0 if ok else 1
@@ -14204,6 +14473,64 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     product_repair_smoke_parser.set_defaults(func=product_repair_rerun_smoke)
+
+    real_idea_continuation_parser = subcommands.add_parser(
+        "product-real-idea-continuation",
+        help="Execute controlled real-idea answer continuation handoffs.",
+    )
+    real_idea_continuation_subcommands = real_idea_continuation_parser.add_subparsers(
+        dest="product_real_idea_continuation_command",
+        required=True,
+    )
+    real_idea_continuation_execute_parser = (
+        real_idea_continuation_subcommands.add_parser(
+            "execute",
+            help=(
+                "Run the fixed SpecGraph real-idea answer continuation make target "
+                "for a SpecSpace-owned answer state handoff."
+            ),
+        )
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--specgraph-dir",
+        default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
+        help="Local SpecGraph checkout that owns the continuation make target.",
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--run-dir",
+        default="runs/real_idea_smoke",
+        help=(
+            "SpecGraph run directory containing the SpecSpace answer state and "
+            "real-idea intake artifacts. Must resolve inside --specgraph-dir."
+        ),
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--python",
+        help="Optional PYTHON make variable passed to SpecGraph.",
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the make invocation without executing it.",
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--output",
+        help="Optional path where the execution report JSON should be written.",
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the execution report.",
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    real_idea_continuation_execute_parser.set_defaults(
+        func=real_idea_answer_continuation_execute
+    )
 
     product_candidate_approval_parser = subcommands.add_parser(
         "product-candidate-approval",
