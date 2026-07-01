@@ -3865,6 +3865,49 @@ workspaces:
                 "real_idea_answer_continuation_run_dir_outside_specgraph",
                 codes,
             )
+            self.assertEqual(payload["output_artifacts"], {})
+
+    def test_product_real_idea_continuation_rejects_output_authority_expansion(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            makefile = (specgraph_dir / "Makefile").read_text(encoding="utf-8")
+            makefile = makefile.replace(
+                '"may_create_branch_or_commit":false',
+                '"may_create_branch_or_commit":true',
+                1,
+            )
+            (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_answer_continuation_output_authority_expanded",
+                codes,
+            )
+            self.assertEqual(
+                payload["output_artifacts"]["import_preview"]["authority_boundary"][
+                    "may_create_branch_or_commit"
+                ],
+                True,
+            )
 
     def test_product_repair_rerun_plan_rejects_authority_expansion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -5307,6 +5307,9 @@ def product_repair_output_record(path: Path) -> dict[str, Any]:
         "ready": nested_mapping(payload, "readiness").get("ready"),
         "status": nested_mapping(payload, "summary").get("status")
         or nested_mapping(payload, "readiness").get("review_state"),
+        "canonical_mutations_allowed": payload.get("canonical_mutations_allowed"),
+        "tracked_artifacts_written": payload.get("tracked_artifacts_written"),
+        "authority_boundary": nested_mapping(payload, "authority_boundary"),
         "sha256": file_sha256(path),
     }
 
@@ -5355,6 +5358,28 @@ def real_idea_answer_continuation_output_diagnostics(
                     message=f"SpecGraph continuation output {key} must be ready",
                 )
             )
+        for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
+            if record.get(field) is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="real_idea_answer_continuation_output_authority_expanded",
+                        subject=f"outputs.{key}.{field}",
+                        message=f"SpecGraph continuation output {key} must not set {field}=true",
+                    )
+                )
+        for field, value in sorted(nested_mapping(record, "authority_boundary").items()):
+            if value is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="real_idea_answer_continuation_output_authority_expanded",
+                        subject=f"outputs.{key}.authority_boundary.{field}",
+                        message=(
+                            f"SpecGraph continuation output {key} must not expand authority"
+                        ),
+                    )
+                )
     return diagnostics
 
 
@@ -5810,7 +5835,18 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
             "stderr": "",
             "dry_run": True,
         }
-    output_records = real_idea_answer_continuation_output_records(run_dir=run_dir)
+    run_dir_diagnostic_codes = {
+        "real_idea_answer_continuation_run_dir_outside_specgraph",
+        "real_idea_answer_continuation_run_dir_invalid",
+    }
+    may_inspect_run_dir = not any(
+        diagnostic.code in run_dir_diagnostic_codes for diagnostic in diagnostics
+    )
+    output_records = (
+        real_idea_answer_continuation_output_records(run_dir=run_dir)
+        if may_inspect_run_dir
+        else {}
+    )
     if not diagnostics and not args.dry_run:
         diagnostics.extend(
             real_idea_answer_continuation_output_diagnostics(output_records)
