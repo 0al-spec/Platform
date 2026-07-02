@@ -629,7 +629,7 @@ The next valuable implementation choices are:
    - **Project-local ontology review completion.** Done for the Team Decision
      Log demo surface. The repair pack can now materialize SpecSpace-owned
      keep-local decisions for required project-local terms, SpecGraph validates
-     them through the import preview, Idea Maturity accounts them as
+     them through the import preview, Idea Maturity accounts for them as
      project-local review evidence, and Candidate Overview reports the effective
      review status without accepting ontology terms globally.
    - **Production mutable state policy.** Done for the current manual repair
