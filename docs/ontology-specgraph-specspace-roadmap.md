@@ -655,8 +655,8 @@ The next valuable implementation choices are:
    canonical spec mutation authority. Project-local ontology review and the
    candidate overview narrative panel are now also connected to Idea Maturity
    and Product Workspace surfaces. Remaining work is product UX polish,
-   human-friendly candidate aliases, richer visual topology, and custom run-dir
-   Platform promotion dry-run handoff.
+   human-friendly candidate aliases, richer visual topology, and a Platform
+   promotion dry-run handoff for custom run directories.
 4. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 

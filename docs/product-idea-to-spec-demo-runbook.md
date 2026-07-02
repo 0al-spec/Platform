@@ -550,7 +550,7 @@ Expected workspace checks:
 
 ```text
 candidate_overview.artifact_kind: candidate_overview
-candidate_overview.summary.graph_source: repaired_candidate_graph | candidate_graph
+candidate_overview.summary.graph_source: one of repaired_candidate_graph, candidate_graph
 candidate_overview.topology.relation_counts: includes workflow relation counts
 candidate_overview.next_action.evidence_refs: public artifact refs only
 ```
