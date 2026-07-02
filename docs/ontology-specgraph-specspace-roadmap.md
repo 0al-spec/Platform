@@ -652,9 +652,11 @@ The next valuable implementation choices are:
    can import/materialize them into a clarified intake session and active
    candidate, and Platform can execute the fixed
    `product-real-idea-continuation execute` handoff without Git, Ontology, or
-   canonical spec mutation authority. Remaining work is product UX polish,
-   richer project-local ontology review, and better candidate overview
-   narration.
+   canonical spec mutation authority. Project-local ontology review and the
+   candidate overview narrative panel are now also connected to Idea Maturity
+   and Product Workspace surfaces. Remaining work is product UX polish,
+   human-friendly candidate aliases, richer visual topology, and a Platform
+   promotion dry-run handoff for custom run directories.
 4. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 
