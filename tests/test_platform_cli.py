@@ -8100,6 +8100,68 @@ workspaces:
             ).stdout.strip()
             self.assertEqual(subject, "Add candidate spec")
 
+    def test_graph_repository_commit_worktree_force_adds_explicit_ignored_candidate_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir = self.prepare_graph_repository_worktree(tmp_root)
+            ignored_path = (
+                workspace_dir
+                / "runs"
+                / "repaired_materialized_candidate_specs"
+                / "CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY.yaml"
+            )
+            ignored_path.parent.mkdir(parents=True)
+            ignored_path.write_text(
+                "id: CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY\n",
+                encoding="utf-8",
+            )
+            prepare_report = (
+                workspace_dir
+                / ".platform"
+                / "graph_repository_worktree_prepare_report.json"
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "commit-worktree",
+                "--prepare-report",
+                str(prepare_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--path",
+                "runs/repaired_materialized_candidate_specs/CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY.yaml",
+                "--message",
+                "Add ignored candidate spec",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["candidate_tracked_artifacts_written"])
+            self.assertEqual(
+                payload["committed_paths"],
+                [
+                    "runs/repaired_materialized_candidate_specs/CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY.yaml"
+                ],
+            )
+            add_command = payload["git_commands_executed"][0]["command"]
+            self.assertIn("-f", add_command)
+            committed_files = self.run_git(
+                workspace_dir,
+                "show",
+                "--name-only",
+                "--format=",
+                "HEAD",
+            ).stdout.splitlines()
+            self.assertIn(
+                "runs/repaired_materialized_candidate_specs/CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY.yaml",
+                committed_files,
+            )
+
     def test_graph_repository_commit_worktree_rejects_outside_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)

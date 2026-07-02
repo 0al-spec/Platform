@@ -632,16 +632,18 @@ The next valuable implementation choices are:
      them through the import preview, Idea Maturity accounts for them as
      project-local review evidence, and Candidate Overview reports the effective
      review status without accepting ontology terms globally.
-   - **Downstream promotion after overview.** Done as a local smoke. Candidate
-     Overview and project-local ontology review accounting no longer prevent the
-     Team Decision Log candidate from reaching Platform happy-path repair smoke,
-     candidate approval materialization, promotion request creation, and Git
-     Service dry-run. Follow-ups remain around projection consistency: SpecSpace
-     should reconcile raw project-local review lane status with effective
-     decision accounting, SpecGraph should suppress resolved readiness explainers
-     after approval/promotion artifacts exist, and Platform should make dry-run
-     worktree wording distinguish logical preparation from physical worktree
-     creation.
+   - **Downstream promotion after overview.** Done through both dry-run and
+     non-dry-run review smoke. Candidate Overview and project-local ontology
+     review accounting no longer prevent the Team Decision Log candidate from
+     reaching Platform happy-path repair smoke, candidate approval
+     materialization, promotion request creation, Git Service dry-run, and a real
+     review pull request. The first controlled non-dry-run pass opened SpecGraph
+     PR #662 from `graph-candidate/team-decision-log` with one candidate commit,
+     no auto-merge, and no read-model publication. Follow-ups remain around
+     projection consistency: SpecSpace should reconcile raw project-local review
+     lane status with effective decision accounting, and SpecGraph should
+     suppress resolved readiness explainers after approval/promotion artifacts
+     exist.
    - **Production mutable state policy.** Done for the current manual repair
      loop. Product workspace static routing is fixed and `/team-decision-log`
      reads the workspace-specific bundle; SpecSpace surfaces stale/missing
