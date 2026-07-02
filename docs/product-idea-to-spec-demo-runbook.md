@@ -568,3 +568,49 @@ Workspace **Candidate overview** section. The section explains:
 This panel is navigation and explanation only. It does not execute SpecGraph,
 apply answers, mutate specs, write Ontology packages, accept ontology terms,
 approve candidates, create Git branches/commits/PRs, or publish read models.
+
+## Project-Local Ontology Review Completion Status
+
+The Team Decision Log happy-path repair pack now completes the project-local
+ontology review loop as part of the demo surface. SpecGraph materializes
+SpecSpace-owned keep-local decisions for the remaining required project-local
+terms, validates them through the import preview, converts them into maturity
+evidence, and refreshes the candidate overview.
+
+Expected checks after:
+
+```bash
+make product-workspace-team-decision-log-happy-path-repair-pack
+```
+
+```text
+runs/project_local_ontology_review_decisions.json:
+  artifact_kind: specspace_project_local_ontology_review_decision_state
+  summary.decision_count: 10
+  summary.review_action: keep_project_local
+
+runs/specspace_project_local_ontology_decision_import_preview.json:
+  readiness.ready: true
+  summary.accepted_decision_count: 10
+  summary.missing_decision_count: 0
+  summary.invalid_decision_count: 0
+
+runs/project_local_ontology_decision_effect_report.json:
+  readiness.ready: true
+  summary.ready_for_maturity: true
+  summary.blocking_decision_count: 0
+
+runs/idea_maturity_metrics_report.json:
+  summary.project_local_ontology_review_status: project_local_ontology_decision_effect_ready
+  summary.project_local_ontology_accepted_decision_count: 10
+  summary.remaining_blocker_count: 0
+
+runs/candidate_overview.json:
+  summary.project_local_ontology_review_status: project_local_ontology_decision_effect_ready
+  sections.project_local_ontology.accepted_decision_count: 10
+  sections.project_local_ontology.blocking_decision_count: 0
+```
+
+This remains review-only. Keeping a term project-local does not write an
+Ontology package, update an ontology lockfile, accept a term globally, mutate
+canonical specs, approve a candidate, or create Git state.
