@@ -686,8 +686,9 @@ Known follow-up issues from this smoke:
   while the controlled promotion section reads the product promotion execution
   artifacts. SpecSpace should reconcile approval readiness with the materialized
   approval execution/decision artifacts.
-- **Git dry-run summary wording.** Platform reports
-  `summary.worktree_prepared: true` for a dry-run prepare-worktree stage even
-  though the physical worktree path does not exist. The report should distinguish
-  logical dry-run preparation from a real worktree creation, for example with
-  `physical_worktree_created: false`.
+- **Git dry-run summary wording.** The product promotion execution report now
+  distinguishes logical dry-run preparation from a real worktree creation:
+  `summary.worktree_prepare_dry_run: true` and
+  `summary.physical_worktree_created: false` for dry-run promotion execution.
+  `summary.worktree_prepared` is reserved for a physical worktree created by a
+  non-dry-run Git Service execution.
