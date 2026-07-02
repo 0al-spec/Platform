@@ -529,3 +529,42 @@ This is still pre-promotion orchestration:
 - no canonical spec mutation;
 - no Ontology package write or term acceptance;
 - no browser-side execution authority.
+
+## Candidate Overview Narrative Smoke Status
+
+The product workspace now has a read-only candidate overview surface that sits
+above the lower-level repair, maturity, topology, and ontology review panels.
+SpecGraph builds it with:
+
+```bash
+make candidate-overview
+```
+
+and the static artifact bundle includes:
+
+```text
+runs/candidate_overview.json
+```
+
+Expected workspace checks:
+
+```text
+candidate_overview.artifact_kind: candidate_overview
+candidate_overview.summary.graph_source: repaired_candidate_graph | candidate_graph
+candidate_overview.topology.relation_counts: includes workflow relation counts
+candidate_overview.next_action.evidence_refs: public artifact refs only
+```
+
+In SpecSpace, `/team-decision-log` exposes the same data in the Product
+Workspace **Candidate overview** section. The section explains:
+
+- product intent and understood scope;
+- actors, commands, domain events, policies, constraints, and candidate nodes;
+- workflow topology relation counts and sample edges;
+- project-local ontology review status;
+- Idea Maturity / repair readiness;
+- the next safe operator action with evidence refs.
+
+This panel is navigation and explanation only. It does not execute SpecGraph,
+apply answers, mutate specs, write Ontology packages, accept ontology terms,
+approve candidates, create Git branches/commits/PRs, or publish read models.
