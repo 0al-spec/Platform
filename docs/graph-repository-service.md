@@ -268,14 +268,18 @@ When SpecGraph has produced `runs/idea_maturity_metrics_report.json` and
 reports also include a compact `idea_maturity` summary. Platform exposes the
 metrics status, validation status, lifecycle state, blockers, stale refs, failed
 gates, dry-run count, bounded readiness explainers, source refs, and public
-bundle presence. When the Metrics contract metadata is present, the same summary
-also surfaces the report schema, validation report schema, validator id/version,
-and compatibility policy refs used to interpret the telemetry. Readiness
-explainers are operator-facing reasons with source evidence and `next_action`
-text, for example unresolved Pre-SIB findings or repair-session blockers. This
-is report-only telemetry: missing or failed maturity metrics make the maturity
-surface untrusted, but they do not replace the concrete repair, approval, and
-promotion gates.
+bundle presence. It also includes compact answer-accounting and project-local
+ontology review telemetry so an operator can distinguish materialized repair
+answers from project-local ontology decisions such as `keep_project_local`,
+`bind_existing`, `alias`, `request_promotion`, `reject`, or `defer`. When the
+Metrics contract metadata is present, the same summary also surfaces the report
+schema, validation report schema, validator id/version, and compatibility
+policy refs used to interpret the telemetry. Readiness explainers are
+operator-facing reasons with source evidence and `next_action` text, for
+example unresolved Pre-SIB findings, repair-session blockers, or incomplete
+project-local ontology decisions. This is report-only telemetry: missing or
+failed maturity metrics make the maturity surface untrusted, but they do not
+replace the concrete repair, approval, and promotion gates.
 
 The smoke command can also consume a SpecSpace-owned workspace state hygiene
 report with `--workspace-state-hygiene`. This report is produced by SpecSpace's
@@ -396,9 +400,10 @@ and the approved paths are safe relative repository paths.
 
 The gate report also carries the same compact `idea_maturity` summary when the
 SpecGraph maturity artifacts are present. The summary helps an operator inspect
-pre-SIB/product maturity and its readiness explainers, but the gate continues to
-base readiness on concrete handoff artifacts and explicit approved paths.
-Platform does not apply a score threshold from the metrics report.
+pre-SIB/product maturity, project-local ontology review decisions, and readiness
+explainers, but the gate continues to base readiness on concrete handoff
+artifacts and explicit approved paths. Platform does not apply a score
+threshold from the metrics report.
 
 When the gate is ready, Platform can materialize the narrow handoff artifact
 that the Git Service already expects:

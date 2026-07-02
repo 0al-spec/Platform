@@ -856,6 +856,28 @@ class PlatformCliTests(unittest.TestCase):
                     "closure_evidence_answer_count": 3,
                     "ordinary_unmaterialized_answer_count": 0,
                 },
+                "ontology_grounding": {
+                    "project_local_ontology_review": {
+                        "status": "project_local_ontology_decision_effect_ready",
+                        "accepted_decision_count": 2,
+                        "maturity_evidence_decision_count": 2,
+                        "keep_project_local_count": 1,
+                        "bind_existing_count": 1,
+                        "alias_count": 0,
+                        "request_promotion_count": 0,
+                        "reject_count": 0,
+                        "deferred_count": 0,
+                        "invalid_decision_count": 0,
+                        "missing_decision_count": 0,
+                        "blocking_decision_count": 0,
+                        "follow_up_decision_count": 0,
+                        "effect_count": 2,
+                        "ready_for_maturity": True,
+                        "evidence_refs": [
+                            "runs/project_local_ontology_review_decisions.json"
+                        ],
+                    }
+                },
                 "workflow_friction": {
                     "dry_run_count": 1,
                     "failed_gate_count": 1,
@@ -880,6 +902,19 @@ class PlatformCliTests(unittest.TestCase):
                 "dismissed_answer_count": 0,
                 "closure_evidence_answer_count": 3,
                 "ordinary_unmaterialized_answer_count": 0,
+                "project_local_ontology_review_status": (
+                    "project_local_ontology_decision_effect_ready"
+                ),
+                "project_local_ontology_accepted_decision_count": 2,
+                "project_local_ontology_keep_local_count": 1,
+                "project_local_ontology_bind_existing_count": 1,
+                "project_local_ontology_alias_count": 0,
+                "project_local_ontology_request_promotion_count": 0,
+                "project_local_ontology_reject_count": 0,
+                "project_local_ontology_deferred_decision_count": 0,
+                "project_local_ontology_invalid_decision_count": 0,
+                "project_local_ontology_missing_decision_count": 0,
+                "project_local_ontology_blocking_decision_count": 0,
             },
             "readiness_explainers": [
                 {
@@ -4359,6 +4394,29 @@ workspaces:
                     "ordinary_unmaterialized_answer_count": 0,
                 },
             )
+            self.assertEqual(
+                payload["idea_maturity"]["project_local_ontology_review"],
+                {
+                    "status": "project_local_ontology_decision_effect_ready",
+                    "accepted_decision_count": 2,
+                    "maturity_evidence_decision_count": 2,
+                    "keep_project_local_count": 1,
+                    "bind_existing_count": 1,
+                    "alias_count": 0,
+                    "request_promotion_count": 0,
+                    "reject_count": 0,
+                    "deferred_count": 0,
+                    "invalid_decision_count": 0,
+                    "missing_decision_count": 0,
+                    "blocking_decision_count": 0,
+                    "follow_up_decision_count": 0,
+                    "effect_count": 2,
+                    "ready_for_maturity": True,
+                    "evidence_refs": [
+                        "runs/project_local_ontology_review_decisions.json"
+                    ],
+                },
+            )
             self.assertIn(
                 "Inspect Pre-SIB coherence findings",
                 payload["idea_maturity"]["readiness_explainers"][0]["next_action"],
@@ -4384,10 +4442,24 @@ workspaces:
             metrics_path = specgraph_dir / "runs" / "idea_maturity_metrics_report.json"
             metrics_report = json.loads(metrics_path.read_text(encoding="utf-8"))
             metrics_report["groups"].pop("answer_materialization")
+            metrics_report["groups"].pop("ontology_grounding")
             metrics_report["metrics"] = {
                 "accepted_answer_count": 4,
                 "materialized_answer_count": 2,
                 "unmaterialized_answer_count": 2,
+                "project_local_ontology_review_status": (
+                    "project_local_ontology_decision_effect_ready"
+                ),
+                "project_local_ontology_accepted_decision_count": 3,
+                "project_local_ontology_keep_local_count": 2,
+                "project_local_ontology_bind_existing_count": 1,
+                "project_local_ontology_alias_count": 0,
+                "project_local_ontology_request_promotion_count": 0,
+                "project_local_ontology_reject_count": 0,
+                "project_local_ontology_deferred_decision_count": 0,
+                "project_local_ontology_invalid_decision_count": 0,
+                "project_local_ontology_missing_decision_count": 0,
+                "project_local_ontology_blocking_decision_count": 0,
             }
             metrics_path.write_text(
                 json.dumps(metrics_report, indent=2, sort_keys=True) + "\n",
@@ -4446,6 +4518,18 @@ workspaces:
                     "closure_evidence_answer_count": 2,
                     "ordinary_unmaterialized_answer_count": 2,
                 },
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["project_local_ontology_review"][
+                    "accepted_decision_count"
+                ],
+                3,
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["project_local_ontology_review"][
+                    "keep_project_local_count"
+                ],
+                2,
             )
 
     def test_product_repair_rerun_publish_verifies_repaired_bundle(

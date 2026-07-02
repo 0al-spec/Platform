@@ -3154,6 +3154,11 @@ def idea_maturity_summary(
     metrics = nested_mapping(metrics_report or {}, "metrics")
     groups = nested_mapping(metrics_report or {}, "groups")
     answer_materialization = nested_mapping(groups, "answer_materialization")
+    ontology_grounding = nested_mapping(groups, "ontology_grounding")
+    project_local_ontology_review = nested_mapping(
+        ontology_grounding,
+        "project_local_ontology_review",
+    ) or nested_mapping(metrics, "project_local_ontology_review")
     workflow_friction = nested_mapping(groups, "workflow_friction")
     promotion_readiness = nested_mapping(groups, "promotion_readiness")
     review_publication = nested_mapping(groups, "review_publication")
@@ -3242,6 +3247,101 @@ def idea_maturity_summary(
                     ),
                 )
             ),
+        },
+        "project_local_ontology_review": {
+            "status": project_local_ontology_review.get("status")
+            or metrics.get("project_local_ontology_review_status"),
+            "accepted_decision_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "accepted_decision_count",
+                    metrics.get("project_local_ontology_accepted_decision_count"),
+                )
+            )
+            or 0,
+            "maturity_evidence_decision_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "maturity_evidence_decision_count"
+                )
+            )
+            or 0,
+            "keep_project_local_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "keep_project_local_count",
+                    metrics.get("project_local_ontology_keep_local_count"),
+                )
+            )
+            or 0,
+            "bind_existing_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "bind_existing_count",
+                    metrics.get("project_local_ontology_bind_existing_count"),
+                )
+            )
+            or 0,
+            "alias_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "alias_count",
+                    metrics.get("project_local_ontology_alias_count"),
+                )
+            )
+            or 0,
+            "request_promotion_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "request_promotion_count",
+                    metrics.get("project_local_ontology_request_promotion_count"),
+                )
+            )
+            or 0,
+            "reject_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "reject_count",
+                    metrics.get("project_local_ontology_reject_count"),
+                )
+            )
+            or 0,
+            "deferred_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "deferred_count",
+                    metrics.get("project_local_ontology_deferred_decision_count"),
+                )
+            )
+            or 0,
+            "invalid_decision_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "invalid_decision_count",
+                    metrics.get("project_local_ontology_invalid_decision_count"),
+                )
+            )
+            or 0,
+            "missing_decision_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "missing_decision_count",
+                    metrics.get("project_local_ontology_missing_decision_count"),
+                )
+            )
+            or 0,
+            "blocking_decision_count": numeric_metric(
+                project_local_ontology_review.get(
+                    "blocking_decision_count",
+                    metrics.get("project_local_ontology_blocking_decision_count"),
+                )
+            )
+            or 0,
+            "follow_up_decision_count": numeric_metric(
+                project_local_ontology_review.get("follow_up_decision_count")
+            )
+            or 0,
+            "effect_count": numeric_metric(
+                project_local_ontology_review.get("effect_count")
+            )
+            or 0,
+            "ready_for_maturity": project_local_ontology_review.get(
+                "ready_for_maturity"
+            )
+            is True,
+            "evidence_refs": string_list(
+                project_local_ontology_review.get("evidence_refs")
+            )[:8],
         },
         "stale_ref_count": numeric_metric(
             workflow_friction.get("stale_ref_count", metrics.get("stale_ref_count"))
