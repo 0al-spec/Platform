@@ -67,6 +67,7 @@ From `../SpecGraph`:
 ```bash
 make product-workspace-decision-backed-repair-chain
 make product-workspace-repaired-promotion-handoff
+make candidate-overview
 make publish-bundle
 python3 tools/build_static_artifact_bundle.py \
   --output-dir dist/specgraph-public/workspaces/team-decision-log
