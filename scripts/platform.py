@@ -9869,7 +9869,13 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
         str(operation.get("name")): str(operation.get("status"))
         for operation in child_operations
     }
-    worktree_prepared = statuses.get("prepare_worktree") in {"succeeded", "dry_run"}
+    prepare_worktree_status = statuses.get("prepare_worktree")
+    worktree_prepare_planned = prepare_worktree_status in {"succeeded", "dry_run"}
+    worktree_prepare_dry_run = prepare_worktree_status == "dry_run"
+    physical_worktree_created = (
+        prepare_worktree_status == "succeeded" and workspace_dir.exists()
+    )
+    worktree_prepared = physical_worktree_created
     commit_created = statuses.get("commit_candidate") == "succeeded"
     review_opened = statuses.get("open_review") == "succeeded"
     child_report_refs = (
@@ -10009,6 +10015,10 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
             "open_review_dry_run": args.open_review_dry_run,
             "candidate_branch_pushed": candidate_branch_pushed,
             "copied_file_count": len(copied_materialized_files),
+            "worktree_prepare_status": prepare_worktree_status,
+            "worktree_prepare_planned": worktree_prepare_planned,
+            "worktree_prepare_dry_run": worktree_prepare_dry_run,
+            "physical_worktree_created": physical_worktree_created,
             "prepare_worktree_report_ref": prepare_ref,
             "commit_report_ref": commit_ref,
             "open_review_report_ref": open_review_ref,
@@ -10063,6 +10073,10 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
             "error_count": error_count,
             "child_operation_count": len(child_operations),
             "worktree_prepared": worktree_prepared,
+            "worktree_prepare_status": prepare_worktree_status,
+            "worktree_prepare_planned": worktree_prepare_planned,
+            "worktree_prepare_dry_run": worktree_prepare_dry_run,
+            "physical_worktree_created": physical_worktree_created,
             "commit_created": commit_created,
             "review_opened": review_opened,
             "read_model_published": False,

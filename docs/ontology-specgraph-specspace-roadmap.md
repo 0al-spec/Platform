@@ -632,6 +632,16 @@ The next valuable implementation choices are:
      them through the import preview, Idea Maturity accounts for them as
      project-local review evidence, and Candidate Overview reports the effective
      review status without accepting ontology terms globally.
+   - **Downstream promotion after overview.** Done as a local smoke. Candidate
+     Overview and project-local ontology review accounting no longer prevent the
+     Team Decision Log candidate from reaching Platform happy-path repair smoke,
+     candidate approval materialization, promotion request creation, and Git
+     Service dry-run. Follow-ups remain around projection consistency: SpecSpace
+     should reconcile raw project-local review lane status with effective
+     decision accounting, SpecGraph should suppress resolved readiness explainers
+     after approval/promotion artifacts exist, and Platform should make dry-run
+     worktree wording distinguish logical preparation from physical worktree
+     creation.
    - **Production mutable state policy.** Done for the current manual repair
      loop. Product workspace static routing is fixed and `/team-decision-log`
      reads the workspace-specific bundle; SpecSpace surfaces stale/missing

@@ -67,7 +67,10 @@ From `../SpecGraph`:
 ```bash
 make product-workspace-decision-backed-repair-chain
 make product-workspace-repaired-promotion-handoff
+make candidate-overview
 make publish-bundle
+python3 tools/build_static_artifact_bundle.py \
+  --output-dir dist/specgraph-public/workspaces/team-decision-log
 ```
 
 Checkpoints:
@@ -75,7 +78,10 @@ Checkpoints:
 - `runs/idea_maturity_metrics_report.json` exists;
 - `runs/idea_maturity_metrics_validation_report.json` exists and is `ok`;
 - `runs/repaired_candidate_promotion_handoff_report.json` exists;
-- `dist/specgraph-public/artifact_manifest.json` contains the maturity reports.
+- `dist/specgraph-public/artifact_manifest.json` contains the maturity reports;
+- `dist/specgraph-public/workspaces/team-decision-log/artifact_manifest.json`
+  contains the product workspace maturity, repaired handoff, project-local
+  ontology effect, and candidate overview artifacts.
 
 Quick check:
 
@@ -123,7 +129,7 @@ uv run --with-requirements requirements.txt --with-requirements requirements-dev
     --spec-dir "$SPECGRAPH_DIR/specs/nodes" \
     --specgraph-dir "$SPECGRAPH_DIR" \
     --artifact-base-url http://127.0.0.1:9009 \
-    --product-workspace-artifact-base-url team-decision-log=http://127.0.0.1:9009 \
+    --product-workspace-artifact-base-url team-decision-log=http://127.0.0.1:9009/workspaces/team-decision-log \
     --agent
 ```
 
@@ -614,3 +620,76 @@ runs/candidate_overview.json:
 This remains review-only. Keeping a term project-local does not write an
 Ontology package, update an ontology lockfile, accept a term globally, mutate
 canonical specs, approve a candidate, or create Git state.
+
+## Downstream Promotion After Overview Smoke Status
+
+After the candidate overview and project-local ontology review completion
+slices, the Team Decision Log demo still reaches the downstream promotion
+dry-run boundary.
+
+Confirmed local smoke sequence:
+
+```text
+SpecGraph happy-path repair pack
+  -> candidate overview
+  -> root and workspace static bundles
+  -> SpecSpace Product Workspace API
+  -> Platform happy-path repair smoke
+  -> candidate approval materialization
+  -> graph repository promotion request
+  -> Git Service dry-run
+```
+
+Observed checkpoints:
+
+```text
+workspace artifact base: http://127.0.0.1:9009/workspaces/team-decision-log
+workspace manifest: present
+candidate_overview: available
+candidate_overview.summary.ready_for_candidate_approval: true
+candidate_overview.summary.project_local_ontology_review_status:
+  project_local_ontology_decision_effect_ready
+Idea Maturity: available, trusted=true
+Idea Maturity project_local_ontology_review.ready_for_maturity: true
+workspace_state_hygiene.status: ready
+Platform product-repair-rerun smoke profile: happy-path-promotion-dry-run
+Platform product-repair-rerun smoke profile_status: passed
+candidate approval decision: materialized
+promotion request: promotion_ready=true
+Git Service dry-run: ok=true
+physical worktree created: false
+commit created: false
+pull request opened: false
+read model published: false
+```
+
+This confirms that Candidate Overview and project-local ontology review
+accounting do not block the approval/promotion dry-run boundary.
+
+Known follow-up issues from this smoke:
+
+- **SpecSpace project-local ontology projection split.** Candidate Overview and
+  Idea Maturity correctly use the project-local decision effect report, but the
+  separate `project_local_ontology_review` workspace section still reflects the
+  raw review lane and can show the same terms as unreviewed. SpecSpace should
+  either show raw lane and effective review as distinct states or prefer the
+  effect report when presenting completion status.
+- **Stale readiness explainer after approval.** After
+  `candidate_approval_decision.json` is materialized and promotion dry-run has
+  executed, `idea_maturity_metrics_report.json` correctly reports
+  `candidate_approval_decision_state: materialized` and
+  `platform_promotion_state: dry_run`, but still includes the old
+  `candidate_approval_decision_missing` readiness explainer. Candidate Overview
+  inherits that stale next action. SpecGraph should suppress resolved
+  explainers or attach an explicit `resolved` state.
+- **SpecSpace approval readiness projection.** The workspace API can still show
+  `candidate_approval_decision_ready: false` after the approval decision exists,
+  while the controlled promotion section reads the product promotion execution
+  artifacts. SpecSpace should reconcile approval readiness with the materialized
+  approval execution/decision artifacts.
+- **Git dry-run summary wording.** The product promotion execution report now
+  distinguishes logical dry-run preparation from a real worktree creation:
+  `summary.worktree_prepare_dry_run: true` and
+  `summary.physical_worktree_created: false` for dry-run promotion execution.
+  `summary.worktree_prepared` is reserved for a physical worktree created by a
+  non-dry-run Git Service execution.
