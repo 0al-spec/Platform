@@ -473,7 +473,6 @@ scripts/platform.py product-candidate-promotion execute \
   --approval-decision ../SpecGraph/runs/candidate_approval_decision.json \
   --repository-dir ../SpecGraph \
   --workspace-dir .platform/candidates/team-decision-log-worktree \
-  --materialized-source-dir ../SpecGraph/runs/materialized_candidate_specs \
   --open-review-dry-run \
   --output ../SpecGraph/runs/product_candidate_promotion_execution_report.json
 ```
@@ -485,6 +484,16 @@ contract before invoking the lower-level executor. In non-dry-run mode it may
 prepare a candidate worktree/branch and create a candidate commit. When
 `--open-review-dry-run` is omitted, it may also push the candidate branch and
 open a review pull request through `gh`.
+
+When the promotion request commit paths point at
+`runs/repaired_materialized_candidate_specs/...`, Platform derives the
+materialized source directory from the Graph Repository plan and uses the
+SpecGraph checkout root. Do not pass the repaired materialized directory itself
+as `--materialized-source-dir`; otherwise the lower-level executor will look for
+`runs/repaired_materialized_candidate_specs/...` under that directory twice.
+The commit step force-adds only the explicit approved paths so ignored candidate
+artifacts under `runs/` can be reviewed without broadening staging to
+`git add -A`.
 
 The product execution report is:
 

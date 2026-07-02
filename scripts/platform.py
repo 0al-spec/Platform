@@ -11233,7 +11233,7 @@ def graph_repository_commit_worktree(args: argparse.Namespace) -> int:
             )
 
     if not any(diagnostic.level == "ERROR" for diagnostic in diagnostics):
-        add_command = ["git", "-C", str(worktree_dir), "add", "--", *paths]
+        add_command = ["git", "-C", str(worktree_dir), "add", "-f", "--", *paths]
         add_result, diagnostic = run_graph_repository_command(add_command)
         command_results.append(add_result)
         if diagnostic is not None:

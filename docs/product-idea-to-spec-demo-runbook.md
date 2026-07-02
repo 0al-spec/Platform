@@ -666,6 +666,68 @@ read model published: false
 This confirms that Candidate Overview and project-local ontology review
 accounting do not block the approval/promotion dry-run boundary.
 
+## Non-Dry-Run Promotion Review Smoke Status
+
+The first controlled non-dry-run promotion review pass was executed after the
+Candidate Overview and project-local ontology review smoke. It used the
+Team Decision Log repaired candidate handoff and created a real candidate branch,
+commit, and GitHub review pull request without merging or publishing a read
+model.
+
+Observed sequence:
+
+```text
+SpecGraph happy-path repair pack
+  -> Platform happy-path repair smoke
+  -> candidate approval materialization
+  -> graph repository promotion request
+  -> product-candidate-promotion execute
+  -> Git Service prepare/commit/open-review
+```
+
+Observed checkpoints:
+
+```text
+product_candidate_promotion_execution_report.ok: true
+summary.status: completed
+candidate_branch: graph-candidate/team-decision-log
+commit_created: true
+commit_sha: 5ea1638c41d4a07a95060edf453d5ea7438977df
+review_opened: true
+review_url: https://github.com/0al-spec/SpecGraph/pull/662
+read_model_published: false
+merges_pull_requests: false
+publishes_read_models: false
+ontology_package_write: false
+ontology_term_acceptance: false
+```
+
+The product promotion command should let Platform derive the materialized source
+directory from the promotion request when the approved paths are repaired
+candidate paths:
+
+```bash
+scripts/platform.py product-candidate-promotion execute \
+  --promotion-request ../SpecGraph/runs/graph_repository_promotion_request.json \
+  --approval-decision ../SpecGraph/runs/candidate_approval_decision.json \
+  --repository-dir ../SpecGraph \
+  --workspace-dir /tmp/specgraph-product-promotion-review-worktree \
+  --repo 0al-spec/SpecGraph \
+  --output ../SpecGraph/runs/product_candidate_promotion_execution_report.json \
+  --format json
+```
+
+Do not pass `--materialized-source-dir
+../SpecGraph/runs/repaired_materialized_candidate_specs` for repaired promotion
+paths. Those paths already include `runs/repaired_materialized_candidate_specs/`,
+and Platform resolves their source directory to the SpecGraph checkout root.
+
+This smoke also found and fixed a Platform Git Service execution issue:
+candidate files under `runs/repaired_materialized_candidate_specs` are ignored by
+the normal SpecGraph `.gitignore`, so `graph-repository commit-worktree` must
+force-add only the explicit approved paths. It must not broaden staging to
+`git add -A`.
+
 Known follow-up issues from this smoke:
 
 - **SpecSpace project-local ontology projection split.** Candidate Overview and
