@@ -626,6 +626,12 @@ The next valuable implementation choices are:
      and product/spec gaps, validate the structured answers, and pass compatible
      handoff state into the SpecGraph import/rerun path without gaining apply or
      execution authority.
+   - **Project-local ontology review completion.** Done for the Team Decision
+     Log demo surface. The repair pack can now materialize SpecSpace-owned
+     keep-local decisions for required project-local terms, SpecGraph validates
+     them through the import preview, Idea Maturity accounts for them as
+     project-local review evidence, and Candidate Overview reports the effective
+     review status without accepting ontology terms globally.
    - **Production mutable state policy.** Done for the current manual repair
      loop. Product workspace static routing is fixed and `/team-decision-log`
      reads the workspace-specific bundle; SpecSpace surfaces stale/missing
