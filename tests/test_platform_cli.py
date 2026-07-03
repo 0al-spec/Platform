@@ -1451,6 +1451,7 @@ publish-bundle:
         makefile = """\
 real-idea-intake-continue-from-specspace-answers:
 \t@mkdir -p $(REAL_IDEA_SMOKE_RUN_DIR)
+\t@test -f $(SPECSPACE_REAL_IDEA_ANSWER_STATE)
 \t@printf '%s\\n' '{"artifact_kind":"specspace_real_idea_answer_import_preview","contract_ref":"specgraph.idea-to-spec.specspace-real-idea-answer-import-preview.v0.1","readiness":{"ready":true,"review_state":"specspace_real_idea_answers_ready_for_continuation"},"summary":{"status":"specspace_real_idea_answers_ready_for_continuation","answer_count":1,"accepted_answer_count":1},"authority_boundary":{"may_execute_specgraph":false,"may_execute_platform":false,"may_apply_answers":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_prompt_published":false,"raw_model_output_published":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/specspace_real_idea_answer_import_preview.json
 \t@printf '%s\\n' '{"artifact_kind":"real_idea_answer_continuation_report","contract_ref":"specgraph.idea-to-spec.real-idea-answer-continuation.v0.1","readiness":{"ready":true,"review_state":"real_idea_answer_continuation_ready"},"summary":{"status":"real_idea_answer_continuation_ready","answer_count":1,"accepted_answer_count":1},"authority_boundary":{"may_execute_specgraph":false,"may_execute_platform":false,"may_apply_answers":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_prompt_published":false,"raw_model_output_published":false},"outputs":{"validated_answers":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_intake_clarification_answers.json"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/real_idea_answer_continuation_report.json
 \t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_clarification_answer_set","answers":[{"request_id":"clarification.intake.domain","answer_kind":"answer_question","status":"accepted_for_candidate"}]}' > $(REAL_IDEA_SMOKE_RUN_DIR)/real_idea_answer_set.json
@@ -3827,6 +3828,16 @@ workspaces:
             specgraph_dir = Path(tmp_dir) / "SpecGraph"
             specgraph_dir.mkdir()
             self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            answer_state = (
+                Path(tmp_dir)
+                / "specspace-state"
+                / "idea_to_spec_intake_clarification_answers.json"
+            )
+            answer_state.parent.mkdir(parents=True)
+            answer_state.write_text(
+                '{"artifact_kind":"specspace_idea_intake_clarification_answer_state"}',
+                encoding="utf-8",
+            )
             output = (
                 specgraph_dir
                 / "runs"
@@ -3840,6 +3851,8 @@ workspaces:
                 str(specgraph_dir),
                 "--run-dir",
                 "runs/idea-alpha",
+                "--answer-state",
+                str(answer_state),
                 "--output",
                 str(output),
                 "--format",
@@ -3863,6 +3876,19 @@ workspaces:
             self.assertEqual(
                 payload["target_make"]["variables"]["REAL_IDEA_SMOKE_RUN_DIR"],
                 "runs/idea-alpha",
+            )
+            self.assertTrue(payload["answer_state_copied_to_run_dir"])
+            self.assertEqual(
+                payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ANSWER_STATE"],
+                "runs/idea-alpha/idea_to_spec_intake_clarification_answers.json",
+            )
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "idea-alpha"
+                    / "idea_to_spec_intake_clarification_answers.json"
+                ).exists()
             )
             self.assertEqual(payload["command_result"]["returncode"], 0)
             self.assertTrue(payload["output_artifacts"]["import_preview"]["ready"])
@@ -3931,6 +3957,40 @@ workspaces:
             )
             self.assertEqual(payload["output_artifacts"], {})
 
+    def test_product_real_idea_continuation_rejects_missing_answer_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--answer-state",
+                str(Path(tmp_dir) / "missing_answers.json"),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_answer_continuation_answer_state_missing",
+                codes,
+            )
+            self.assertEqual(
+                payload["operations"][0]["status"],
+                "skipped",
+            )
+
     def test_product_real_idea_continuation_rejects_output_authority_expansion(
         self,
     ) -> None:
@@ -3945,6 +4005,16 @@ workspaces:
                 1,
             )
             (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+            answer_state = (
+                Path(tmp_dir)
+                / "specspace-state"
+                / "idea_to_spec_intake_clarification_answers.json"
+            )
+            answer_state.parent.mkdir(parents=True)
+            answer_state.write_text(
+                '{"artifact_kind":"specspace_idea_intake_clarification_answer_state"}',
+                encoding="utf-8",
+            )
 
             result = self.run_cli(
                 "product-real-idea-continuation",
@@ -3953,6 +4023,8 @@ workspaces:
                 str(specgraph_dir),
                 "--run-dir",
                 "runs/idea-alpha",
+                "--answer-state",
+                str(answer_state),
                 "--no-write-report",
                 "--format",
                 "json",

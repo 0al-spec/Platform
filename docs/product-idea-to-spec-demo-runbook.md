@@ -553,6 +553,7 @@ controlled continuation handoff without giving SpecSpace execution authority:
 scripts/platform.py product-real-idea-continuation execute \
   --specgraph-dir ../SpecGraph \
   --run-dir runs/<idea-smoke-run> \
+  --answer-state <SpecSpace state dir>/idea_to_spec_intake_clarification_answers.json \
   --format json
 ```
 

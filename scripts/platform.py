@@ -5449,12 +5449,14 @@ def product_repair_repaired_handoff_make_command(
 def real_idea_answer_continuation_make_command(
     *,
     run_dir_ref: str,
+    answer_state_ref: str,
     python: str | None = None,
 ) -> list[str]:
     command = [
         "make",
         REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET,
         f"REAL_IDEA_SMOKE_RUN_DIR={run_dir_ref}",
+        f"SPECSPACE_REAL_IDEA_ANSWER_STATE={answer_state_ref}",
     ]
     if python:
         command.append(f"PYTHON={python}")
@@ -6068,6 +6070,35 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
                 message="run-dir must name a dedicated child directory",
             )
         )
+    answer_source = input_path_arg_or_existing(
+        args.answer_state,
+        base_dir=specgraph_dir,
+    )
+    answer_handoff = run_dir / "idea_to_spec_intake_clarification_answers.json"
+    if not args.dry_run and not answer_source.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_answer_state_missing",
+                subject="answer_state",
+                message="SpecSpace real idea answer state file is required",
+            )
+        )
+    answer_state_copied_to_run_dir = False
+    try:
+        answer_state_source_ref = answer_source.resolve().relative_to(
+            specgraph_dir
+        ).as_posix()
+    except ValueError:
+        answer_state_source_ref = str(answer_source)
+    if (
+        not diagnostics
+        and answer_source.resolve() != answer_handoff.resolve()
+        and not args.dry_run
+    ):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        answer_handoff.write_bytes(answer_source.read_bytes())
+        answer_state_copied_to_run_dir = True
     output_path = (
         Path(args.output)
         if args.output
@@ -6075,6 +6106,7 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
     )
     command = real_idea_answer_continuation_make_command(
         run_dir_ref=run_dir_ref,
+        answer_state_ref=f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json",
         python=args.python,
     )
     command_result: dict[str, Any] | None = None
@@ -6160,6 +6192,12 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         "started_at": started_at,
         "specgraph_dir": str(specgraph_dir),
         "run_dir": run_dir_ref,
+        "answer_state_source_ref": answer_state_source_ref,
+        "answer_state_handoff_ref": f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json",
+        "answer_state_copied_to_run_dir": answer_state_copied_to_run_dir,
+        "answer_state_source_digest": file_sha256(answer_source)
+        if answer_source.is_file()
+        else None,
         "ok": ok,
         "dry_run": args.dry_run,
         "canonical_mutations_allowed": False,
@@ -6177,7 +6215,12 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         "target_make": {
             "target": REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET,
             "cwd": str(specgraph_dir),
-            "variables": {"REAL_IDEA_SMOKE_RUN_DIR": run_dir_ref},
+            "variables": {
+                "REAL_IDEA_SMOKE_RUN_DIR": run_dir_ref,
+                "SPECSPACE_REAL_IDEA_ANSWER_STATE": (
+                    f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json"
+                ),
+            },
         },
         "command": command,
         "command_result": command_result,
@@ -15087,6 +15130,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "SpecGraph run directory containing the SpecSpace answer state and "
             "real-idea intake artifacts. Must resolve inside --specgraph-dir."
+        ),
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--answer-state",
+        default="runs/real_idea_smoke/idea_to_spec_intake_clarification_answers.json",
+        help=(
+            "SpecSpace-owned intake clarification answer state. If the path is "
+            "outside --specgraph-dir or outside --run-dir, Platform copies it "
+            "into --run-dir before invoking SpecGraph."
         ),
     )
     real_idea_continuation_execute_parser.add_argument(
