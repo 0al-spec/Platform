@@ -3927,6 +3927,12 @@ workspaces:
                 "repair-session.idea-alpha",
             )
             self.assertTrue(payload["output_artifacts"]["import_preview"]["ready"])
+            self.assertEqual(
+                payload["output_artifacts"]["import_preview"]["summary"][
+                    "accepted_for_rerun_count"
+                ],
+                1,
+            )
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
 
     def test_product_real_idea_continuation_execute_runs_specgraph_target(

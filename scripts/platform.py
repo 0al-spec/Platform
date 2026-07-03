@@ -5822,6 +5822,7 @@ def product_repair_output_record(path: Path) -> dict[str, Any]:
         "ready": nested_mapping(payload, "readiness").get("ready"),
         "status": nested_mapping(payload, "summary").get("status")
         or nested_mapping(payload, "readiness").get("review_state"),
+        "summary": nested_mapping(payload, "summary"),
         "canonical_mutations_allowed": payload.get("canonical_mutations_allowed"),
         "tracked_artifacts_written": payload.get("tracked_artifacts_written"),
         "local_only": payload.get("local_only"),
