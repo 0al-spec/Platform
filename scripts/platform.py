@@ -7963,7 +7963,17 @@ def product_candidate_approval_expected_refs(
         refs.add(resolved_path.relative_to(specgraph_dir).as_posix())
     except ValueError:
         pass
+    refs.update(product_candidate_approval_logical_ref_aliases(resolved_path))
     return tuple(sorted(ref for ref in refs if ref))
+
+
+def product_candidate_approval_logical_ref_aliases(resolved_path: Path) -> set[str]:
+    filename_to_ref = {
+        Path(rel_path).name: rel_path
+        for rel_path in PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.values()
+    }
+    logical_ref = filename_to_ref.get(resolved_path.name)
+    return {logical_ref} if logical_ref else set()
 
 
 def product_candidate_approval_intent_state_diagnostics(

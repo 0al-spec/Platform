@@ -7257,6 +7257,62 @@ workspaces:
             "runs/repaired_candidate_promotion_handoff_report.json",
         )
 
+    def test_product_candidate_approval_gate_accepts_isolated_repaired_input_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+            )
+            isolated_dir = specgraph_dir / "runs" / "ui-started-smoke"
+            isolated_dir.mkdir()
+            for filename in (
+                "repaired_active_idea_to_spec_candidate.json",
+                "repaired_idea_to_spec_repair_session.json",
+                "repaired_idea_to_spec_promotion_gate.json",
+                "repaired_candidate_promotion_handoff_report.json",
+            ):
+                shutil.copyfile(
+                    specgraph_dir / "runs" / filename,
+                    isolated_dir / filename,
+                )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--active-candidate",
+                str(isolated_dir / "repaired_active_idea_to_spec_candidate.json"),
+                "--repair-session",
+                str(isolated_dir / "repaired_idea_to_spec_repair_session.json"),
+                "--promotion-gate",
+                str(isolated_dir / "repaired_idea_to_spec_promotion_gate.json"),
+                "--repaired-handoff",
+                str(isolated_dir / "repaired_candidate_promotion_handoff_report.json"),
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+                cwd=specgraph_dir,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ready_to_materialize"])
+
     def test_product_candidate_approval_gate_rejects_stale_repaired_handoff_ref(
         self,
     ) -> None:
