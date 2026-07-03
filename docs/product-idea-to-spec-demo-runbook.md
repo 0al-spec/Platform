@@ -736,9 +736,9 @@ falling back to stale repair-session blockers.
 
 ## Full Git Lifecycle Smoke Status
 
-The first full Team Decision Log lifecycle smoke completed after the non-dry-run
-promotion review was opened. This closed the loop from candidate promotion review
-to merged review and public-safe read-model publication.
+The first full Team Decision Log lifecycle smoke started from the non-dry-run
+promotion review and completed only after the review was merged, review status
+was observed, and the public-safe read-model was published.
 
 Observed sequence:
 
@@ -779,7 +779,7 @@ idea-to-spec candidate
   -> candidate approval
   -> GitHub review PR
   -> merged review
-  -> public-safe read model
+  -> public-safe read-model
 ```
 
 The authority split remains unchanged. SpecSpace never writes to Git, mutates
