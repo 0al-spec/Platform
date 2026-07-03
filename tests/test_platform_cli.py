@@ -1413,6 +1413,10 @@ specspace-repair-draft-import-preview:
 \t@mkdir -p $$(dirname "$(SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT)")
 \t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_import_preview","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-import-preview.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repair_draft_import_preview_ready","blocked_by":[]},"summary":{"status":"repair_draft_import_preview_ready","accepted_for_rerun_count":1},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_import_into_specgraph":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > "$(SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT)"
 
+specspace-repair-rerun-request-gate:
+\t@mkdir -p $$(dirname "$(SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT)")
+\t@printf '%s\\n' '{"artifact_kind":"specspace_repair_rerun_request_gate","contract_ref":"specgraph.idea-to-spec.specspace-repair-rerun-request-gate.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"ready","blocked_by":[]},"summary":{"selected_request_id":"repair-rerun-request.idea-alpha","workspace_id":"idea-alpha-workspace","candidate_id":"idea-alpha"},"resolved_inputs":{"workspace_id":"idea-alpha-workspace","candidate_id":"idea-alpha"},"recommended_invocation":{"make_target":"product-workspace-requested-repair-draft-rerun"},"authority_boundary":{"may_execute_specgraph_from_request":false,"may_run_make_target_from_request":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false,"may_open_pull_request":false,"may_execute_git_service_operation":false}}' > "$(SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT)"
+
 product-workspace-requested-repair-draft-rerun:
 \t@mkdir -p runs
 \t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_rerun_report","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-rerun.v0.1","readiness":{"ready":true,"review_state":"repair_draft_rerun_ready"},"summary":{"status":"ready"}}' > runs/specspace_repair_draft_rerun_report.json
@@ -3933,6 +3937,85 @@ workspaces:
                 ],
                 1,
             )
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+
+    def test_product_repair_rerun_request_gate_runs_specgraph_target(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            runs_dir = specgraph_dir / "runs"
+            runs_dir.mkdir()
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            request_state = runs_dir / "idea_to_spec_repair_rerun_requests.json"
+            request_state.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "specspace_idea_to_spec_repair_rerun_request_state",
+                        "schema_version": 1,
+                        "state_owner": "SpecSpace",
+                        "canonical_mutations_allowed": False,
+                        "tracked_artifacts_written": False,
+                        "requests": [
+                            {
+                                "id": "repair-rerun-request.idea-alpha",
+                                "status": "requested",
+                                "requested_action": "prepare_repair_draft_rerun",
+                                "workspace_id": "idea-alpha-workspace",
+                                "candidate_id": "idea-alpha",
+                                "repair_session_ref": "runs/idea_to_spec_repair_session.json",
+                                "draft_state_ref": "specspace-state://idea_to_spec_repair_drafts.json",
+                                "import_preview_ref": "runs/specspace_repair_draft_import_preview.json",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            gate_path = runs_dir / "specspace_repair_rerun_request_gate.json"
+            report_path = (
+                runs_dir
+                / "platform_product_repair_rerun_request_gate_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "request-gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--rerun-request",
+                "runs/idea_to_spec_repair_rerun_requests.json",
+                "--import-preview",
+                "runs/specspace_repair_draft_import_preview.json",
+                "--repair-session",
+                "runs/idea_to_spec_repair_session.json",
+                "--workspace-id",
+                "idea-alpha-workspace",
+                "--output",
+                str(report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_repair_rerun_request_gate_execution_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertTrue(gate_path.is_file())
+            self.assertEqual(
+                payload["target_make"]["target"],
+                "specspace-repair-rerun-request-gate",
+            )
+            self.assertEqual(
+                payload["output_artifacts"]["request_gate"]["artifact_kind"],
+                "specspace_repair_rerun_request_gate",
+            )
+            self.assertTrue(payload["output_artifacts"]["request_gate"]["ready"])
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
 
     def test_product_real_idea_continuation_execute_runs_specgraph_target(

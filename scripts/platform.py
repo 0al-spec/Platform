@@ -156,6 +156,10 @@ PRODUCT_REPAIR_DRAFT_IMPORT_EXECUTION_REPORT_KIND = (
     "platform_product_repair_draft_import_preview_execution_report"
 )
 PRODUCT_REPAIR_DRAFT_IMPORT_MAKE_TARGET = "specspace-repair-draft-import-preview"
+PRODUCT_REPAIR_RERUN_REQUEST_GATE_EXECUTION_REPORT_KIND = (
+    "platform_product_repair_rerun_request_gate_execution_report"
+)
+PRODUCT_REPAIR_RERUN_REQUEST_GATE_MAKE_TARGET = "specspace-repair-rerun-request-gate"
 PRODUCT_REPAIR_RERUN_MAKE_TARGET = "product-workspace-requested-repair-draft-rerun"
 PRODUCT_REPAIR_RERUN_REPAIRED_HANDOFF_MAKE_TARGET = (
     "product-workspace-repaired-promotion-handoff"
@@ -5635,6 +5639,243 @@ def product_repair_draft_import_preview(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
+    specgraph_dir = Path(args.specgraph_dir).resolve()
+    diagnostics = product_repair_specgraph_checkout_diagnostics(
+        specgraph_dir,
+        code_prefix="product_repair_rerun_request_gate",
+        subject="specgraph_dir",
+    )
+    request_state_path = input_path_arg_or_existing(
+        args.rerun_request,
+        base_dir=specgraph_dir,
+    )
+    import_preview_path = input_path_arg_or_existing(
+        args.import_preview,
+        base_dir=specgraph_dir,
+    )
+    repair_session_path = input_path_arg_or_existing(
+        args.repair_session,
+        base_dir=specgraph_dir,
+    )
+    output_path = path_arg_or_default(
+        args.output_gate,
+        base_dir=specgraph_dir,
+        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS["request_gate"],
+    )
+    report_path = (
+        Path(args.output)
+        if args.output
+        else specgraph_dir
+        / "runs"
+        / "platform_product_repair_rerun_request_gate_execution_report.json"
+    )
+
+    if not args.dry_run and not request_state_path.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_request_gate_state_missing",
+                subject="rerun_request",
+                message="SpecSpace repair rerun request state is required",
+            )
+        )
+    if not args.dry_run and not import_preview_path.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_request_gate_import_preview_missing",
+                subject="import_preview",
+                message="SpecGraph repair draft import preview is required",
+            )
+        )
+    if not args.dry_run and not repair_session_path.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_request_gate_repair_session_missing",
+                subject="repair_session",
+                message="repair session journal is required",
+            )
+        )
+
+    def _ref(path: Path) -> str:
+        try:
+            return path.resolve().relative_to(specgraph_dir).as_posix()
+        except ValueError:
+            return str(path)
+
+    request_state_ref = _ref(request_state_path)
+    import_preview_ref = _ref(import_preview_path)
+    repair_session_ref = _ref(repair_session_path)
+    output_ref = _ref(output_path)
+
+    command = product_repair_rerun_request_gate_make_command(
+        request_state_ref=request_state_ref,
+        import_preview_ref=import_preview_ref,
+        repair_session_ref=repair_session_ref,
+        output_ref=output_ref,
+        workspace_id=args.workspace_id,
+        python=args.python,
+    )
+    command_result: dict[str, Any] | None = None
+    started_at = utc_now_iso()
+    if not diagnostics and not args.dry_run:
+        completed = subprocess.run(
+            command,
+            cwd=specgraph_dir,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": completed.returncode,
+            "stdout": completed.stdout[-4000:],
+            "stderr": completed.stderr[-4000:],
+        }
+        if completed.returncode != 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_request_gate_make_failed",
+                    subject=PRODUCT_REPAIR_RERUN_REQUEST_GATE_MAKE_TARGET,
+                    message=(
+                        "SpecGraph repair rerun request gate target failed "
+                        f"with exit code {completed.returncode}"
+                    ),
+                )
+            )
+    elif args.dry_run:
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "dry_run": True,
+        }
+
+    output_record = product_repair_output_record(output_path)
+    if not diagnostics and not args.dry_run:
+        if output_record.get("present") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_request_gate_output_missing",
+                    subject="outputs.request_gate",
+                    message="SpecGraph repair rerun request gate target must produce output",
+                )
+            )
+        elif output_record.get("artifact_kind") != PRODUCT_REPAIR_RERUN_GATE_KIND:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_request_gate_output_kind_mismatch",
+                    subject="outputs.request_gate.artifact_kind",
+                    message=f"expected {PRODUCT_REPAIR_RERUN_GATE_KIND}",
+                )
+            )
+        else:
+            gate_payload = load_json_mapping(output_path, label="request gate output")
+            diagnostics.extend(product_repair_request_gate_diagnostics(gate_payload))
+
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and (args.dry_run or command_result is not None)
+    operation_status = "failed"
+    operation_reason = "execution_failed"
+    if args.dry_run:
+        operation_status = "dry_run"
+        operation_reason = "dry_run"
+    elif command_result is None:
+        operation_status = "skipped"
+        operation_reason = "execution_not_started"
+    elif command_result.get("returncode") == 0:
+        operation_status = "succeeded"
+        operation_reason = "SpecGraph repair rerun request gate target executed"
+    variables = {
+        "SPECSPACE_REPAIR_RERUN_REQUEST_STATE": request_state_ref,
+        "SPECSPACE_REPAIR_RERUN_REQUEST_IMPORT_PREVIEW": import_preview_ref,
+        "SPECSPACE_REPAIR_RERUN_REQUEST_REPAIR_SESSION": repair_session_ref,
+        "SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT": output_ref,
+    }
+    if args.workspace_id:
+        variables["SPECSPACE_REPAIR_RERUN_REQUEST_WORKSPACE_ID"] = args.workspace_id
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_REPAIR_RERUN_REQUEST_GATE_EXECUTION_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "started_at": started_at,
+        "specgraph_dir": str(specgraph_dir),
+        "rerun_request_ref": request_state_ref,
+        "import_preview_ref": import_preview_ref,
+        "repair_session_ref": repair_session_ref,
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "authority_boundary": {
+            "executes_specgraph_make_target": not args.dry_run
+            and command_result is not None,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "accepts_ontology_terms": False,
+            "mutates_canonical_specs": False,
+            "publishes_private_artifacts": False,
+        },
+        "target_make": {
+            "target": PRODUCT_REPAIR_RERUN_REQUEST_GATE_MAKE_TARGET,
+            "cwd": str(specgraph_dir),
+            "variables": variables,
+        },
+        "command": command,
+        "command_result": command_result,
+        "operations": [
+            {
+                "name": "execute_specgraph_repair_rerun_request_gate",
+                "status": operation_status,
+                "reason": operation_reason,
+                "evidence": [PRODUCT_REPAIR_RERUN_REQUEST_GATE_MAKE_TARGET],
+            }
+        ],
+        "output_artifacts": {"request_gate": output_record},
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "completed" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
+            "error_count": error_count,
+            "request_gate_digest": output_record.get("sha256"),
+            "request_gate_status": output_record.get("status"),
+        },
+    }
+    if not args.no_write_report:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": report["summary"]["status"],
+                        "request_gate": output_record.get("status") or "unknown",
+                    }
+                ],
+                [("status", "STATUS"), ("request_gate", "REQUEST GATE")],
+            )
+        )
+    return 0 if ok else 1
+
+
 def product_repair_plan_diagnostics(plan: dict[str, Any]) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     if plan.get("artifact_kind") != PRODUCT_REPAIR_RERUN_PLAN_KIND:
@@ -5800,6 +6041,30 @@ def product_repair_draft_import_make_command(
     ]
     if workspace_id:
         command.append(f"SPECSPACE_REPAIR_DRAFT_IMPORT_WORKSPACE_ID={workspace_id}")
+    if python:
+        command.append(f"PYTHON={python}")
+    return command
+
+
+def product_repair_rerun_request_gate_make_command(
+    *,
+    request_state_ref: str,
+    import_preview_ref: str,
+    repair_session_ref: str,
+    output_ref: str,
+    workspace_id: str | None = None,
+    python: str | None = None,
+) -> list[str]:
+    command = [
+        "make",
+        PRODUCT_REPAIR_RERUN_REQUEST_GATE_MAKE_TARGET,
+        f"SPECSPACE_REPAIR_RERUN_REQUEST_STATE={request_state_ref}",
+        f"SPECSPACE_REPAIR_RERUN_REQUEST_IMPORT_PREVIEW={import_preview_ref}",
+        f"SPECSPACE_REPAIR_RERUN_REQUEST_REPAIR_SESSION={repair_session_ref}",
+        f"SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT={output_ref}",
+    ]
+    if workspace_id:
+        command.append(f"SPECSPACE_REPAIR_RERUN_REQUEST_WORKSPACE_ID={workspace_id}")
     if python:
         command.append(f"PYTHON={python}")
     return command
@@ -15317,6 +15582,64 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     product_repair_import_parser.set_defaults(func=product_repair_draft_import_preview)
+
+    product_repair_request_gate_parser = product_repair_subcommands.add_parser(
+        "request-gate",
+        help="Build the SpecGraph repair rerun request gate from a SpecSpace request.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--specgraph-dir",
+        default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
+        help="Local SpecGraph checkout that owns the request gate make target.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--rerun-request",
+        default="runs/idea_to_spec_repair_rerun_requests.json",
+        help="SpecSpace-owned repair rerun request state.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--import-preview",
+        default="runs/specspace_repair_draft_import_preview.json",
+        help="SpecGraph repair draft import preview selected by the request.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--repair-session",
+        default="runs/idea_to_spec_repair_session.json",
+        help="Idea-to-spec repair session journal selected by the request.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--workspace-id",
+        help="Optional workspace id passed to the SpecGraph request gate.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--python",
+        help="Optional PYTHON make variable passed to SpecGraph.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the make invocation without executing it.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--output-gate",
+        help="Optional path where the SpecGraph request gate should be written.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--output",
+        help="Optional path where the Platform execution report should be written.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the Platform execution report.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_repair_request_gate_parser.set_defaults(func=product_repair_rerun_request_gate)
 
     product_repair_plan_parser = product_repair_subcommands.add_parser(
         "plan",
