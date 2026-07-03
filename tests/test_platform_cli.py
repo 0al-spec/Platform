@@ -1461,6 +1461,21 @@ real-idea-intake-continue-from-specspace-answers:
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
 
+    def write_real_idea_entry_intake_makefile(self, specgraph_dir: Path) -> None:
+        makefile = """\
+real-idea-intake-from-entry-request:
+\t@mkdir -p $(REAL_IDEA_SMOKE_RUN_DIR)
+\t@test -f $(SPECSPACE_REAL_IDEA_ENTRY_REQUESTS)
+\t@printf '%s\\n' '{"artifact_kind":"specspace_real_idea_entry_request_import_preview","contract_ref":"specgraph.idea-to-spec.specspace-real-idea-entry-request-import-preview.v0.1","readiness":{"ready":true,"review_state":"real_idea_entry_request_ready_for_intake"},"summary":{"status":"real_idea_entry_request_ready_for_intake","request_selected":true},"authority_boundary":{"may_execute_specgraph":false,"may_execute_platform":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_prompt_published":false,"raw_model_output_published":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/specspace_real_idea_entry_request_import_preview.json
+\t@printf '%s\\n' '{"artifact_kind":"real_idea_entry_request_intake_report","contract_ref":"specgraph.idea-to-spec.real-idea-entry-request-intake.v0.1","readiness":{"ready":true,"review_state":"real_idea_entry_request_intake_materialized"},"summary":{"status":"real_idea_entry_request_intake_materialized","candidate_id":"idea-alpha","intake_session_ready":false},"authority_boundary":{"may_execute_specgraph":false,"may_execute_platform":false,"may_mutate_user_intent":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_prompt_published":false,"raw_model_output_published":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/real_idea_entry_request_intake_report.json
+\t@printf '%s\\n' '{"artifact_kind":"user_idea_raw_input","local_only":true,"privacy_boundary":{"raw_idea_text_local_only":true,"raw_idea_text_public_safe":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/local_operator_user_idea_raw_input.json
+\t@printf '%s\\n' '{"artifact_kind":"user_idea_intake_session","readiness":{"ready":false,"review_state":"needs_clarification"},"summary":{"status":"needs_clarification","clarification_question_count":4},"privacy_boundary":{"raw_idea_text_published":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/user_idea_intake_session.json
+\t@printf '%s\\n' '{"artifact_kind":"user_idea_intake_interview_report","summary":{"status":"needs_clarification"},"privacy_boundary":{"raw_idea_text_published_in_report":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/user_idea_intake_interview_report.json
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_clarification_requests","readiness":{"ready":true,"review_state":"clarification_requests_ready"},"summary":{"status":"clarification_requests_ready","request_count":4}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/idea_intake_clarification_requests.json
+\t@printf '%s\\n' '{"artifact_kind":"real_idea_answer_template","contract_ref":"specgraph.real-idea.answer-template.v0.1","readiness":{"ready":true,"review_state":"answer_template_ready"},"summary":{"status":"answer_template_ready","target_count":4},"authority_boundary":{"may_execute_specgraph":false},"privacy_boundary":{"raw_idea_text_published":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/real_idea_answer_template.json
+"""
+        (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+
     def build_graph_repository_execution_plan(
         self,
         tmp_root: Path,
@@ -3953,6 +3968,313 @@ workspaces:
             )
             self.assertEqual(
                 payload["output_artifacts"]["import_preview"]["authority_boundary"][
+                    "may_create_branch_or_commit"
+                ],
+                True,
+            )
+
+    def test_product_real_idea_intake_execute_runs_specgraph_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            entry_requests = root / "specspace-state" / "real_idea_entry_requests.json"
+            entry_requests.parent.mkdir()
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+            output = (
+                specgraph_dir
+                / "runs"
+                / "platform_real_idea_entry_intake_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--entry-requests",
+                str(entry_requests),
+                "--workspace-id",
+                "idea-alpha",
+                "--request-id",
+                "entry-001",
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            persisted = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload, persisted)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_real_idea_entry_intake_execution_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["dry_run"])
+            self.assertEqual(
+                payload["target_make"]["target"],
+                "real-idea-intake-from-entry-request",
+            )
+            self.assertEqual(
+                payload["target_make"]["variables"]["REAL_IDEA_SMOKE_RUN_DIR"],
+                "runs/idea-alpha",
+            )
+            self.assertEqual(
+                payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ENTRY_REQUESTS"],
+                "runs/idea-alpha/real_idea_entry_requests.json",
+            )
+            self.assertEqual(payload["command_result"]["returncode"], 0)
+            self.assertTrue(
+                (specgraph_dir / "runs" / "idea-alpha" / "real_idea_entry_requests.json").exists()
+            )
+            self.assertTrue(payload["output_artifacts"]["entry_import_preview"]["ready"])
+            self.assertTrue(payload["output_artifacts"]["entry_intake_report"]["ready"])
+            self.assertTrue(payload["output_artifacts"]["raw_input"]["present"])
+            self.assertTrue(payload["output_artifacts"]["raw_input"]["local_only"])
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_real_idea_intake_uses_inside_specgraph_entry_source_without_copy(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            entry_requests = specgraph_dir / "specspace-state" / "real_idea_entry_requests.json"
+            entry_requests.parent.mkdir()
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--entry-requests",
+                str(entry_requests),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ENTRY_REQUESTS"],
+                "specspace-state/real_idea_entry_requests.json",
+            )
+            self.assertEqual(
+                payload["entry_requests_handoff_ref"],
+                "specspace-state/real_idea_entry_requests.json",
+            )
+            self.assertFalse(payload["entry_requests_copied_to_run_dir"])
+            self.assertFalse(
+                (specgraph_dir / "runs" / "idea-alpha" / "real_idea_entry_requests.json").exists()
+            )
+
+    def test_product_real_idea_intake_execute_supports_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            entry_requests = root / "real_idea_entry_requests.json"
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--entry-requests",
+                str(entry_requests),
+                "--dry-run",
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(payload["summary"]["status"], "dry_run")
+            self.assertFalse(
+                (specgraph_dir / "runs" / "idea-alpha" / "real_idea_entry_requests.json").exists()
+            )
+            self.assertFalse(
+                payload["authority_boundary"]["executes_specgraph_make_target"]
+            )
+
+    def test_product_real_idea_intake_rejects_missing_entry_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--entry-requests",
+                str(Path(tmp_dir) / "missing.json"),
+                "--dry-run",
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn("real_idea_entry_intake_entry_requests_missing", codes)
+
+    def test_product_real_idea_intake_rejects_output_authority_expansion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            makefile = (specgraph_dir / "Makefile").read_text(encoding="utf-8")
+            makefile = makefile.replace(
+                '"may_create_branch_or_commit":false',
+                '"may_create_branch_or_commit":true',
+                1,
+            )
+            (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+            entry_requests = root / "real_idea_entry_requests.json"
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--entry-requests",
+                str(entry_requests),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn("real_idea_entry_intake_output_authority_expanded", codes)
+            self.assertEqual(
+                payload["output_artifacts"]["entry_import_preview"]["authority_boundary"][
+                    "may_create_branch_or_commit"
+                ],
+                True,
+            )
+
+    def test_product_real_idea_intake_requires_source_for_ready_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            makefile = (specgraph_dir / "Makefile").read_text(encoding="utf-8")
+            makefile = makefile.replace(
+                '"readiness":{"ready":false,"review_state":"needs_clarification"}',
+                '"readiness":{"ready":true,"review_state":"ready"}',
+            )
+            (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+            entry_requests = root / "real_idea_entry_requests.json"
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--entry-requests",
+                str(entry_requests),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn("real_idea_entry_intake_output_missing", codes)
+
+    def test_product_real_idea_intake_validates_present_source_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            makefile = (specgraph_dir / "Makefile").read_text(encoding="utf-8")
+            makefile += (
+                '\n\t@printf \'%s\\n\' \'{"artifact_kind":"user_idea_intake_source",'
+                '"canonical_mutations_allowed":false,"tracked_artifacts_written":false,'
+                '"readiness":{"ready":true},'
+                '"authority_boundary":{"may_create_branch_or_commit":true}}\' '
+                '> $(REAL_IDEA_SMOKE_RUN_DIR)/user_idea_intake_source.json\n'
+            )
+            (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+            entry_requests = root / "real_idea_entry_requests.json"
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--entry-requests",
+                str(entry_requests),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn("real_idea_entry_intake_output_authority_expanded", codes)
+            self.assertEqual(
+                payload["output_artifacts"]["intake_source"]["authority_boundary"][
                     "may_create_branch_or_commit"
                 ],
                 True,

@@ -666,11 +666,12 @@ The next valuable implementation choices are:
    queue-backed service implementation while preserving the same report
    contracts.
 3. SpecSpace/SpecGraph/Platform: continue hardening the real idea intake
-   surface. The first-class answer authoring and continuation handoff are now
-   in place: SpecSpace can store operator-owned clarification answers, SpecGraph
-   can import/materialize them into a clarified intake session and active
-   candidate, and Platform can execute the fixed
-   `product-real-idea-continuation execute` handoff without Git, Ontology, or
+   surface. The raw-entry and answer-continuation handoffs are now in place:
+   SpecSpace can store an operator-owned raw idea entry request and later
+   clarification answers; SpecGraph can import/materialize those states into
+   intake artifacts, a clarified intake session, and an active candidate; and
+   Platform can execute the fixed `product-real-idea-intake execute` and
+   `product-real-idea-continuation execute` handoffs without Git, Ontology, or
    canonical spec mutation authority. Project-local ontology review and the
    candidate overview narrative panel are now also connected to Idea Maturity
    and Product Workspace surfaces. Remaining work is product UX polish,
