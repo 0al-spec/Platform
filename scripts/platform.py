@@ -4047,6 +4047,20 @@ def graph_repository_repair_session_diagnostics(
     return diagnostics
 
 
+def repair_session_source_refs(
+    repair_session: dict[str, Any],
+) -> dict[str, tuple[str, ...]]:
+    source_artifacts = nested_mapping(repair_session, "source_artifacts")
+    refs: dict[str, tuple[str, ...]] = {}
+    for key, value in source_artifacts.items():
+        if not isinstance(key, str) or not isinstance(value, dict):
+            continue
+        source_ref = value.get("source_ref")
+        if isinstance(source_ref, str) and source_ref:
+            refs[key] = (source_ref,)
+    return refs
+
+
 def build_graph_repository_execution_plan(
     *,
     contract_path: Path,
@@ -5442,6 +5456,7 @@ def product_repair_draft_import_preview(args: argparse.Namespace) -> int:
         diagnostics.extend(
             graph_repository_repair_session_diagnostics(
                 repair_session,
+                expected_source_refs=repair_session_source_refs(repair_session),
                 subject="repair_session",
             )
         )
@@ -5658,7 +5673,8 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
         args.repair_session,
         base_dir=specgraph_dir,
     )
-    output_path = path_arg_or_default(
+    request_state_source_path = request_state_path
+    output_path = input_path_arg_or_default(
         args.output_gate,
         base_dir=specgraph_dir,
         default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS["request_gate"],
@@ -5709,6 +5725,50 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
     import_preview_ref = _ref(import_preview_path)
     repair_session_ref = _ref(repair_session_path)
     output_ref = _ref(output_path)
+
+    request_state_copied_to_run_dir = False
+    if args.run_dir:
+        raw_run_dir = Path(args.run_dir)
+        run_dir = (
+            raw_run_dir.resolve()
+            if raw_run_dir.is_absolute()
+            else (specgraph_dir / raw_run_dir).resolve()
+        )
+        try:
+            run_dir_ref = run_dir.relative_to(specgraph_dir).as_posix()
+        except ValueError:
+            run_dir_ref = str(raw_run_dir)
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_request_gate_run_dir_outside_specgraph",
+                    subject="run_dir",
+                    message="run-dir must resolve inside the SpecGraph checkout",
+                )
+            )
+        if run_dir_ref in {"", "."}:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_request_gate_run_dir_invalid",
+                    subject="run_dir",
+                    message="run-dir must name a dedicated child directory",
+                )
+            )
+        request_state_path = run_dir / "idea_to_spec_repair_rerun_requests.json"
+        request_state_ref = f"{run_dir_ref}/idea_to_spec_repair_rerun_requests.json"
+        if not diagnostics and not args.dry_run:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            handoff_state = product_repair_rerun_request_gate_handoff_state(
+                source=request_state_source_path,
+                import_preview_ref=import_preview_ref,
+                repair_session_ref=repair_session_ref,
+            )
+            request_state_path.write_text(
+                json.dumps(handoff_state, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            request_state_copied_to_run_dir = True
 
     command = product_repair_rerun_request_gate_make_command(
         request_state_ref=request_state_ref,
@@ -5809,6 +5869,9 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
         "generated_at": utc_now_iso(),
         "started_at": started_at,
         "specgraph_dir": str(specgraph_dir),
+        "request_state_source_ref": _ref(request_state_source_path),
+        "request_state_handoff_ref": request_state_ref,
+        "request_state_copied_to_run_dir": request_state_copied_to_run_dir,
         "rerun_request_ref": request_state_ref,
         "import_preview_ref": import_preview_ref,
         "repair_session_ref": repair_session_ref,
@@ -6068,6 +6131,29 @@ def product_repair_rerun_request_gate_make_command(
     if python:
         command.append(f"PYTHON={python}")
     return command
+
+
+def product_repair_rerun_request_gate_handoff_state(
+    *,
+    source: Path,
+    import_preview_ref: str,
+    repair_session_ref: str,
+) -> dict[str, Any]:
+    state = load_json_mapping(source, label="SpecSpace repair rerun request state")
+    source_artifacts = nested_mapping(state, "source_artifacts")
+    state["source_artifacts"] = {
+        **source_artifacts,
+        "idea_to_spec_repair_session": repair_session_ref,
+        "specspace_repair_draft_import_preview": import_preview_ref,
+    }
+    for request in state.get("requests", []):
+        if not isinstance(request, dict):
+            continue
+        if request.get("status") != "requested":
+            continue
+        request["repair_session_ref"] = repair_session_ref
+        request["import_preview_ref"] = import_preview_ref
+    return state
 
 
 def product_repair_output_record(path: Path) -> dict[str, Any]:
@@ -15591,6 +15677,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--specgraph-dir",
         default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
         help="Local SpecGraph checkout that owns the request gate make target.",
+    )
+    product_repair_request_gate_parser.add_argument(
+        "--run-dir",
+        help=(
+            "Optional SpecGraph run directory where the SpecSpace request state "
+            "should be copied and rebased before invoking the gate."
+        ),
     )
     product_repair_request_gate_parser.add_argument(
         "--rerun-request",

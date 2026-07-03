@@ -3965,16 +3965,17 @@ workspaces:
                                 "requested_action": "prepare_repair_draft_rerun",
                                 "workspace_id": "idea-alpha-workspace",
                                 "candidate_id": "idea-alpha",
-                                "repair_session_ref": "runs/idea_to_spec_repair_session.json",
+                                "repair_session_ref": "runs/stale_repair_session.json",
                                 "draft_state_ref": "specspace-state://idea_to_spec_repair_drafts.json",
-                                "import_preview_ref": "runs/specspace_repair_draft_import_preview.json",
+                                "import_preview_ref": "runs/stale_import_preview.json",
                             }
                         ],
                     }
                 ),
                 encoding="utf-8",
             )
-            gate_path = runs_dir / "specspace_repair_rerun_request_gate.json"
+            run_dir = runs_dir / "idea-alpha"
+            gate_path = run_dir / "specspace_repair_rerun_request_gate.json"
             report_path = (
                 runs_dir
                 / "platform_product_repair_rerun_request_gate_execution_report.json"
@@ -3985,6 +3986,8 @@ workspaces:
                 "request-gate",
                 "--specgraph-dir",
                 str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
                 "--rerun-request",
                 "runs/idea_to_spec_repair_rerun_requests.json",
                 "--import-preview",
@@ -3993,6 +3996,8 @@ workspaces:
                 "runs/idea_to_spec_repair_session.json",
                 "--workspace-id",
                 "idea-alpha-workspace",
+                "--output-gate",
+                "runs/idea-alpha/specspace_repair_rerun_request_gate.json",
                 "--output",
                 str(report_path),
                 "--format",
@@ -4007,6 +4012,20 @@ workspaces:
             )
             self.assertTrue(payload["ok"])
             self.assertTrue(gate_path.is_file())
+            handoff_state = json.loads(
+                (run_dir / "idea_to_spec_repair_rerun_requests.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                handoff_state["requests"][0]["repair_session_ref"],
+                "runs/idea_to_spec_repair_session.json",
+            )
+            self.assertEqual(
+                handoff_state["requests"][0]["import_preview_ref"],
+                "runs/specspace_repair_draft_import_preview.json",
+            )
+            self.assertTrue(payload["request_state_copied_to_run_dir"])
             self.assertEqual(
                 payload["target_make"]["target"],
                 "specspace-repair-rerun-request-gate",
