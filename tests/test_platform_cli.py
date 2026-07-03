@@ -3530,6 +3530,52 @@ workspaces:
             "runs/repaired_candidate_promotion_handoff_report.json",
         )
 
+    def test_graph_repository_plan_accepts_isolated_repaired_source_refs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            runs_dir = specgraph_dir / "runs" / "ui-started-smoke"
+            runs_dir.mkdir(parents=True)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                candidate_ready=False,
+                repair_session_ready_for_candidate_approval=False,
+            )
+            self.write_graph_repository_repaired_run_artifacts(runs_dir)
+            active_ref = "runs/ui-started-smoke/repaired_active_idea_to_spec_candidate.json"
+            session_ref = "runs/ui-started-smoke/repaired_idea_to_spec_repair_session.json"
+            gate_ref = "runs/ui-started-smoke/repaired_idea_to_spec_promotion_gate.json"
+            repair_session_path = runs_dir / "repaired_idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            repair_session["source_artifacts"]["active_candidate"]["source_ref"] = active_ref
+            repair_session["source_artifacts"]["promotion_gate"]["source_ref"] = gate_ref
+            repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
+            handoff_path = runs_dir / "repaired_candidate_promotion_handoff_report.json"
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            handoff["output_artifacts"]["repaired_active_candidate"]["source_ref"] = active_ref
+            handoff["output_artifacts"]["repaired_repair_session"]["source_ref"] = session_ref
+            handoff["output_artifacts"]["repaired_promotion_gate"]["source_ref"] = gate_ref
+            handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                str(Path("graph-repository-service.example.json").resolve()),
+                "--runs-dir",
+                str(runs_dir),
+                "--repaired-handoff",
+                str(handoff_path),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["ready_for_branch"])
+
     def test_graph_repository_plan_prefers_runs_dir_repaired_handoff_path(
         self,
     ) -> None:

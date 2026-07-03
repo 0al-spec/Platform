@@ -3814,6 +3814,17 @@ def graph_repository_repaired_source_ref(
     return f"runs/{filename}"
 
 
+def graph_repository_repaired_source_ref_aliases(
+    *,
+    runs_dir: Path,
+    filename: str,
+) -> tuple[str, ...]:
+    refs = {graph_repository_repaired_source_ref(runs_dir=runs_dir, filename=filename)}
+    if runs_dir.parent.name == "runs":
+        refs.add(f"runs/{runs_dir.name}/{filename}")
+    return tuple(sorted(refs))
+
+
 def graph_repository_operation(
     *,
     name: str,
@@ -4160,21 +4171,21 @@ def build_graph_repository_execution_plan(
                     repaired_repair_session,
                     subject="runs.repaired_idea_to_spec_repair_session.json",
                     expected_source_refs={
-                        "active_candidate": (
-                            repaired_source_refs.get(
-                                "repaired_active_candidate",
+                        "active_candidate": graph_repository_repaired_source_ref_aliases(
+                            runs_dir=runs_dir,
+                            filename=Path(
                                 PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
                                     "repaired_active_candidate"
-                                ],
-                            ),
+                                ]
+                            ).name,
                         ),
-                        "promotion_gate": (
-                            repaired_source_refs.get(
-                                "repaired_promotion_gate",
+                        "promotion_gate": graph_repository_repaired_source_ref_aliases(
+                            runs_dir=runs_dir,
+                            filename=Path(
                                 PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
                                     "repaired_promotion_gate"
-                                ],
-                            ),
+                                ]
+                            ).name,
                         ),
                     },
                 )
@@ -4183,29 +4194,29 @@ def build_graph_repository_execution_plan(
             diagnostics.extend(
                 product_candidate_approval_repaired_handoff_diagnostics(
                     repaired_payloads["repaired_handoff"],
-                    expected_active_candidate_refs=(
-                        repaired_source_refs.get(
-                            "repaired_active_candidate",
+                    expected_active_candidate_refs=graph_repository_repaired_source_ref_aliases(
+                        runs_dir=runs_dir,
+                        filename=Path(
                             PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
                                 "repaired_active_candidate"
-                            ],
-                        ),
+                            ]
+                        ).name,
                     ),
-                    expected_repair_session_refs=(
-                        repaired_source_refs.get(
-                            "repaired_repair_session",
+                    expected_repair_session_refs=graph_repository_repaired_source_ref_aliases(
+                        runs_dir=runs_dir,
+                        filename=Path(
                             PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
                                 "repaired_repair_session"
-                            ],
-                        ),
+                            ]
+                        ).name,
                     ),
-                    expected_promotion_gate_refs=(
-                        repaired_source_refs.get(
-                            "repaired_promotion_gate",
+                    expected_promotion_gate_refs=graph_repository_repaired_source_ref_aliases(
+                        runs_dir=runs_dir,
+                        filename=Path(
                             PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS[
                                 "repaired_promotion_gate"
-                            ],
-                        ),
+                            ]
+                        ).name,
                     ),
                     require_active_candidate_ref=True,
                 )
