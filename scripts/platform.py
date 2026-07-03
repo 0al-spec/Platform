@@ -11158,7 +11158,18 @@ def graph_repository_commit_preflight_diagnostics(
     for diagnostic in graph_repository_relative_paths_diagnostics(paths):
         diagnostics.append(diagnostic)
     for index, raw_path in enumerate(paths):
-        if (worktree_dir / raw_path).exists():
+        candidate_path = worktree_dir / raw_path
+        if candidate_path.exists():
+            if candidate_path.is_file():
+                continue
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_commit_path_not_file",
+                    subject=f"path[{index}]",
+                    message="commit path must name an explicit file, not a directory",
+                )
+            )
             continue
         diagnostics.append(
             Diagnostic(

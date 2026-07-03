@@ -8106,6 +8106,7 @@ workspaces:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             workspace_dir = self.prepare_graph_repository_worktree(tmp_root)
+            (workspace_dir / ".gitignore").write_text("runs/\n", encoding="utf-8")
             ignored_path = (
                 workspace_dir
                 / "runs"
@@ -8117,6 +8118,12 @@ workspaces:
                 "id: CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY\n",
                 encoding="utf-8",
             )
+            check_ignore = self.run_git(
+                workspace_dir,
+                "check-ignore",
+                "runs/repaired_materialized_candidate_specs/CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY.yaml",
+            )
+            self.assertEqual(check_ignore.returncode, 0, check_ignore.stderr)
             prepare_report = (
                 workspace_dir
                 / ".platform"
@@ -8161,6 +8168,44 @@ workspaces:
                 "runs/repaired_materialized_candidate_specs/CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY.yaml",
                 committed_files,
             )
+
+    def test_graph_repository_commit_worktree_rejects_directory_pathspec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            workspace_dir = self.prepare_graph_repository_worktree(tmp_root)
+            candidate_dir = workspace_dir / "runs" / "repaired_materialized_candidate_specs"
+            candidate_dir.mkdir(parents=True)
+            (candidate_dir / "CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY.yaml").write_text(
+                "id: CANDIDATE-CANDIDATE-SPEC-PRODUCT-BOUNDARY\n",
+                encoding="utf-8",
+            )
+            prepare_report = (
+                workspace_dir
+                / ".platform"
+                / "graph_repository_worktree_prepare_report.json"
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "commit-worktree",
+                "--prepare-report",
+                str(prepare_report),
+                "--worktree-dir",
+                str(workspace_dir),
+                "--path",
+                "runs/repaired_materialized_candidate_specs",
+                "--message",
+                "Add ignored candidate specs",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1, result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn("graph_repository_commit_path_not_file", codes)
+            self.assertEqual(payload["git_commands_executed"], [])
 
     def test_graph_repository_commit_worktree_rejects_outside_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
