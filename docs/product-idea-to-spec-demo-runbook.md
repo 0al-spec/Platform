@@ -728,30 +728,61 @@ the normal SpecGraph `.gitignore`, so `graph-repository commit-worktree` must
 force-add only the explicit approved paths. It must not broaden staging to
 `git add -A`.
 
-Known follow-up issues from this smoke:
+Follow-up fixes after this smoke resolved the stale readiness and projection
+issues: SpecGraph no longer reports resolved approval/promotion blockers as
+active explainers, and SpecSpace now advances the product workspace lifecycle
+from approval execution evidence through promotion review status instead of
+falling back to stale repair-session blockers.
 
-- **SpecSpace project-local ontology projection split.** Candidate Overview and
-  Idea Maturity correctly use the project-local decision effect report, but the
-  separate `project_local_ontology_review` workspace section still reflects the
-  raw review lane and can show the same terms as unreviewed. SpecSpace should
-  either show raw lane and effective review as distinct states or prefer the
-  effect report when presenting completion status.
-- **Stale readiness explainer after approval.** After
-  `candidate_approval_decision.json` is materialized and promotion dry-run has
-  executed, `idea_maturity_metrics_report.json` correctly reports
-  `candidate_approval_decision_state: materialized` and
-  `platform_promotion_state: dry_run`, but still includes the old
-  `candidate_approval_decision_missing` readiness explainer. Candidate Overview
-  inherits that stale next action. SpecGraph should suppress resolved
-  explainers or attach an explicit `resolved` state.
-- **SpecSpace approval readiness projection.** The workspace API can still show
-  `candidate_approval_decision_ready: false` after the approval decision exists,
-  while the controlled promotion section reads the product promotion execution
-  artifacts. SpecSpace should reconcile approval readiness with the materialized
-  approval execution/decision artifacts.
-- **Git dry-run summary wording.** The product promotion execution report now
-  distinguishes logical dry-run preparation from a real worktree creation:
-  `summary.worktree_prepare_dry_run: true` and
-  `summary.physical_worktree_created: false` for dry-run promotion execution.
-  `summary.worktree_prepared` is reserved for a physical worktree created by a
-  non-dry-run Git Service execution.
+## Full Git Lifecycle Smoke Status
+
+The first full Team Decision Log lifecycle smoke started from the non-dry-run
+promotion review and completed only after the review was merged, review status
+was observed, and the public-safe read-model was published.
+
+Observed sequence:
+
+```text
+candidate overview
+  -> repaired handoff
+  -> candidate approval materialized
+  -> graph repository promotion request
+  -> product-candidate-promotion execute
+  -> SpecGraph review PR #662
+  -> operator review merge
+  -> product-candidate-promotion review-status
+  -> product-candidate-promotion publish-read-model
+  -> SpecSpace published lifecycle visibility
+```
+
+Observed checkpoints:
+
+```text
+review_url: https://github.com/0al-spec/SpecGraph/pull/662
+review_state: merged
+review_merge_commit: 04c59afa294e59356bd65ab81ffb01bf6333fb15
+product_candidate_promotion_review_status_report.status:
+  ready_for_read_model_publication
+product_candidate_promotion_review_status_report.review_merged: true
+product_candidate_promotion_read_model_publication_report.status: published
+product_candidate_promotion_read_model_publication_report.read_model_published:
+  true
+SpecSpace lifecycle state: published result visible
+```
+
+This is the first proven end-to-end product path:
+
+```text
+idea-to-spec candidate
+  -> controlled repair and project-local ontology review
+  -> Candidate Overview
+  -> candidate approval
+  -> GitHub review PR
+  -> merged review
+  -> public-safe read-model
+```
+
+The authority split remains unchanged. SpecSpace never writes to Git, mutates
+canonical specs, writes Ontology packages, or accepts ontology terms. Platform
+owns the Git Service operations, and read-model publication is allowed only after
+the review status confirms a merged review.
