@@ -1409,6 +1409,10 @@ class PlatformCliTests(unittest.TestCase):
 
     def write_product_repair_makefile(self, specgraph_dir: Path) -> None:
         makefile = """\
+specspace-repair-draft-import-preview:
+\t@mkdir -p $$(dirname "$(SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT)")
+\t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_import_preview","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-import-preview.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repair_draft_import_preview_ready","blocked_by":[]},"summary":{"status":"repair_draft_import_preview_ready","accepted_for_rerun_count":1},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_import_into_specgraph":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > "$(SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT)"
+
 product-workspace-requested-repair-draft-rerun:
 \t@mkdir -p runs
 \t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_rerun_report","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-rerun.v0.1","readiness":{"ready":true,"review_state":"repair_draft_rerun_ready"},"summary":{"status":"ready"}}' > runs/specspace_repair_draft_rerun_report.json
@@ -3820,6 +3824,110 @@ workspaces:
             )
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
             self.assertEqual(payload["summary"]["workspace_id"], "idea-alpha-workspace")
+
+    def test_product_repair_rerun_import_preview_rebases_draft_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            repair_session_path = specgraph_dir / "runs" / "idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            repair_session["session"]["session_id"] = "repair-session.idea-alpha"
+            repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
+            draft_state = Path(tmp_dir) / "specspace-state" / "idea_to_spec_repair_drafts.json"
+            draft_state.parent.mkdir(parents=True)
+            draft_state.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "specspace_idea_to_spec_repair_draft_state",
+                        "schema_version": 1,
+                        "state_owner": "SpecSpace",
+                        "canonical_mutations_allowed": False,
+                        "tracked_artifacts_written": False,
+                        "source_artifacts": {
+                            "idea_to_spec_repair_session": "runs/stale_repair_session.json"
+                        },
+                        "drafts": [
+                            {
+                                "workspace_id": "idea-alpha-workspace",
+                                "candidate_id": "idea-alpha",
+                                "repair_session_ref": "runs/stale_repair_session.json",
+                                "source_artifact": "runs/stale_repair_session.json",
+                                "request_id": "clarification.repair.ontology-gap",
+                                "allowed_action": "propose_project_local_term",
+                                "answer_value": {"terms": ["Decision Owner"]},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            report_path = (
+                specgraph_dir
+                / "runs"
+                / "platform_product_repair_draft_import_preview_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "import-preview",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--draft-state",
+                str(draft_state),
+                "--repair-session",
+                "runs/idea_to_spec_repair_session.json",
+                "--clarification-requests",
+                "runs/idea_to_spec_clarification_requests.json",
+                "--workspace-id",
+                "idea-alpha-workspace",
+                "--output",
+                str(report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            persisted = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload, persisted)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_repair_draft_import_preview_execution_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(
+                payload["target_make"]["target"],
+                "specspace-repair-draft-import-preview",
+            )
+            self.assertTrue(payload["draft_state_copied_to_run_dir"])
+            handoff_state = json.loads(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "idea-alpha"
+                    / "idea_to_spec_repair_drafts.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                handoff_state["source_artifacts"]["idea_to_spec_repair_session"],
+                "runs/idea_to_spec_repair_session.json",
+            )
+            self.assertEqual(
+                handoff_state["drafts"][0]["repair_session_ref"],
+                "runs/idea_to_spec_repair_session.json",
+            )
+            self.assertEqual(
+                handoff_state["drafts"][0]["repair_session_id"],
+                "repair-session.idea-alpha",
+            )
+            self.assertTrue(payload["output_artifacts"]["import_preview"]["ready"])
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
 
     def test_product_real_idea_continuation_execute_runs_specgraph_target(
         self,

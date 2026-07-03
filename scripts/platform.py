@@ -152,6 +152,10 @@ PRODUCT_REPAIR_RERUN_REPORT_KIND = "specspace_repair_draft_rerun_report"
 PRODUCT_REPAIR_RERUN_REPORT_CONTRACT_REF = (
     "specgraph.idea-to-spec.specspace-repair-draft-rerun.v0.1"
 )
+PRODUCT_REPAIR_DRAFT_IMPORT_EXECUTION_REPORT_KIND = (
+    "platform_product_repair_draft_import_preview_execution_report"
+)
+PRODUCT_REPAIR_DRAFT_IMPORT_MAKE_TARGET = "specspace-repair-draft-import-preview"
 PRODUCT_REPAIR_RERUN_MAKE_TARGET = "product-workspace-requested-repair-draft-rerun"
 PRODUCT_REPAIR_RERUN_REPAIRED_HANDOFF_MAKE_TARGET = (
     "product-workspace-repaired-promotion-handoff"
@@ -5340,6 +5344,297 @@ def product_repair_rerun_plan(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
+def product_repair_draft_import_preview(args: argparse.Namespace) -> int:
+    specgraph_dir = Path(args.specgraph_dir).resolve()
+    diagnostics = product_repair_specgraph_checkout_diagnostics(
+        specgraph_dir,
+        code_prefix="product_repair_draft_import",
+        subject="specgraph_dir",
+    )
+    raw_run_dir = Path(args.run_dir)
+    run_dir = (
+        raw_run_dir.resolve()
+        if raw_run_dir.is_absolute()
+        else (specgraph_dir / raw_run_dir).resolve()
+    )
+    try:
+        run_dir_ref = run_dir.relative_to(specgraph_dir).as_posix()
+    except ValueError:
+        run_dir_ref = str(raw_run_dir)
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_draft_import_run_dir_outside_specgraph",
+                subject="run_dir",
+                message="run-dir must resolve inside the SpecGraph checkout",
+            )
+        )
+    if run_dir_ref in {"", "."}:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_draft_import_run_dir_invalid",
+                subject="run_dir",
+                message="run-dir must name a dedicated child directory",
+            )
+        )
+
+    draft_source = input_path_arg_or_existing(args.draft_state, base_dir=specgraph_dir)
+    repair_session_path = input_path_arg_or_existing(
+        args.repair_session,
+        base_dir=specgraph_dir,
+    )
+    clarification_requests_path = input_path_arg_or_existing(
+        args.clarification_requests,
+        base_dir=specgraph_dir,
+    )
+    output_path = path_arg_or_default(
+        args.output_preview,
+        base_dir=specgraph_dir,
+        default_rel=f"{run_dir_ref}/specspace_repair_draft_import_preview.json",
+    )
+    report_path = (
+        Path(args.output)
+        if args.output
+        else specgraph_dir
+        / "runs"
+        / "platform_product_repair_draft_import_preview_execution_report.json"
+    )
+
+    if not args.dry_run and not draft_source.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_draft_import_draft_state_missing",
+                subject="draft_state",
+                message="SpecSpace repair draft state file is required",
+            )
+        )
+    if not args.dry_run and not repair_session_path.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_draft_import_repair_session_missing",
+                subject="repair_session",
+                message="repair session journal is required",
+            )
+        )
+    if not args.dry_run and not clarification_requests_path.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_draft_import_clarification_requests_missing",
+                subject="clarification_requests",
+                message="clarification requests artifact is required",
+            )
+        )
+
+    repair_session: dict[str, Any] = {}
+    if repair_session_path.is_file():
+        repair_session = load_json_mapping(
+            repair_session_path,
+            label="repair session journal",
+        )
+        diagnostics.extend(
+            graph_repository_repair_session_diagnostics(
+                repair_session,
+                subject="repair_session",
+            )
+        )
+
+    try:
+        repair_session_ref = repair_session_path.resolve().relative_to(
+            specgraph_dir
+        ).as_posix()
+    except ValueError:
+        repair_session_ref = str(repair_session_path)
+    try:
+        clarification_requests_ref = clarification_requests_path.resolve().relative_to(
+            specgraph_dir
+        ).as_posix()
+    except ValueError:
+        clarification_requests_ref = str(clarification_requests_path)
+    try:
+        output_ref = output_path.resolve().relative_to(specgraph_dir).as_posix()
+    except ValueError:
+        output_ref = str(output_path)
+    try:
+        draft_state_source_ref = draft_source.resolve().relative_to(specgraph_dir).as_posix()
+    except ValueError:
+        draft_state_source_ref = str(draft_source)
+
+    draft_handoff = run_dir / "idea_to_spec_repair_drafts.json"
+    draft_state_copied_to_run_dir = False
+    if not diagnostics and not args.dry_run:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        handoff_state = product_repair_draft_import_handoff_state(
+            source=draft_source,
+            repair_session=repair_session,
+            repair_session_ref=repair_session_ref,
+        )
+        draft_handoff.write_text(
+            json.dumps(handoff_state, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        draft_state_copied_to_run_dir = True
+
+    command = product_repair_draft_import_make_command(
+        draft_state_ref=f"{run_dir_ref}/idea_to_spec_repair_drafts.json",
+        repair_session_ref=repair_session_ref,
+        clarification_requests_ref=clarification_requests_ref,
+        output_ref=output_ref,
+        workspace_id=args.workspace_id,
+        python=args.python,
+    )
+    command_result: dict[str, Any] | None = None
+    started_at = utc_now_iso()
+    if not diagnostics and not args.dry_run:
+        completed = subprocess.run(
+            command,
+            cwd=specgraph_dir,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": completed.returncode,
+            "stdout": completed.stdout[-4000:],
+            "stderr": completed.stderr[-4000:],
+        }
+        if completed.returncode != 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_draft_import_make_failed",
+                    subject=PRODUCT_REPAIR_DRAFT_IMPORT_MAKE_TARGET,
+                    message=(
+                        "SpecGraph repair draft import preview target failed "
+                        f"with exit code {completed.returncode}"
+                    ),
+                )
+            )
+    elif args.dry_run:
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "dry_run": True,
+        }
+
+    output_record = product_repair_output_record(output_path)
+    if not diagnostics and not args.dry_run:
+        diagnostics.extend(product_repair_draft_import_output_diagnostics(output_record))
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and (args.dry_run or command_result is not None)
+    operation_status = "failed"
+    operation_reason = "execution_failed"
+    if args.dry_run:
+        operation_status = "dry_run"
+        operation_reason = "dry_run"
+    elif command_result is None:
+        operation_status = "skipped"
+        operation_reason = "execution_not_started"
+    elif command_result.get("returncode") == 0:
+        operation_status = "succeeded"
+        operation_reason = "SpecGraph repair draft import preview target executed"
+    variables = {
+        "SPECSPACE_REPAIR_DRAFT_IMPORT_DRAFTS": (
+            f"{run_dir_ref}/idea_to_spec_repair_drafts.json"
+        ),
+        "SPECSPACE_REPAIR_DRAFT_IMPORT_REPAIR_SESSION": repair_session_ref,
+        "SPECSPACE_REPAIR_DRAFT_IMPORT_CLARIFICATION_REQUESTS": (
+            clarification_requests_ref
+        ),
+        "SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT": output_ref,
+    }
+    if args.workspace_id:
+        variables["SPECSPACE_REPAIR_DRAFT_IMPORT_WORKSPACE_ID"] = args.workspace_id
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_REPAIR_DRAFT_IMPORT_EXECUTION_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "started_at": started_at,
+        "specgraph_dir": str(specgraph_dir),
+        "run_dir": run_dir_ref,
+        "draft_state_source_ref": draft_state_source_ref,
+        "draft_state_handoff_ref": f"{run_dir_ref}/idea_to_spec_repair_drafts.json",
+        "draft_state_copied_to_run_dir": draft_state_copied_to_run_dir,
+        "repair_session_ref": repair_session_ref,
+        "clarification_requests_ref": clarification_requests_ref,
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "authority_boundary": {
+            "executes_specgraph_make_target": not args.dry_run
+            and command_result is not None,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "accepts_ontology_terms": False,
+            "mutates_canonical_specs": False,
+            "publishes_private_artifacts": False,
+        },
+        "target_make": {
+            "target": PRODUCT_REPAIR_DRAFT_IMPORT_MAKE_TARGET,
+            "cwd": str(specgraph_dir),
+            "variables": variables,
+        },
+        "command": command,
+        "command_result": command_result,
+        "operations": [
+            {
+                "name": "execute_specgraph_repair_draft_import_preview",
+                "status": operation_status,
+                "reason": operation_reason,
+                "evidence": [PRODUCT_REPAIR_DRAFT_IMPORT_MAKE_TARGET],
+            }
+        ],
+        "output_artifacts": {"import_preview": output_record},
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "completed" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
+            "error_count": error_count,
+            "import_preview_digest": output_record.get("sha256"),
+            "import_preview_status": output_record.get("status"),
+        },
+    }
+    if not args.no_write_report:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": report["summary"]["status"],
+                        "run_dir": run_dir_ref,
+                        "import_preview": output_record.get("status") or "unknown",
+                    }
+                ],
+                [
+                    ("status", "STATUS"),
+                    ("run_dir", "RUN DIR"),
+                    ("import_preview", "IMPORT PREVIEW"),
+                ],
+            )
+        )
+    return 0 if ok else 1
+
+
 def product_repair_plan_diagnostics(plan: dict[str, Any]) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     if plan.get("artifact_kind") != PRODUCT_REPAIR_RERUN_PLAN_KIND:
@@ -5486,6 +5781,30 @@ def real_idea_entry_intake_make_command(
     return command
 
 
+def product_repair_draft_import_make_command(
+    *,
+    draft_state_ref: str,
+    repair_session_ref: str,
+    clarification_requests_ref: str,
+    output_ref: str,
+    workspace_id: str | None = None,
+    python: str | None = None,
+) -> list[str]:
+    command = [
+        "make",
+        PRODUCT_REPAIR_DRAFT_IMPORT_MAKE_TARGET,
+        f"SPECSPACE_REPAIR_DRAFT_IMPORT_DRAFTS={draft_state_ref}",
+        f"SPECSPACE_REPAIR_DRAFT_IMPORT_REPAIR_SESSION={repair_session_ref}",
+        f"SPECSPACE_REPAIR_DRAFT_IMPORT_CLARIFICATION_REQUESTS={clarification_requests_ref}",
+        f"SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT={output_ref}",
+    ]
+    if workspace_id:
+        command.append(f"SPECSPACE_REPAIR_DRAFT_IMPORT_WORKSPACE_ID={workspace_id}")
+    if python:
+        command.append(f"PYTHON={python}")
+    return command
+
+
 def product_repair_output_record(path: Path) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if path.is_file():
@@ -5509,6 +5828,88 @@ def product_repair_output_record(path: Path) -> dict[str, Any]:
         "authority_boundary": nested_mapping(payload, "authority_boundary"),
         "sha256": file_sha256(path),
     }
+
+
+def product_repair_draft_import_handoff_state(
+    *,
+    source: Path,
+    repair_session: dict[str, Any],
+    repair_session_ref: str,
+) -> dict[str, Any]:
+    state = load_json_mapping(source, label="SpecSpace repair draft state")
+    session = nested_mapping(repair_session, "session")
+    session_id = session.get("session_id")
+    candidate_id = session.get("candidate_id")
+    source_artifacts = nested_mapping(state, "source_artifacts")
+    state["source_artifacts"] = {
+        **source_artifacts,
+        "idea_to_spec_repair_session": repair_session_ref,
+    }
+    for draft in state.get("drafts", []):
+        if not isinstance(draft, dict):
+            continue
+        draft["repair_session_ref"] = repair_session_ref
+        draft["source_artifact"] = repair_session_ref
+        if isinstance(session_id, str) and session_id:
+            draft["repair_session_id"] = session_id
+        if isinstance(candidate_id, str) and candidate_id:
+            draft["candidate_id"] = candidate_id
+    return state
+
+
+def product_repair_draft_import_output_diagnostics(
+    output_record: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if output_record.get("present") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_draft_import_output_missing",
+                subject="outputs.import_preview",
+                message="SpecGraph repair draft import preview target must produce output",
+            )
+        )
+        return diagnostics
+    if output_record.get("artifact_kind") != PRODUCT_REPAIR_RERUN_IMPORT_PREVIEW_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_draft_import_output_kind_mismatch",
+                subject="outputs.import_preview.artifact_kind",
+                message=f"expected {PRODUCT_REPAIR_RERUN_IMPORT_PREVIEW_KIND}",
+            )
+        )
+    if output_record.get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_draft_import_output_not_ready",
+                subject="outputs.import_preview.readiness.ready",
+                message="SpecGraph repair draft import preview output must be ready",
+            )
+        )
+    for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
+        if output_record.get(field) is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_draft_import_output_authority_expanded",
+                    subject=f"outputs.import_preview.{field}",
+                    message=f"import preview output must not set {field}=true",
+                )
+            )
+    for field, value in sorted(nested_mapping(output_record, "authority_boundary").items()):
+        if value is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_draft_import_output_authority_expanded",
+                    subject=f"outputs.import_preview.authority_boundary.{field}",
+                    message="import preview output must not expand authority",
+                )
+            )
+    return diagnostics
 
 
 def real_idea_answer_continuation_output_records(
@@ -14847,6 +15248,75 @@ def build_parser() -> argparse.ArgumentParser:
         dest="product_repair_rerun_command",
         required=True,
     )
+    product_repair_import_parser = product_repair_subcommands.add_parser(
+        "import-preview",
+        help=(
+            "Run the fixed SpecGraph repair draft import preview target for "
+            "SpecSpace-owned repair draft state."
+        ),
+    )
+    product_repair_import_parser.add_argument(
+        "--specgraph-dir",
+        default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
+        help="Local SpecGraph checkout that owns the import preview make target.",
+    )
+    product_repair_import_parser.add_argument(
+        "--run-dir",
+        default="runs/real_idea_smoke",
+        help=(
+            "SpecGraph run directory where the rebased repair draft handoff "
+            "state and import preview should be written."
+        ),
+    )
+    product_repair_import_parser.add_argument(
+        "--draft-state",
+        default="specspace-state/idea_to_spec_repair_drafts.json",
+        help="SpecSpace-owned repair draft state file.",
+    )
+    product_repair_import_parser.add_argument(
+        "--repair-session",
+        default="runs/idea_to_spec_repair_session.json",
+        help="Repair session journal used to rebase the draft state.",
+    )
+    product_repair_import_parser.add_argument(
+        "--clarification-requests",
+        default="runs/idea_to_spec_clarification_requests.json",
+        help="Clarification requests artifact for the repair session.",
+    )
+    product_repair_import_parser.add_argument(
+        "--workspace-id",
+        help="Optional workspace id passed to SpecGraph import preview.",
+    )
+    product_repair_import_parser.add_argument(
+        "--python",
+        help="Optional PYTHON make variable passed to SpecGraph.",
+    )
+    product_repair_import_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the make invocation without executing it.",
+    )
+    product_repair_import_parser.add_argument(
+        "--output-preview",
+        help="Optional path where the SpecGraph import preview should be written.",
+    )
+    product_repair_import_parser.add_argument(
+        "--output",
+        help="Optional path where the Platform execution report should be written.",
+    )
+    product_repair_import_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the Platform execution report.",
+    )
+    product_repair_import_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_repair_import_parser.set_defaults(func=product_repair_draft_import_preview)
+
     product_repair_plan_parser = product_repair_subcommands.add_parser(
         "plan",
         help="Build a controlled execution plan for a SpecSpace repair rerun request.",
