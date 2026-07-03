@@ -501,7 +501,7 @@ Authority boundaries remain unchanged:
 - Git Service dry-run does not create a worktree, commit, pull request, or read
   model publication.
 
-## Real Idea Answer Continuation Handoff
+## Real Idea Entry and Answer Continuation Handoffs
 
 After SpecSpace stores a raw idea entry request, Platform can hand it to
 SpecGraph without giving the browser execution authority:
@@ -516,7 +516,9 @@ scripts/platform.py product-real-idea-intake execute \
 ```
 
 If the entry request state lives outside the SpecGraph checkout, Platform copies
-it into the selected run directory as the handoff input before running the fixed
+it into the selected run directory as the handoff input. If it already lives
+inside the SpecGraph checkout, Platform passes the existing repo-relative ref
+without copying it into the run directory. In both cases Platform runs the fixed
 SpecGraph target:
 
 ```text

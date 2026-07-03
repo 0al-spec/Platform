@@ -231,6 +231,7 @@ REAL_IDEA_ENTRY_INTAKE_MAKE_TARGET = "real-idea-intake-from-entry-request"
 REAL_IDEA_ENTRY_INTAKE_OUTPUTS = {
     "entry_import_preview": "specspace_real_idea_entry_request_import_preview.json",
     "entry_intake_report": "real_idea_entry_request_intake_report.json",
+    "raw_input": "local_operator_user_idea_raw_input.json",
     "intake_session": "user_idea_intake_session.json",
     "intake_source": "user_idea_intake_source.json",
     "interview_report": "user_idea_intake_interview_report.json",
@@ -240,7 +241,9 @@ REAL_IDEA_ENTRY_INTAKE_OUTPUTS = {
 REAL_IDEA_ENTRY_INTAKE_EXPECTED_KINDS = {
     "entry_import_preview": "specspace_real_idea_entry_request_import_preview",
     "entry_intake_report": "real_idea_entry_request_intake_report",
+    "raw_input": "user_idea_raw_input",
     "intake_session": "user_idea_intake_session",
+    "intake_source": "user_idea_intake_source",
     "interview_report": "user_idea_intake_interview_report",
     "clarification_requests": "idea_to_spec_clarification_requests",
     "answer_template": "real_idea_answer_template",
@@ -5500,6 +5503,7 @@ def product_repair_output_record(path: Path) -> dict[str, Any]:
         or nested_mapping(payload, "readiness").get("review_state"),
         "canonical_mutations_allowed": payload.get("canonical_mutations_allowed"),
         "tracked_artifacts_written": payload.get("tracked_artifacts_written"),
+        "local_only": payload.get("local_only"),
         "authority_boundary": nested_mapping(payload, "authority_boundary"),
         "sha256": file_sha256(path),
     }
@@ -5588,9 +5592,14 @@ def real_idea_entry_intake_output_diagnostics(
     output_records: dict[str, dict[str, Any]],
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
+    intake_session_ready = (
+        output_records.get("intake_session", {}).get("ready") is True
+    )
     for key, expected_kind in REAL_IDEA_ENTRY_INTAKE_EXPECTED_KINDS.items():
         record = output_records.get(key, {})
         if record.get("present") is not True:
+            if key == "intake_source" and not intake_session_ready:
+                continue
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
@@ -5618,6 +5627,18 @@ def real_idea_entry_intake_output_diagnostics(
                     message=f"SpecGraph entry intake output {key} must be ready",
                 )
             )
+        if key == "raw_input" and record.get("local_only") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_entry_intake_raw_input_not_local_only",
+                    subject="outputs.raw_input.local_only",
+                    message="SpecGraph entry intake raw input must remain local_only",
+                )
+            )
+    for key, record in sorted(output_records.items()):
+        if record.get("present") is not True:
+            continue
         for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
             if record.get(field) is True:
                 diagnostics.append(
@@ -6256,13 +6277,23 @@ def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
             )
         )
     entry_requests_ref = f"{run_dir_ref}/real_idea_entry_requests.json"
+    entry_requests_copied_to_run_dir = False
+    entry_source_inside_specgraph = False
     try:
-        source_ref_for_command = entry_source.relative_to(specgraph_dir).as_posix()
+        source_ref_for_command = entry_source.resolve().relative_to(specgraph_dir).as_posix()
+        entry_source_inside_specgraph = True
     except ValueError:
         source_ref_for_command = entry_requests_ref
-    if not diagnostics and entry_source.resolve() != entry_handoff.resolve() and not args.dry_run:
+    if (
+        not diagnostics
+        and not entry_source_inside_specgraph
+        and entry_source.resolve() != entry_handoff.resolve()
+        and not args.dry_run
+    ):
         run_dir.mkdir(parents=True, exist_ok=True)
         entry_handoff.write_bytes(entry_source.read_bytes())
+        entry_requests_copied_to_run_dir = True
+        source_ref_for_command = entry_requests_ref
     if not diagnostics and entry_source.resolve() == entry_handoff.resolve():
         source_ref_for_command = entry_requests_ref
     output_path = (
@@ -6351,7 +6382,8 @@ def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
         "specgraph_dir": str(specgraph_dir),
         "run_dir": run_dir_ref,
         "entry_requests_source_ref": str(entry_source),
-        "entry_requests_handoff_ref": entry_requests_ref,
+        "entry_requests_handoff_ref": source_ref_for_command,
+        "entry_requests_copied_to_run_dir": entry_requests_copied_to_run_dir,
         "entry_requests_source_digest": file_sha256(entry_source)
         if entry_source.is_file()
         else None,
