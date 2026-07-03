@@ -3890,6 +3890,22 @@ workspaces:
                     / "idea_to_spec_intake_clarification_answers.json"
                 ).exists()
             )
+            handoff_state = json.loads(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "idea-alpha"
+                    / "idea_to_spec_intake_clarification_answers.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                handoff_state["source_artifacts"]["intake_clarification_requests"],
+                "runs/idea-alpha/idea_intake_clarification_requests.json",
+            )
+            self.assertEqual(
+                handoff_state["source_artifacts"]["real_idea_answer_template"],
+                "runs/idea-alpha/real_idea_answer_template.json",
+            )
             self.assertEqual(payload["command_result"]["returncode"], 0)
             self.assertTrue(payload["output_artifacts"]["import_preview"]["ready"])
             self.assertTrue(

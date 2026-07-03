@@ -5521,6 +5521,27 @@ def real_idea_answer_continuation_output_records(
     }
 
 
+def real_idea_answer_continuation_handoff_state(
+    *,
+    source: Path,
+    run_dir_ref: str,
+) -> dict[str, Any]:
+    state = load_json_mapping(source, label="real idea answer state")
+    requests_ref = f"{run_dir_ref}/idea_intake_clarification_requests.json"
+    template_ref = f"{run_dir_ref}/real_idea_answer_template.json"
+    source_artifacts = nested_mapping(state, "source_artifacts")
+    state["source_artifacts"] = {
+        **source_artifacts,
+        "intake_clarification_requests": requests_ref,
+        "real_idea_answer_template": template_ref,
+    }
+    for answer in state.get("answers", []):
+        if isinstance(answer, dict):
+            answer["source_artifact"] = requests_ref
+            answer["template_ref"] = template_ref
+    return state
+
+
 def real_idea_entry_intake_output_records(
     *,
     run_dir: Path,
@@ -6097,7 +6118,14 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         and not args.dry_run
     ):
         run_dir.mkdir(parents=True, exist_ok=True)
-        answer_handoff.write_bytes(answer_source.read_bytes())
+        handoff_state = real_idea_answer_continuation_handoff_state(
+            source=answer_source,
+            run_dir_ref=run_dir_ref,
+        )
+        answer_handoff.write_text(
+            json.dumps(handoff_state, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         answer_state_copied_to_run_dir = True
     output_path = (
         Path(args.output)

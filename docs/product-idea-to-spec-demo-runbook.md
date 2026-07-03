@@ -563,6 +563,12 @@ The command runs the fixed SpecGraph target:
 real-idea-intake-continue-from-specspace-answers
 ```
 
+When `--answer-state` points outside the selected SpecGraph run directory,
+Platform copies it into that run directory and rewrites the handoff refs to the
+run-local `idea_intake_clarification_requests.json` and
+`real_idea_answer_template.json` artifacts. The source digest is still recorded
+in the execution report.
+
 It writes:
 
 ```text
