@@ -171,6 +171,15 @@ PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS = {
     "rerun_preview": "runs/idea_to_spec_rerun_preview.json",
     "rerun_materialization": "runs/idea_to_spec_rerun_materialization.json",
 }
+PRODUCT_REPAIR_RERUN_OUTPUT_MAKE_VARIABLES = {
+    "rerun_report": "SPECSPACE_REPAIR_DRAFT_RERUN_REPORT_OUTPUT",
+    "repair_session": "IDEA_TO_SPEC_REPAIR_SESSION_OUTPUT",
+    "rerun_preview": "IDEA_TO_SPEC_RERUN_PREVIEW_OUTPUT",
+    "rerun_materialization": "IDEA_TO_SPEC_RERUN_MATERIALIZATION_OUTPUT",
+    "clarification_answers": "IDEA_TO_SPEC_CLARIFICATION_ANSWERS_OUTPUT",
+    "ontology_decisions": "PRODUCT_ONTOLOGY_GAP_REVIEW_DECISIONS_OUTPUT",
+    "rerun_input": "IDEA_TO_SPEC_ANSWER_RERUN_INPUT_OUTPUT",
+}
 PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS = {
     "repaired_handoff": "runs/repaired_candidate_promotion_handoff_report.json",
     "repaired_active_candidate": "runs/repaired_active_idea_to_spec_candidate.json",
@@ -180,6 +189,16 @@ PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS = {
     "repaired_materialization": "runs/repaired_candidate_spec_materialization_report.json",
     "repaired_repair_session": "runs/repaired_idea_to_spec_repair_session.json",
     "repaired_promotion_gate": "runs/repaired_idea_to_spec_promotion_gate.json",
+}
+PRODUCT_REPAIR_RERUN_REPAIRED_MAKE_VARIABLES = {
+    "repaired_handoff": "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_OUTPUT",
+    "repaired_active_candidate": "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_ACTIVE_CANDIDATE_OUTPUT",
+    "repaired_candidate_graph": "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_CANDIDATE_GRAPH_OUTPUT",
+    "repaired_pre_sib": "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PRE_SIB_OUTPUT",
+    "repaired_repair_loop": "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_LOOP_OUTPUT",
+    "repaired_materialization": "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_MATERIALIZATION_OUTPUT",
+    "repaired_repair_session": "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_SESSION_OUTPUT",
+    "repaired_promotion_gate": "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PROMOTION_GATE_OUTPUT",
 }
 GRAPH_REPOSITORY_REPAIRED_PLAN_ARTIFACTS = {
     "repaired_handoff": (
@@ -3661,6 +3680,13 @@ def input_path_arg(value: str, *, base_dir: Path) -> Path:
     return path.resolve() if path.is_absolute() else (base_dir / path).resolve()
 
 
+def path_ref_for_make(path: Path, *, base_dir: Path) -> str:
+    try:
+        return path.resolve().relative_to(base_dir.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def input_path_arg_or_existing(value: str, *, base_dir: Path) -> Path:
     path = Path(value)
     if path.is_absolute():
@@ -5080,6 +5106,7 @@ def build_product_repair_rerun_execution_plan(
     deployment_profile_path: Path,
     deployment_profile: dict[str, Any],
     specgraph_dir: Path,
+    run_dir_ref: str | None,
     request_state_path: Path,
     request_state: dict[str, Any] | None,
     import_preview_path: Path,
@@ -5118,7 +5145,13 @@ def build_product_repair_rerun_execution_plan(
     if import_preview is not None:
         diagnostics.extend(product_repair_import_preview_diagnostics(import_preview))
     if repair_session is not None:
-        diagnostics.extend(graph_repository_repair_session_diagnostics(repair_session))
+        diagnostics.extend(
+            graph_repository_repair_session_diagnostics(
+                repair_session,
+                expected_source_refs=repair_session_source_refs(repair_session),
+                subject="repair_session",
+            )
+        )
         if nested_mapping(repair_session, "readiness").get("ready") is not True:
             diagnostics.append(
                 Diagnostic(
@@ -5186,6 +5219,126 @@ def build_product_repair_rerun_execution_plan(
         key: str(specgraph_dir / value)
         for key, value in PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS.items()
     }
+    target_variables = {
+        "SPECSPACE_REPAIR_RERUN_REQUEST_STATE": path_ref_for_make(
+            request_state_path,
+            base_dir=specgraph_dir,
+        ),
+        "SPECSPACE_REPAIR_RERUN_REQUEST_IMPORT_PREVIEW": path_ref_for_make(
+            import_preview_path,
+            base_dir=specgraph_dir,
+        ),
+        "SPECSPACE_REPAIR_RERUN_REQUEST_REPAIR_SESSION": path_ref_for_make(
+            repair_session_path,
+            base_dir=specgraph_dir,
+        ),
+        "SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT": path_ref_for_make(
+            request_gate_path,
+            base_dir=specgraph_dir,
+        ),
+    }
+    repaired_output_refs = {
+        key: str(specgraph_dir / value)
+        for key, value in PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.items()
+    }
+    if run_dir_ref:
+        output_rel_by_key = {
+            "request_gate": f"{run_dir_ref}/specspace_repair_rerun_request_gate.json",
+            "rerun_report": f"{run_dir_ref}/specspace_repair_draft_rerun_report.json",
+            "repair_session": f"{run_dir_ref}/idea_to_spec_repair_session.json",
+            "rerun_preview": f"{run_dir_ref}/idea_to_spec_rerun_preview.json",
+            "rerun_materialization": f"{run_dir_ref}/idea_to_spec_rerun_materialization.json",
+            "clarification_answers": f"{run_dir_ref}/idea_to_spec_clarification_answers.json",
+            "ontology_decisions": f"{run_dir_ref}/product_ontology_gap_review_decisions.json",
+            "rerun_input": f"{run_dir_ref}/idea_to_spec_answer_rerun_input.json",
+        }
+        output_refs = {
+            key: str(specgraph_dir / rel)
+            for key, rel in output_rel_by_key.items()
+            if key in PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS
+        }
+        for key, variable in PRODUCT_REPAIR_RERUN_OUTPUT_MAKE_VARIABLES.items():
+            rel = output_rel_by_key.get(key)
+            if rel:
+                target_variables[variable] = rel
+        target_variables.update(
+            {
+                "SPECSPACE_REPAIR_DRAFT_IMPORT_DRAFTS": (
+                    f"{run_dir_ref}/idea_to_spec_repair_drafts.json"
+                ),
+                "SPECSPACE_REPAIR_DRAFT_IMPORT_CLARIFICATION_REQUESTS": (
+                    f"{run_dir_ref}/idea_to_spec_clarification_requests.json"
+                ),
+                "SPECSPACE_REPAIR_DRAFT_RERUN_CLARIFICATION_REQUESTS": (
+                    f"{run_dir_ref}/idea_to_spec_clarification_requests.json"
+                ),
+                "SPECSPACE_REPAIR_DRAFT_RERUN_ACTIVE_CANDIDATE": (
+                    f"{run_dir_ref}/active_idea_to_spec_candidate.json"
+                ),
+                "SPECSPACE_REPAIR_DRAFT_RERUN_INTAKE": (
+                    f"{run_dir_ref}/idea_event_storming_intake.json"
+                ),
+                "SPECSPACE_REPAIR_DRAFT_RERUN_CANDIDATE_GRAPH": (
+                    f"{run_dir_ref}/candidate_spec_graph.json"
+                ),
+                "SPECSPACE_REPAIR_DRAFT_RERUN_PROMOTION_GATE": (
+                    f"{run_dir_ref}/idea_to_spec_promotion_gate.json"
+                ),
+            }
+        )
+
+        repaired_output_rel_by_key = {
+            "repaired_handoff": f"{run_dir_ref}/repaired_candidate_promotion_handoff_report.json",
+            "repaired_active_candidate": f"{run_dir_ref}/repaired_active_idea_to_spec_candidate.json",
+            "repaired_candidate_graph": f"{run_dir_ref}/repaired_candidate_spec_graph.json",
+            "repaired_pre_sib": f"{run_dir_ref}/repaired_pre_sib_coherence_report.json",
+            "repaired_repair_loop": f"{run_dir_ref}/repaired_candidate_repair_loop_report.json",
+            "repaired_materialization": f"{run_dir_ref}/repaired_candidate_spec_materialization_report.json",
+            "repaired_repair_session": f"{run_dir_ref}/repaired_idea_to_spec_repair_session.json",
+            "repaired_promotion_gate": f"{run_dir_ref}/repaired_idea_to_spec_promotion_gate.json",
+        }
+        repaired_output_refs = {
+            key: str(specgraph_dir / rel)
+            for key, rel in repaired_output_rel_by_key.items()
+        }
+        for key, variable in PRODUCT_REPAIR_RERUN_REPAIRED_MAKE_VARIABLES.items():
+            rel = repaired_output_rel_by_key.get(key)
+            if rel:
+                target_variables[variable] = rel
+        target_variables[
+            "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_MATERIALIZATION_OUTPUT_DIR"
+        ] = f"{run_dir_ref}/repaired_materialized_candidate_specs"
+        target_variables.update(
+            {
+                "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_INTAKE": (
+                    f"{run_dir_ref}/idea_event_storming_intake.json"
+                ),
+                "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_CLARIFICATION_REQUESTS": (
+                    f"{run_dir_ref}/idea_to_spec_clarification_requests.json"
+                ),
+                "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_CLARIFICATION_ANSWERS": (
+                    f"{run_dir_ref}/idea_to_spec_clarification_answers.json"
+                ),
+                "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_ONTOLOGY_DECISIONS": (
+                    f"{run_dir_ref}/product_ontology_gap_review_decisions.json"
+                ),
+                "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_RERUN_INPUT": (
+                    f"{run_dir_ref}/idea_to_spec_answer_rerun_input.json"
+                ),
+                "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_RERUN_PREVIEW": (
+                    f"{run_dir_ref}/idea_to_spec_rerun_preview.json"
+                ),
+                "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_RERUN_MATERIALIZATION": (
+                    f"{run_dir_ref}/idea_to_spec_rerun_materialization.json"
+                ),
+            }
+        )
+        target_variables[
+            "IDEA_MATURITY_METRICS_OUTPUT"
+        ] = f"{run_dir_ref}/idea_maturity_metrics_report.json"
+        target_variables[
+            "IDEA_MATURITY_METRICS_VALIDATION_OUTPUT"
+        ] = f"{run_dir_ref}/idea_maturity_metrics_validation_report.json"
     plan = {
         "schema_version": 1,
         "artifact_kind": PRODUCT_REPAIR_RERUN_PLAN_KIND,
@@ -5200,15 +5353,11 @@ def build_product_repair_rerun_execution_plan(
         "target_make": {
             "target": PRODUCT_REPAIR_RERUN_MAKE_TARGET,
             "cwd": str(specgraph_dir),
-            "variables": {
-                "SPECSPACE_REPAIR_RERUN_REQUEST_STATE": str(request_state_path),
-                "SPECSPACE_REPAIR_RERUN_REQUEST_IMPORT_PREVIEW": str(import_preview_path),
-                "SPECSPACE_REPAIR_RERUN_REQUEST_REPAIR_SESSION": str(repair_session_path),
-                "SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT": str(request_gate_path),
-            },
+            "variables": target_variables,
         },
         "source_artifacts": source_artifacts,
         "expected_outputs": output_refs,
+        "repaired_expected_outputs": repaired_output_refs,
         "operations": operations,
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
         "authority_boundary": {
@@ -5245,25 +5394,73 @@ def build_product_repair_rerun_execution_plan(
 def product_repair_rerun_plan(args: argparse.Namespace) -> int:
     deployment_profile_path = Path(args.deployment_profile)
     specgraph_dir = Path(args.specgraph_dir).resolve()
+    preflight_diagnostics: list[Diagnostic] = []
+    run_dir_ref: str | None = None
+    run_dir_path: Path | None = None
+    if getattr(args, "run_dir", None):
+        raw_run_dir = Path(args.run_dir)
+        run_dir_path = (
+            raw_run_dir.resolve()
+            if raw_run_dir.is_absolute()
+            else (specgraph_dir / raw_run_dir).resolve()
+        )
+        try:
+            run_dir_ref = run_dir_path.relative_to(specgraph_dir).as_posix()
+        except ValueError:
+            run_dir_ref = str(raw_run_dir)
+            preflight_diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_run_dir_outside_specgraph",
+                    subject="run_dir",
+                    message="run-dir must resolve inside the SpecGraph checkout",
+                )
+            )
+        if run_dir_ref in {"", "."}:
+            preflight_diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_run_dir_invalid",
+                    subject="run_dir",
+                    message="run-dir must name a dedicated child directory",
+                )
+            )
+    input_base_dir = run_dir_path if run_dir_path is not None else specgraph_dir
     request_state_path = path_arg_or_default(
         args.rerun_request,
-        base_dir=specgraph_dir,
-        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["rerun_request"],
+        base_dir=input_base_dir,
+        default_rel=(
+            Path(PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["rerun_request"]).name
+            if run_dir_path is not None
+            else PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["rerun_request"]
+        ),
     )
     import_preview_path = path_arg_or_default(
         args.import_preview,
-        base_dir=specgraph_dir,
-        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["import_preview"],
+        base_dir=input_base_dir,
+        default_rel=(
+            Path(PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["import_preview"]).name
+            if run_dir_path is not None
+            else PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["import_preview"]
+        ),
     )
     repair_session_path = path_arg_or_default(
         args.repair_session,
-        base_dir=specgraph_dir,
-        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["repair_session"],
+        base_dir=input_base_dir,
+        default_rel=(
+            Path(PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["repair_session"]).name
+            if run_dir_path is not None
+            else PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["repair_session"]
+        ),
     )
     request_gate_path = path_arg_or_default(
         args.request_gate,
-        base_dir=specgraph_dir,
-        default_rel=PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["request_gate"],
+        base_dir=input_base_dir,
+        default_rel=(
+            Path(PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["request_gate"]).name
+            if run_dir_path is not None
+            else PRODUCT_REPAIR_RERUN_DEFAULT_INPUTS["request_gate"]
+        ),
     )
     deployment_profile = load_json_mapping(
         deployment_profile_path,
@@ -5298,6 +5495,7 @@ def product_repair_rerun_plan(args: argparse.Namespace) -> int:
         deployment_profile_path=deployment_profile_path,
         deployment_profile=deployment_profile,
         specgraph_dir=specgraph_dir,
+        run_dir_ref=run_dir_ref if not preflight_diagnostics else None,
         request_state_path=request_state_path,
         request_state=request_state,
         import_preview_path=import_preview_path,
@@ -5309,11 +5507,12 @@ def product_repair_rerun_plan(args: argparse.Namespace) -> int:
         source_artifacts=source_artifacts,
     )
     diagnostics = [
+        *preflight_diagnostics,
+        *diagnostics,
         *request_diagnostics,
         *import_diagnostics,
         *repair_diagnostics,
         *gate_diagnostics,
-        *diagnostics,
     ]
     if diagnostics:
         plan["diagnostics"] = [asdict(diagnostic) for diagnostic in diagnostics]
@@ -6036,10 +6235,20 @@ def product_repair_make_command(
 
 
 def product_repair_repaired_handoff_make_command(
+    plan: dict[str, Any] | None = None,
     *,
     python: str | None = None,
 ) -> list[str]:
     command = ["make", PRODUCT_REPAIR_RERUN_REPAIRED_HANDOFF_MAKE_TARGET]
+    variables = nested_mapping(nested_mapping(plan or {}, "target_make"), "variables")
+    for key in sorted(variables):
+        if key.startswith("REPAIRED_CANDIDATE_PROMOTION_HANDOFF_") or key in {
+            "IDEA_MATURITY_METRICS_OUTPUT",
+            "IDEA_MATURITY_METRICS_VALIDATION_OUTPUT",
+        }:
+            value = variables.get(key)
+            if isinstance(value, str) and value:
+                command.append(f"{key}={value}")
     if python:
         command.append(f"PYTHON={python}")
     return command
@@ -6453,6 +6662,8 @@ def real_idea_entry_intake_output_diagnostics(
 
 def product_repair_output_diagnostics(
     output_records: dict[str, dict[str, Any]],
+    *,
+    require_rerun_report_ready: bool = True,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     rerun_report = output_records.get("rerun_report", {})
@@ -6483,7 +6694,7 @@ def product_repair_output_diagnostics(
                 message=f"expected {PRODUCT_REPAIR_RERUN_REPORT_CONTRACT_REF}",
             )
         )
-    elif rerun_report.get("ready") is not True:
+    elif require_rerun_report_ready and rerun_report.get("ready") is not True:
         diagnostics.append(
             Diagnostic(
                 level="ERROR",
@@ -6587,6 +6798,7 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
     )
     command = product_repair_make_command(plan, python=args.python)
     repaired_handoff_command = product_repair_repaired_handoff_make_command(
+        plan,
         python=args.python,
     )
     command_result: dict[str, Any] | None = None
@@ -6674,15 +6886,27 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
         if isinstance(value, str)
     }
     if args.build_repaired_handoff:
+        repaired_expected_outputs = nested_mapping(plan, "repaired_expected_outputs")
+        if not repaired_expected_outputs:
+            repaired_expected_outputs = {
+                key: str(specgraph_dir / rel_path)
+                for key, rel_path in PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.items()
+            }
         expected_output_paths.update(
             {
-                key: product_repair_output_record(specgraph_dir / rel_path)
-                for key, rel_path in PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.items()
+                key: product_repair_output_record(Path(value))
+                for key, value in repaired_expected_outputs.items()
+                if isinstance(value, str)
             }
         )
     output_records = expected_output_paths
     if not diagnostics and not args.dry_run:
-        diagnostics.extend(product_repair_output_diagnostics(output_records))
+        diagnostics.extend(
+            product_repair_output_diagnostics(
+                output_records,
+                require_rerun_report_ready=not args.build_repaired_handoff,
+            )
+        )
         if args.build_repaired_handoff:
             diagnostics.extend(product_repair_repaired_output_diagnostics(output_records))
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
@@ -15750,6 +15974,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--specgraph-dir",
         default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
         help="Local SpecGraph checkout that owns the repair rerun make target.",
+    )
+    product_repair_plan_parser.add_argument(
+        "--run-dir",
+        help=(
+            "Optional SpecGraph run directory used for default repair rerun "
+            "inputs and outputs."
+        ),
     )
     product_repair_plan_parser.add_argument(
         "--rerun-request",

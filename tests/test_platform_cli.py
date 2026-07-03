@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1409,6 +1410,19 @@ class PlatformCliTests(unittest.TestCase):
 
     def write_product_repair_makefile(self, specgraph_dir: Path) -> None:
         makefile = """\
+SPECSPACE_REPAIR_DRAFT_RERUN_REPORT_OUTPUT ?= runs/specspace_repair_draft_rerun_report.json
+IDEA_TO_SPEC_REPAIR_SESSION_OUTPUT ?= runs/idea_to_spec_repair_session.json
+IDEA_TO_SPEC_RERUN_PREVIEW_OUTPUT ?= runs/idea_to_spec_rerun_preview.json
+IDEA_TO_SPEC_RERUN_MATERIALIZATION_OUTPUT ?= runs/idea_to_spec_rerun_materialization.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_ACTIVE_CANDIDATE_OUTPUT ?= runs/repaired_active_idea_to_spec_candidate.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_CANDIDATE_GRAPH_OUTPUT ?= runs/repaired_candidate_spec_graph.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PRE_SIB_OUTPUT ?= runs/repaired_pre_sib_coherence_report.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_LOOP_OUTPUT ?= runs/repaired_candidate_repair_loop_report.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_MATERIALIZATION_OUTPUT ?= runs/repaired_candidate_spec_materialization_report.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PROMOTION_GATE_OUTPUT ?= runs/repaired_idea_to_spec_promotion_gate.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_SESSION_OUTPUT ?= runs/repaired_idea_to_spec_repair_session.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_OUTPUT ?= runs/repaired_candidate_promotion_handoff_report.json
+
 specspace-repair-draft-import-preview:
 \t@mkdir -p $$(dirname "$(SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT)")
 \t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_import_preview","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-import-preview.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repair_draft_import_preview_ready","blocked_by":[]},"summary":{"status":"repair_draft_import_preview_ready","accepted_for_rerun_count":1},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_import_into_specgraph":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > "$(SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT)"
@@ -1418,22 +1432,22 @@ specspace-repair-rerun-request-gate:
 \t@printf '%s\\n' '{"artifact_kind":"specspace_repair_rerun_request_gate","contract_ref":"specgraph.idea-to-spec.specspace-repair-rerun-request-gate.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"ready","blocked_by":[]},"summary":{"selected_request_id":"repair-rerun-request.idea-alpha","workspace_id":"idea-alpha-workspace","candidate_id":"idea-alpha"},"resolved_inputs":{"workspace_id":"idea-alpha-workspace","candidate_id":"idea-alpha"},"recommended_invocation":{"make_target":"product-workspace-requested-repair-draft-rerun"},"authority_boundary":{"may_execute_specgraph_from_request":false,"may_run_make_target_from_request":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false,"may_open_pull_request":false,"may_execute_git_service_operation":false}}' > "$(SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT)"
 
 product-workspace-requested-repair-draft-rerun:
-\t@mkdir -p runs
-\t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_rerun_report","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-rerun.v0.1","readiness":{"ready":true,"review_state":"repair_draft_rerun_ready"},"summary":{"status":"ready"}}' > runs/specspace_repair_draft_rerun_report.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready"},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/idea_to_spec_promotion_gate.json"}}}' > runs/idea_to_spec_repair_session.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_preview"}' > runs/idea_to_spec_rerun_preview.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_materialization"}' > runs/idea_to_spec_rerun_materialization.json
+\t@mkdir -p $$(dirname "$(SPECSPACE_REPAIR_DRAFT_RERUN_REPORT_OUTPUT)") $$(dirname "$(IDEA_TO_SPEC_REPAIR_SESSION_OUTPUT)") $$(dirname "$(IDEA_TO_SPEC_RERUN_PREVIEW_OUTPUT)") $$(dirname "$(IDEA_TO_SPEC_RERUN_MATERIALIZATION_OUTPUT)")
+\t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_rerun_report","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-rerun.v0.1","readiness":{"ready":true,"review_state":"repair_draft_rerun_ready"},"summary":{"status":"ready"}}' > "$(SPECSPACE_REPAIR_DRAFT_RERUN_REPORT_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready"},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/idea_to_spec_promotion_gate.json"}}}' > "$(IDEA_TO_SPEC_REPAIR_SESSION_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_preview"}' > "$(IDEA_TO_SPEC_RERUN_PREVIEW_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_materialization"}' > "$(IDEA_TO_SPEC_RERUN_MATERIALIZATION_OUTPUT)"
 
 product-workspace-repaired-promotion-handoff:
-\t@mkdir -p runs
-\t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","contract_ref":"specgraph.idea-to-spec.active-candidate-source.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"active_candidate_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > runs/repaired_active_idea_to_spec_candidate.json
-\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_graph","readiness":{"ready":true,"review_state":"ready_for_pre_sib","blocked_by":[]},"summary":{"status":"ready_for_pre_sib"}}' > runs/repaired_candidate_spec_graph.json
-\t@printf '%s\\n' '{"artifact_kind":"pre_sib_coherence_report","readiness":{"ready":true,"review_state":"pre_sib_ready","blocked_by":[]},"summary":{"status":"pre_sib_ready"}}' > runs/repaired_pre_sib_coherence_report.json
-\t@printf '%s\\n' '{"artifact_kind":"candidate_repair_loop_report","readiness":{"ready":true,"review_state":"repair_preview_ready","blocked_by":[]},"summary":{"status":"repair_preview_ready"}}' > runs/repaired_candidate_repair_loop_report.json
-\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_materialization_report","readiness":{"ready":true,"review_state":"materialized_candidate_review_ready","blocked_by":[]},"summary":{"status":"materialized_candidate_review_ready"}}' > runs/repaired_candidate_spec_materialization_report.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_promotion_gate","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"ready_for_platform_promotion_request","blocked_by":[]},"promotion_request":{"paths":["specs/nodes/SG-SPEC-CANDIDATE.yaml"]},"summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_open_pull_request":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false}}' > runs/repaired_idea_to_spec_promotion_gate.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/repaired_active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/repaired_idea_to_spec_promotion_gate.json"}}}' > runs/repaired_idea_to_spec_repair_session.json
-\t@printf '%s\\n' '{"artifact_kind":"repaired_candidate_promotion_handoff_report","contract_ref":"specgraph.idea-to-spec.repaired-candidate-promotion-handoff.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repaired_candidate_promotion_handoff_ready","blocked_by":[]},"summary":{"status":"repaired_candidate_promotion_handoff_ready","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_candidate_gap_count":0,"unresolved_ontology_gap_count":0,"resolved_candidate_gap_count":1,"resolved_ontology_gap_count":1,"removed_gap_count":2},"output_artifacts":{"repaired_active_candidate":{"artifact_kind":"active_idea_to_spec_candidate","source_ref":"runs/repaired_active_idea_to_spec_candidate.json","summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1}},"repaired_repair_session":{"artifact_kind":"idea_to_spec_repair_session_journal","source_ref":"runs/repaired_idea_to_spec_repair_session.json","summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0}},"repaired_promotion_gate":{"artifact_kind":"idea_to_spec_promotion_gate","source_ref":"runs/repaired_idea_to_spec_promotion_gate.json","summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1}}},"authority_boundary":{"may_accept_ontology_terms":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_materialize_candidate_approval_decision":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > runs/repaired_candidate_promotion_handoff_report.json
+\t@mkdir -p $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_ACTIVE_CANDIDATE_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_CANDIDATE_GRAPH_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PRE_SIB_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_LOOP_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_MATERIALIZATION_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PROMOTION_GATE_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_SESSION_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_OUTPUT)")
+\t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","contract_ref":"specgraph.idea-to-spec.active-candidate-source.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"active_candidate_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_ACTIVE_CANDIDATE_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_graph","readiness":{"ready":true,"review_state":"ready_for_pre_sib","blocked_by":[]},"summary":{"status":"ready_for_pre_sib"}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_CANDIDATE_GRAPH_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"pre_sib_coherence_report","readiness":{"ready":true,"review_state":"pre_sib_ready","blocked_by":[]},"summary":{"status":"pre_sib_ready"}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PRE_SIB_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"candidate_repair_loop_report","readiness":{"ready":true,"review_state":"repair_preview_ready","blocked_by":[]},"summary":{"status":"repair_preview_ready"}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_LOOP_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_materialization_report","readiness":{"ready":true,"review_state":"materialized_candidate_review_ready","blocked_by":[]},"summary":{"status":"materialized_candidate_review_ready"}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_MATERIALIZATION_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_promotion_gate","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"ready_for_platform_promotion_request","blocked_by":[]},"promotion_request":{"paths":["specs/nodes/SG-SPEC-CANDIDATE.yaml"]},"summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_open_pull_request":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PROMOTION_GATE_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/repaired_active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/repaired_idea_to_spec_promotion_gate.json"}}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_SESSION_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"repaired_candidate_promotion_handoff_report","contract_ref":"specgraph.idea-to-spec.repaired-candidate-promotion-handoff.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repaired_candidate_promotion_handoff_ready","blocked_by":[]},"summary":{"status":"repaired_candidate_promotion_handoff_ready","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_candidate_gap_count":0,"unresolved_ontology_gap_count":0,"resolved_candidate_gap_count":1,"resolved_ontology_gap_count":1,"removed_gap_count":2},"output_artifacts":{"repaired_active_candidate":{"artifact_kind":"active_idea_to_spec_candidate","source_ref":"runs/repaired_active_idea_to_spec_candidate.json","summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1}},"repaired_repair_session":{"artifact_kind":"idea_to_spec_repair_session_journal","source_ref":"runs/repaired_idea_to_spec_repair_session.json","summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0}},"repaired_promotion_gate":{"artifact_kind":"idea_to_spec_promotion_gate","source_ref":"runs/repaired_idea_to_spec_promotion_gate.json","summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1}}},"authority_boundary":{"may_accept_ontology_terms":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_materialize_candidate_approval_decision":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_OUTPUT)"
 
 publish-bundle:
 \t@mkdir -p dist/specgraph-public/runs
@@ -4624,6 +4638,84 @@ workspaces:
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["ready_to_execute"])
 
+    def test_product_repair_rerun_plan_accepts_selected_run_dir_repair_session_refs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            runs_dir = specgraph_dir / "runs"
+            selected_run_dir = runs_dir / "idea-alpha"
+            selected_run_dir.mkdir()
+            for filename in (
+                "idea_to_spec_repair_rerun_requests.json",
+                "specspace_repair_draft_import_preview.json",
+                "specspace_repair_rerun_request_gate.json",
+                "idea_to_spec_repair_session.json",
+            ):
+                shutil.copyfile(runs_dir / filename, selected_run_dir / filename)
+            repair_session_path = selected_run_dir / "idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+            repair_session_path.write_text(
+                json.dumps(repair_session),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--rerun-request",
+                str(selected_run_dir / "idea_to_spec_repair_rerun_requests.json"),
+                "--import-preview",
+                str(selected_run_dir / "specspace_repair_draft_import_preview.json"),
+                "--repair-session",
+                str(repair_session_path),
+                "--request-gate",
+                str(selected_run_dir / "specspace_repair_rerun_request_gate.json"),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["ready_to_execute"])
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
+        self.assertEqual(
+            Path(payload["expected_outputs"]["repair_session"]).resolve(),
+            (selected_run_dir / "idea_to_spec_repair_session.json").resolve(),
+        )
+        self.assertEqual(
+            Path(payload["repaired_expected_outputs"]["repaired_handoff"]).resolve(),
+            (
+                selected_run_dir / "repaired_candidate_promotion_handoff_report.json"
+            ).resolve(),
+        )
+        self.assertEqual(
+            payload["target_make"]["variables"]["IDEA_TO_SPEC_REPAIR_SESSION_OUTPUT"],
+            "runs/idea-alpha/idea_to_spec_repair_session.json",
+        )
+        self.assertEqual(
+            payload["target_make"]["variables"]["SPECSPACE_REPAIR_DRAFT_IMPORT_DRAFTS"],
+            "runs/idea-alpha/idea_to_spec_repair_drafts.json",
+        )
+        self.assertEqual(
+            payload["target_make"]["variables"][
+                "SPECSPACE_REPAIR_DRAFT_IMPORT_CLARIFICATION_REQUESTS"
+            ],
+            "runs/idea-alpha/idea_to_spec_clarification_requests.json",
+        )
+
     def test_product_repair_rerun_execute_runs_specgraph_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             specgraph_dir = Path(tmp_dir) / "SpecGraph"
@@ -4748,6 +4840,77 @@ workspaces:
                     / "runs"
                     / "repaired_candidate_promotion_handoff_report.json"
                 ).is_file()
+            )
+
+    def test_product_repair_rerun_execute_builds_repaired_handoff_in_run_dir(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            selected_run_dir = specgraph_dir / "runs" / "idea-alpha"
+            selected_run_dir.mkdir()
+            for filename in (
+                "idea_to_spec_repair_rerun_requests.json",
+                "specspace_repair_draft_import_preview.json",
+                "specspace_repair_rerun_request_gate.json",
+                "idea_to_spec_repair_session.json",
+            ):
+                shutil.copyfile(
+                    specgraph_dir / "runs" / filename,
+                    selected_run_dir / filename,
+                )
+            plan_path = selected_run_dir / "product_repair_rerun_plan.json"
+            execution_report_path = selected_run_dir / "product_repair_rerun_execution.json"
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stdout)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--output",
+                str(execution_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertTrue(
+                (
+                    selected_run_dir
+                    / "repaired_candidate_promotion_handoff_report.json"
+                ).is_file()
+            )
+            self.assertFalse(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "repaired_candidate_promotion_handoff_report.json"
+                ).is_file()
+            )
+            self.assertEqual(
+                Path(payload["output_artifacts"]["repaired_handoff"]["path"]).resolve(),
+                (
+                    selected_run_dir / "repaired_candidate_promotion_handoff_report.json"
+                ).resolve(),
             )
 
     def test_product_repair_rerun_execute_rejects_tampered_plan_target(
