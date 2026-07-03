@@ -3835,7 +3835,17 @@ workspaces:
             )
             answer_state.parent.mkdir(parents=True)
             answer_state.write_text(
-                '{"artifact_kind":"specspace_idea_intake_clarification_answer_state"}',
+                json.dumps(
+                    {
+                        "artifact_kind": "specspace_idea_intake_clarification_answer_state",
+                        "answers": [
+                            {
+                                "workspace_id": "team-decision-log",
+                                "request_id": "clarification.intake.question-active-frame-domain-refs",
+                            }
+                        ],
+                    }
+                ),
                 encoding="utf-8",
             )
             output = (
@@ -3901,6 +3911,10 @@ workspaces:
             self.assertEqual(
                 handoff_state["source_artifacts"]["intake_clarification_requests"],
                 "runs/idea-alpha/idea_intake_clarification_requests.json",
+            )
+            self.assertEqual(
+                handoff_state["selected_workspace_id"],
+                "team-decision-log",
             )
             self.assertEqual(
                 handoff_state["source_artifacts"]["real_idea_answer_template"],

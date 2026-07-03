@@ -5527,6 +5527,17 @@ def real_idea_answer_continuation_handoff_state(
     run_dir_ref: str,
 ) -> dict[str, Any]:
     state = load_json_mapping(source, label="real idea answer state")
+    answer_workspaces = sorted(
+        {
+            answer.get("workspace_id")
+            for answer in state.get("answers", [])
+            if isinstance(answer, dict)
+            and isinstance(answer.get("workspace_id"), str)
+            and answer.get("workspace_id")
+        }
+    )
+    if not state.get("selected_workspace_id") and len(answer_workspaces) == 1:
+        state["selected_workspace_id"] = answer_workspaces[0]
     requests_ref = f"{run_dir_ref}/idea_intake_clarification_requests.json"
     template_ref = f"{run_dir_ref}/real_idea_answer_template.json"
     source_artifacts = nested_mapping(state, "source_artifacts")
