@@ -503,6 +503,47 @@ Authority boundaries remain unchanged:
 
 ## Real Idea Answer Continuation Handoff
 
+After SpecSpace stores a raw idea entry request, Platform can hand it to
+SpecGraph without giving the browser execution authority:
+
+```bash
+scripts/platform.py product-real-idea-intake execute \
+  --specgraph-dir ../SpecGraph \
+  --run-dir runs/<idea-smoke-run> \
+  --entry-requests <specspace-state>/real_idea_entry_requests.json \
+  --workspace-id <workspace-id> \
+  --format json
+```
+
+If the entry request state lives outside the SpecGraph checkout, Platform copies
+it into the selected run directory as the handoff input before running the fixed
+SpecGraph target:
+
+```text
+real-idea-intake-from-entry-request
+```
+
+The execution report is:
+
+```text
+runs/platform_real_idea_entry_intake_execution_report.json
+```
+
+Expected outputs in the run directory:
+
+- `specspace_real_idea_entry_request_import_preview.json`;
+- `real_idea_entry_request_intake_report.json`;
+- `local_operator_user_idea_raw_input.json`;
+- `user_idea_intake_session.json`;
+- `user_idea_intake_interview_report.json`;
+- `idea_intake_clarification_requests.json`;
+- `real_idea_answer_template.json`;
+- `user_idea_intake_source.json` only when the intake session is already ready.
+
+This is an intake handoff only. Platform does not run Git Service, create a
+branch/commit/PR, write Ontology packages, accept Ontology terms, or mutate
+canonical specs.
+
 After SpecSpace stores real-idea clarification answers, Platform can run the
 controlled continuation handoff without giving SpecSpace execution authority:
 

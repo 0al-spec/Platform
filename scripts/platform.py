@@ -224,6 +224,27 @@ REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS = {
     "candidate_source_report": "intake_session_candidate_source_report",
     "active_candidate": "active_idea_to_spec_candidate",
 }
+REAL_IDEA_ENTRY_INTAKE_EXECUTION_REPORT_KIND = (
+    "platform_real_idea_entry_intake_execution_report"
+)
+REAL_IDEA_ENTRY_INTAKE_MAKE_TARGET = "real-idea-intake-from-entry-request"
+REAL_IDEA_ENTRY_INTAKE_OUTPUTS = {
+    "entry_import_preview": "specspace_real_idea_entry_request_import_preview.json",
+    "entry_intake_report": "real_idea_entry_request_intake_report.json",
+    "intake_session": "user_idea_intake_session.json",
+    "intake_source": "user_idea_intake_source.json",
+    "interview_report": "user_idea_intake_interview_report.json",
+    "clarification_requests": "idea_intake_clarification_requests.json",
+    "answer_template": "real_idea_answer_template.json",
+}
+REAL_IDEA_ENTRY_INTAKE_EXPECTED_KINDS = {
+    "entry_import_preview": "specspace_real_idea_entry_request_import_preview",
+    "entry_intake_report": "real_idea_entry_request_intake_report",
+    "intake_session": "user_idea_intake_session",
+    "interview_report": "user_idea_intake_interview_report",
+    "clarification_requests": "idea_to_spec_clarification_requests",
+    "answer_template": "real_idea_answer_template",
+}
 IDEA_MATURITY_METRICS_REPORT_ARTIFACT = "idea_maturity_metrics_report.json"
 IDEA_MATURITY_VALIDATION_REPORT_ARTIFACT = (
     "idea_maturity_metrics_validation_report.json"
@@ -5437,6 +5458,29 @@ def real_idea_answer_continuation_make_command(
     return command
 
 
+def real_idea_entry_intake_make_command(
+    *,
+    run_dir_ref: str,
+    entry_requests_ref: str,
+    workspace_id: str | None = None,
+    request_id: str | None = None,
+    python: str | None = None,
+) -> list[str]:
+    command = [
+        "make",
+        REAL_IDEA_ENTRY_INTAKE_MAKE_TARGET,
+        f"REAL_IDEA_SMOKE_RUN_DIR={run_dir_ref}",
+        f"SPECSPACE_REAL_IDEA_ENTRY_REQUESTS={entry_requests_ref}",
+    ]
+    if workspace_id:
+        command.append(f"SPECSPACE_REAL_IDEA_ENTRY_WORKSPACE_ID={workspace_id}")
+    if request_id:
+        command.append(f"SPECSPACE_REAL_IDEA_ENTRY_REQUEST_ID={request_id}")
+    if python:
+        command.append(f"PYTHON={python}")
+    return command
+
+
 def product_repair_output_record(path: Path) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if path.is_file():
@@ -5468,6 +5512,16 @@ def real_idea_answer_continuation_output_records(
     return {
         key: product_repair_output_record(run_dir / rel_path)
         for key, rel_path in REAL_IDEA_ANSWER_CONTINUATION_OUTPUTS.items()
+    }
+
+
+def real_idea_entry_intake_output_records(
+    *,
+    run_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    return {
+        key: product_repair_output_record(run_dir / rel_path)
+        for key, rel_path in REAL_IDEA_ENTRY_INTAKE_OUTPUTS.items()
     }
 
 
@@ -5524,6 +5578,65 @@ def real_idea_answer_continuation_output_diagnostics(
                         subject=f"outputs.{key}.authority_boundary.{field}",
                         message=(
                             f"SpecGraph continuation output {key} must not expand authority"
+                        ),
+                    )
+                )
+    return diagnostics
+
+
+def real_idea_entry_intake_output_diagnostics(
+    output_records: dict[str, dict[str, Any]],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for key, expected_kind in REAL_IDEA_ENTRY_INTAKE_EXPECTED_KINDS.items():
+        record = output_records.get(key, {})
+        if record.get("present") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_entry_intake_output_missing",
+                    subject=f"outputs.{key}",
+                    message=f"SpecGraph entry intake target must produce {key}",
+                )
+            )
+            continue
+        if record.get("artifact_kind") != expected_kind:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_entry_intake_output_kind_mismatch",
+                    subject=f"outputs.{key}.artifact_kind",
+                    message=f"expected {expected_kind}",
+                )
+            )
+        if key in {"entry_import_preview", "entry_intake_report"} and record.get("ready") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_entry_intake_output_not_ready",
+                    subject=f"outputs.{key}.readiness.ready",
+                    message=f"SpecGraph entry intake output {key} must be ready",
+                )
+            )
+        for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
+            if record.get(field) is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="real_idea_entry_intake_output_authority_expanded",
+                        subject=f"outputs.{key}.{field}",
+                        message=f"SpecGraph entry intake output {key} must not set {field}=true",
+                    )
+                )
+        for field, value in sorted(nested_mapping(record, "authority_boundary").items()):
+            if value is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="real_idea_entry_intake_output_authority_expanded",
+                        subject=f"outputs.{key}.authority_boundary.{field}",
+                        message=(
+                            f"SpecGraph entry intake output {key} must not expand authority"
                         ),
                     )
                 )
@@ -6065,6 +6178,238 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
             "active_candidate_status": nested_mapping(
                 output_records,
                 "active_candidate",
+            ).get("status"),
+        },
+    }
+    if not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "status": report["summary"]["status"],
+                        "run_dir": run_dir_ref,
+                        "outputs": str(len(output_records)),
+                    }
+                ],
+                [("status", "STATUS"), ("run_dir", "RUN DIR"), ("outputs", "OUTPUTS")],
+            )
+        )
+    return 0 if ok else 1
+
+
+def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
+    specgraph_dir = Path(args.specgraph_dir).resolve()
+    diagnostics = product_repair_specgraph_checkout_diagnostics(
+        specgraph_dir,
+        code_prefix="real_idea_entry_intake",
+        subject="specgraph_dir",
+    )
+    raw_run_dir = Path(args.run_dir)
+    run_dir = (
+        raw_run_dir.resolve()
+        if raw_run_dir.is_absolute()
+        else (specgraph_dir / raw_run_dir).resolve()
+    )
+    try:
+        run_dir_ref = run_dir.relative_to(specgraph_dir).as_posix()
+    except ValueError:
+        run_dir_ref = str(raw_run_dir)
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_run_dir_outside_specgraph",
+                subject="run_dir",
+                message="run-dir must resolve inside the SpecGraph checkout",
+            )
+        )
+    if run_dir_ref in {"", "."}:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_run_dir_invalid",
+                subject="run_dir",
+                message="run-dir must name a dedicated child directory",
+            )
+        )
+    entry_source = input_path_arg_or_existing(
+        args.entry_requests,
+        base_dir=specgraph_dir,
+    )
+    entry_handoff = run_dir / "real_idea_entry_requests.json"
+    if not entry_source.is_file():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_entry_requests_missing",
+                subject="entry_requests",
+                message="SpecSpace real idea entry request state file is required",
+            )
+        )
+    entry_requests_ref = f"{run_dir_ref}/real_idea_entry_requests.json"
+    try:
+        source_ref_for_command = entry_source.relative_to(specgraph_dir).as_posix()
+    except ValueError:
+        source_ref_for_command = entry_requests_ref
+    if not diagnostics and entry_source.resolve() != entry_handoff.resolve() and not args.dry_run:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        entry_handoff.write_bytes(entry_source.read_bytes())
+    if not diagnostics and entry_source.resolve() == entry_handoff.resolve():
+        source_ref_for_command = entry_requests_ref
+    output_path = (
+        Path(args.output)
+        if args.output
+        else specgraph_dir / "runs" / "platform_real_idea_entry_intake_execution_report.json"
+    )
+    command = real_idea_entry_intake_make_command(
+        run_dir_ref=run_dir_ref,
+        entry_requests_ref=source_ref_for_command,
+        workspace_id=args.workspace_id,
+        request_id=args.request_id,
+        python=args.python,
+    )
+    command_result: dict[str, Any] | None = None
+    started_at = utc_now_iso()
+    if not diagnostics and not args.dry_run:
+        completed = subprocess.run(
+            command,
+            cwd=specgraph_dir,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": completed.returncode,
+            "stdout": completed.stdout[-4000:],
+            "stderr": completed.stderr[-4000:],
+        }
+        if completed.returncode != 0:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_entry_intake_make_failed",
+                    subject=REAL_IDEA_ENTRY_INTAKE_MAKE_TARGET,
+                    message=(
+                        "SpecGraph real-idea entry intake target failed "
+                        f"with exit code {completed.returncode}"
+                    ),
+                )
+            )
+    elif args.dry_run:
+        command_result = {
+            "command": command,
+            "cwd": str(specgraph_dir),
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "dry_run": True,
+        }
+    run_dir_diagnostic_codes = {
+        "real_idea_entry_intake_run_dir_outside_specgraph",
+        "real_idea_entry_intake_run_dir_invalid",
+    }
+    may_inspect_run_dir = not any(
+        diagnostic.code in run_dir_diagnostic_codes for diagnostic in diagnostics
+    )
+    output_records = (
+        real_idea_entry_intake_output_records(run_dir=run_dir)
+        if may_inspect_run_dir
+        else {}
+    )
+    if not diagnostics and not args.dry_run:
+        diagnostics.extend(real_idea_entry_intake_output_diagnostics(output_records))
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    ok = error_count == 0 and (args.dry_run or command_result is not None)
+    operation_status = "failed"
+    operation_reason = "execution_failed"
+    if args.dry_run:
+        operation_status = "dry_run"
+        operation_reason = "dry_run"
+    elif command_result is None:
+        operation_status = "skipped"
+        operation_reason = "execution_not_started"
+    elif command_result.get("returncode") == 0:
+        operation_status = "succeeded"
+        operation_reason = "SpecGraph real-idea entry intake target executed"
+    report = {
+        "schema_version": 1,
+        "artifact_kind": REAL_IDEA_ENTRY_INTAKE_EXECUTION_REPORT_KIND,
+        "generated_at": utc_now_iso(),
+        "started_at": started_at,
+        "specgraph_dir": str(specgraph_dir),
+        "run_dir": run_dir_ref,
+        "entry_requests_source_ref": str(entry_source),
+        "entry_requests_handoff_ref": entry_requests_ref,
+        "entry_requests_source_digest": file_sha256(entry_source)
+        if entry_source.is_file()
+        else None,
+        "ok": ok,
+        "dry_run": args.dry_run,
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "authority_boundary": {
+            "executes_specgraph_make_target": not args.dry_run and command_result is not None,
+            "executes_git_commands": False,
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "writes_ontology_packages": False,
+            "accepts_ontology_terms": False,
+            "mutates_canonical_specs": False,
+            "publishes_private_artifacts": False,
+        },
+        "target_make": {
+            "target": REAL_IDEA_ENTRY_INTAKE_MAKE_TARGET,
+            "cwd": str(specgraph_dir),
+            "variables": {
+                "REAL_IDEA_SMOKE_RUN_DIR": run_dir_ref,
+                "SPECSPACE_REAL_IDEA_ENTRY_REQUESTS": source_ref_for_command,
+                "SPECSPACE_REAL_IDEA_ENTRY_WORKSPACE_ID": args.workspace_id or "",
+                "SPECSPACE_REAL_IDEA_ENTRY_REQUEST_ID": args.request_id or "",
+            },
+        },
+        "command": command,
+        "command_result": command_result,
+        "operations": [
+            {
+                "name": "execute_specgraph_real_idea_entry_intake",
+                "status": operation_status,
+                "reason": operation_reason,
+                "evidence": [REAL_IDEA_ENTRY_INTAKE_MAKE_TARGET],
+            }
+        ],
+        "output_artifacts": output_records,
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "summary": {
+            "status": "completed" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
+            "error_count": error_count,
+            "output_artifact_count": len(output_records),
+            "entry_import_preview_digest": nested_mapping(
+                output_records,
+                "entry_import_preview",
+            ).get("sha256"),
+            "entry_intake_report_digest": nested_mapping(
+                output_records,
+                "entry_intake_report",
+            ).get("sha256"),
+            "intake_session_status": nested_mapping(
+                output_records,
+                "intake_session",
+            ).get("status"),
+            "answer_template_status": nested_mapping(
+                output_records,
+                "answer_template",
             ).get("status"),
         },
     }
@@ -14739,6 +15084,77 @@ def build_parser() -> argparse.ArgumentParser:
     real_idea_continuation_execute_parser.set_defaults(
         func=real_idea_answer_continuation_execute
     )
+
+    real_idea_intake_parser = subcommands.add_parser(
+        "product-real-idea-intake",
+        help="Execute controlled raw idea entry intake handoffs.",
+    )
+    real_idea_intake_subcommands = real_idea_intake_parser.add_subparsers(
+        dest="product_real_idea_intake_command",
+        required=True,
+    )
+    real_idea_intake_execute_parser = real_idea_intake_subcommands.add_parser(
+        "execute",
+        help=(
+            "Run the fixed SpecGraph real-idea entry intake make target for a "
+            "SpecSpace-owned raw idea entry request state handoff."
+        ),
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--specgraph-dir",
+        default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
+        help="Local SpecGraph checkout that owns the entry intake make target.",
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--run-dir",
+        default="runs/real_idea_smoke",
+        help=(
+            "SpecGraph run directory where the entry request handoff and real-idea "
+            "intake artifacts should be written. Must resolve inside --specgraph-dir."
+        ),
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--entry-requests",
+        default="runs/real_idea_smoke/real_idea_entry_requests.json",
+        help=(
+            "SpecSpace-owned real_idea_entry_requests.json state. If the path is "
+            "outside --specgraph-dir, Platform copies it into --run-dir as a "
+            "handoff input before invoking SpecGraph."
+        ),
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--workspace-id",
+        help="Optional workspace selector passed to SpecGraph.",
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--request-id",
+        help="Optional entry request selector passed to SpecGraph.",
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--python",
+        help="Optional PYTHON make variable passed to SpecGraph.",
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the make invocation without executing it.",
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--output",
+        help="Optional path where the execution report JSON should be written.",
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the execution report.",
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    real_idea_intake_execute_parser.set_defaults(func=real_idea_entry_intake_execute)
 
     product_candidate_approval_parser = subcommands.add_parser(
         "product-candidate-approval",
