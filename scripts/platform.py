@@ -15172,6 +15172,12 @@ def build_product_workspace_initialization_report(
             org_root=org_root,
             governance_profile=governance_profile,
         )
+    workspace_binding = product_workspace_initialization_binding(
+        workspace_id=workspace_id,
+        route=request.get("route") if isinstance(request, dict) else None,
+        workspace_root=workspace_root,
+        governance_profile=governance_profile,
+    )
     return {
         "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_REPORT_KIND,
         "schema_version": 1,
@@ -15188,6 +15194,7 @@ def build_product_workspace_initialization_report(
             "governance_profile": governance_profile,
             "repository_role": "product_spec_workspace",
         },
+        "workspace_binding": workspace_binding,
         "pending_catalog_entry": pending_entry if error_count == 0 else None,
         "requested_operations": [
             "validate_specspace_creation_request",
@@ -15417,6 +15424,12 @@ def build_product_workspace_initialization_execution_report(
     diagnostics: list[Diagnostic],
 ) -> dict[str, Any]:
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    workspace_binding = product_workspace_initialization_binding(
+        workspace_id=workspace.get("workspace_id"),
+        route=f"/{workspace.get('workspace_id') or ''}",
+        workspace_root=workspace_root,
+        governance_profile=workspace.get("governance_profile") or "product_workspace",
+    )
     return {
         "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_KIND,
         "schema_version": 1,
@@ -15433,6 +15446,7 @@ def build_product_workspace_initialization_execution_report(
             "governance_profile": workspace.get("governance_profile") or "product_workspace",
             "repository_role": "product_spec_workspace",
         },
+        "workspace_binding": workspace_binding,
         "workspace_root": str(workspace_root),
         "specgraph_initialization_report_ref": (
             str(specgraph_report_path) if specgraph_report_path is not None else None
@@ -15760,6 +15774,49 @@ def build_catalog_entry(
         },
     }
     return entry
+
+
+def product_workspace_initialization_binding(
+    *,
+    workspace_id: str | None,
+    route: str | None,
+    workspace_root: Path,
+    governance_profile: str,
+) -> dict[str, Any]:
+    workspace_id_value = workspace_id if isinstance(workspace_id, str) else None
+    workspace_bundle_ref = (
+        f"workspaces/{workspace_id_value}" if workspace_id_value else None
+    )
+    return {
+        "workspace_id": workspace_id_value,
+        "route": route if isinstance(route, str) else None,
+        "repository_role": "product_spec_workspace",
+        "governance_profile": governance_profile,
+        "workspace_root": str(workspace_root),
+        "workspace_runs_root": str(workspace_root / "runs"),
+        "platform_default_run_dir_ref": (
+            f"runs/{workspace_id_value}" if workspace_id_value else None
+        ),
+        "specspace_state_namespace_ref": (
+            f"specspace-state://workspace/{workspace_id_value}"
+            if workspace_id_value
+            else None
+        ),
+        "product_artifact_bundle_ref": workspace_bundle_ref,
+        "product_artifact_manifest_ref": (
+            f"{workspace_bundle_ref}/artifact_manifest.json"
+            if workspace_bundle_ref
+            else None
+        ),
+        "binding_authority": {
+            "report_only": True,
+            "may_execute_platform": False,
+            "may_execute_specgraph": False,
+            "may_mutate_specspace_state": False,
+            "may_write_catalog": False,
+            "may_create_git_commit": False,
+        },
+    }
 
 
 def format_manual_yaml_entry(entry: dict[str, Any]) -> str:
