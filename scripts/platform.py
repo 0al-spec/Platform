@@ -6806,7 +6806,17 @@ def real_idea_answer_continuation_execution_request_selection(
 def specspace_state_ref_to_path(ref: str, *, request_state_path: Path, base_dir: Path) -> Path:
     prefix = "specspace-state://"
     if ref.startswith(prefix):
-        return (request_state_path.parent / ref[len(prefix):]).resolve()
+        ref_body = ref[len(prefix):]
+        ref_path = Path(ref_body)
+        if (
+            not ref_body
+            or ref_path.is_absolute()
+            or ".." in ref_path.parts
+        ):
+            raise PlatformError(
+                "specspace-state refs must be relative paths inside the SpecSpace state directory"
+            )
+        return (request_state_path.parent / ref_path).resolve()
     return input_path_arg_or_existing(ref, base_dir=base_dir)
 
 
@@ -7968,26 +7978,46 @@ def real_idea_answer_continuation_execute_requested(args: argparse.Namespace) ->
     workspace_binding: dict[str, Any] | None = None
     workspace_initialization_path: Path | None = None
     if selected_workspace_initialization:
-        workspace_initialization_path = specspace_state_ref_to_path(
-            selected_workspace_initialization,
-            request_state_path=request_state_path,
-            base_dir=specgraph_dir,
-        )
-        workspace_binding, init_diagnostics = (
-            real_idea_entry_intake_workspace_initialization_binding(
-                report_path=workspace_initialization_path,
-                selected_workspace_id=selected_workspace_id,
+        try:
+            workspace_initialization_path = specspace_state_ref_to_path(
+                selected_workspace_initialization,
+                request_state_path=request_state_path,
+                base_dir=specgraph_dir,
             )
-        )
-        diagnostics.extend(init_diagnostics)
+            workspace_binding, init_diagnostics = (
+                real_idea_entry_intake_workspace_initialization_binding(
+                    report_path=workspace_initialization_path,
+                    selected_workspace_id=selected_workspace_id,
+                )
+            )
+            diagnostics.extend(init_diagnostics)
+        except PlatformError as exc:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_execution_request_workspace_initialization_ref_invalid",
+                    subject="execution_request.requests[].workspace_initialization_ref",
+                    message=str(exc),
+                )
+            )
     intake_execution_binding: dict[str, Any] | None = None
     intake_execution_path: Path | None = None
     if selected_intake_execution_ref:
-        intake_execution_path = specspace_state_ref_to_path(
-            selected_intake_execution_ref,
-            request_state_path=request_state_path,
-            base_dir=specgraph_dir,
-        )
+        try:
+            intake_execution_path = specspace_state_ref_to_path(
+                selected_intake_execution_ref,
+                request_state_path=request_state_path,
+                base_dir=specgraph_dir,
+            )
+        except PlatformError as exc:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_execution_request_intake_execution_ref_invalid",
+                    subject="execution_request.requests[].intake_execution_ref",
+                    message=str(exc),
+                )
+            )
     intake_execution_binding, intake_execution_diagnostics = (
         real_idea_answer_continuation_intake_execution_binding(
             report_path=intake_execution_path,
@@ -8000,13 +8030,23 @@ def real_idea_answer_continuation_execute_requested(args: argparse.Namespace) ->
         run_dir = f"runs/{selected_workspace_id}"
     selected_answer_state = args.answer_state
     if selected_answer_state is None and selected_answer_state_ref:
-        selected_answer_state = str(
-            specspace_state_ref_to_path(
-                selected_answer_state_ref,
-                request_state_path=request_state_path,
-                base_dir=specgraph_dir,
+        try:
+            selected_answer_state = str(
+                specspace_state_ref_to_path(
+                    selected_answer_state_ref,
+                    request_state_path=request_state_path,
+                    base_dir=specgraph_dir,
+                )
             )
-        )
+        except PlatformError as exc:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_execution_request_answer_state_ref_invalid",
+                    subject="execution_request.requests[].answer_state_ref",
+                    message=str(exc),
+                )
+            )
 
     output_path = (
         Path(args.output)
