@@ -170,6 +170,8 @@ class PlatformInitTests(unittest.TestCase):
                 str(catalog),
                 "--path",
                 str(workspace),
+                "--artifact-base-url",
+                " https://specgraph.tech/ ",
                 "--output",
                 str(plan_path),
                 "--format",
@@ -217,6 +219,14 @@ class PlatformInitTests(unittest.TestCase):
             self.assertEqual(
                 payload["workspace_binding"]["product_artifact_bundle_ref"],
                 "workspaces/pantry-rotation",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["product_artifact_base_url"],
+                "https://specgraph.tech/workspaces/pantry-rotation",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["product_artifact_manifest_url"],
+                "https://specgraph.tech/workspaces/pantry-rotation/artifact_manifest.json",
             )
             self.assertFalse(
                 payload["workspace_binding"]["binding_authority"]["may_execute_platform"]

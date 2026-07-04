@@ -97,6 +97,10 @@ class PlatformCliTests(unittest.TestCase):
                 str(catalog_path),
                 "--path",
                 str(workspace_root),
+                "--artifact-base-url",
+                "https://specgraph.tech",
+                "--product-artifact-base-url",
+                " https://cdn.example/pantry/ ",
                 "--output",
                 str(output_path),
                 "--format",
@@ -126,6 +130,14 @@ class PlatformCliTests(unittest.TestCase):
             self.assertEqual(
                 payload["workspace_binding"]["product_artifact_manifest_ref"],
                 "workspaces/pantry-rotation/artifact_manifest.json",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["product_artifact_base_url"],
+                "https://cdn.example/pantry",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["product_artifact_manifest_url"],
+                "https://cdn.example/pantry/artifact_manifest.json",
             )
             self.assertFalse(
                 payload["workspace_binding"]["binding_authority"]["may_write_catalog"]
