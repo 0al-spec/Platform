@@ -467,9 +467,15 @@ specificity from the system layer while keeping Team Decision Log as data:
 
 ### 10. Git-Backed Graph Repository Service
 
-Status: active next infrastructure layer before production write UX. The local
-CLI executor is an MVP adapter; production should expose the same operations
-through a Git Service rather than relying on an arbitrary local checkout.
+Status: active next infrastructure layer before production write UX. SpecSpace
+now records backend-backed product workspace creation intent as SpecSpace-owned
+state, and Platform can validate that request into a report-only initialization
+plan. The remaining gap is controlled execution: catalog binding, workspace
+file initialization, artifact base allocation, and run-dir binding must move
+through a Platform/Git Service boundary rather than browser-side mutation. The
+local CLI executor is an MVP adapter; production should expose the same
+operations through a Git Service rather than relying on an arbitrary local
+checkout.
 
 Define a repository service over Git instead of letting SpecSpace mutate a local
 checkout directly. The service should own:

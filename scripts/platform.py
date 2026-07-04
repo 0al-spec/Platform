@@ -13882,6 +13882,388 @@ def validate_init_inputs(
             )
 
 
+PRODUCT_WORKSPACE_CREATION_REQUEST_KIND = (
+    "specspace_product_workspace_creation_request_state"
+)
+PRODUCT_WORKSPACE_INITIALIZATION_REPORT_KIND = (
+    "platform_product_workspace_initialization_plan"
+)
+
+
+def product_workspace_creation_boundary() -> dict[str, Any]:
+    return {
+        "executes_specgraph": False,
+        "executes_platform": False,
+        "creates_workspace_files": False,
+        "updates_workspace_catalog": False,
+        "creates_git_commits": False,
+        "opens_pull_requests": False,
+        "publishes_read_models": False,
+        "mutates_canonical_specs": False,
+        "writes_ontology_packages": False,
+        "accepts_ontology_terms": False,
+    }
+
+
+def product_workspace_creation_diagnostics(
+    *,
+    request_state: dict[str, Any],
+    catalog: dict[str, Any],
+    selected_workspace_id: str | None,
+    workspace_root: Path,
+) -> tuple[dict[str, Any] | None, list[Diagnostic]]:
+    diagnostics: list[Diagnostic] = []
+    if request_state.get("artifact_kind") != PRODUCT_WORKSPACE_CREATION_REQUEST_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_creation_request_kind_mismatch",
+                subject="creation_request.artifact_kind",
+                message="creation request must be SpecSpace product workspace creation state",
+            )
+        )
+    if request_state.get("state_owner") != "SpecSpace":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_creation_request_owner_mismatch",
+                subject="creation_request.state_owner",
+                message="creation request state must be owned by SpecSpace",
+            )
+        )
+    for field in (
+        "canonical_mutations_allowed",
+        "tracked_artifacts_written",
+    ):
+        if request_state.get(field) is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_workspace_creation_request_authority_expanded",
+                    subject=f"creation_request.{field}",
+                    message="creation request must not claim write authority",
+                )
+            )
+    for boundary_name in ("consumer_boundary", "authority_boundary"):
+        boundary = nested_mapping(request_state, boundary_name)
+        for key, value in boundary.items():
+            if key.startswith("may_") and value is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_workspace_creation_request_authority_expanded",
+                        subject=f"creation_request.{boundary_name}.{key}",
+                        message="creation request boundary must remain request-only",
+                    )
+                )
+        for key in (
+            "specgraph_artifact_authority",
+            "platform_execution_authority",
+            "workspace_catalog_authority",
+            "git_service_authority",
+            "canonical_mutations_allowed",
+        ):
+            if boundary.get(key) is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_workspace_creation_request_authority_expanded",
+                        subject=f"creation_request.{boundary_name}.{key}",
+                        message="creation request boundary must remain request-only",
+                    )
+                )
+
+    requests = request_state.get("requests")
+    if not isinstance(requests, list):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_creation_requests_missing",
+                subject="creation_request.requests",
+                message="creation request state must contain requests",
+            )
+        )
+        return None, diagnostics
+    candidates = [
+        item
+        for item in requests
+        if isinstance(item, dict)
+        and item.get("status") == "requested"
+        and (
+            selected_workspace_id is None
+            or item.get("workspace_id") == selected_workspace_id
+        )
+    ]
+    if not candidates:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_creation_request_missing",
+                subject="creation_request.requests",
+                message="no active requested workspace creation entry matches the selected workspace",
+            )
+        )
+        return None, diagnostics
+    if len(candidates) > 1:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_creation_request_ambiguous",
+                subject="creation_request.requests",
+                message="more than one active workspace creation request matches",
+            )
+        )
+    request = candidates[-1]
+    for field in (
+        "canonical_mutations_allowed",
+        "tracked_artifacts_written",
+    ):
+        if request.get(field) is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_workspace_creation_request_authority_expanded",
+                    subject=f"creation_request.requests[].{field}",
+                    message="creation request entry must not claim write authority",
+                )
+            )
+    for boundary_name in ("consumer_boundary", "authority_boundary"):
+        boundary = nested_mapping(request, boundary_name)
+        for key, value in boundary.items():
+            if key.startswith("may_") and value is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_workspace_creation_request_authority_expanded",
+                        subject=f"creation_request.requests[].{boundary_name}.{key}",
+                        message="creation request entry boundary must remain request-only",
+                    )
+                )
+        for key in (
+            "specgraph_artifact_authority",
+            "platform_execution_authority",
+            "workspace_catalog_authority",
+            "git_service_authority",
+            "canonical_mutations_allowed",
+        ):
+            if boundary.get(key) is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_workspace_creation_request_authority_expanded",
+                        subject=f"creation_request.requests[].{boundary_name}.{key}",
+                        message="creation request entry boundary must remain request-only",
+                    )
+                )
+    workspace_id = request.get("workspace_id")
+    display_name = request.get("display_name")
+    route = request.get("route")
+    if not isinstance(workspace_id, str) or not PROJECT_ID_RE.fullmatch(workspace_id):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_creation_workspace_id_invalid",
+                subject="creation_request.requests[].workspace_id",
+                message="workspace_id must be a safe product workspace id",
+            )
+        )
+    if not isinstance(display_name, str) or not display_name.strip():
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_creation_display_name_missing",
+                subject="creation_request.requests[].display_name",
+                message="creation request must include display_name",
+            )
+        )
+    expected_route = f"/{workspace_id}" if isinstance(workspace_id, str) else None
+    if route != expected_route:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_creation_route_mismatch",
+                subject="creation_request.requests[].route",
+                message="creation request route must match workspace_id",
+            )
+        )
+    for index, workspace in enumerate(catalog_workspace_mappings(catalog)):
+        if workspace.get("project_id") == workspace_id:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_workspace_creation_catalog_duplicate",
+                    subject=f"catalog.workspaces[{index}].project_id",
+                    message="workspace id is already present in the Platform catalog",
+                )
+            )
+    if workspace_root.exists():
+        if not workspace_root.is_dir():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_workspace_creation_workspace_path_not_directory",
+                    subject="workspace_root",
+                    message="workspace path exists and is not a directory",
+                )
+            )
+        elif any(workspace_root.iterdir()):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_workspace_creation_workspace_path_not_empty",
+                    subject="workspace_root",
+                    message="workspace path must be empty before initialization",
+                )
+            )
+    return request, diagnostics
+
+
+def build_product_workspace_initialization_report(
+    *,
+    request_path: Path,
+    catalog_path: Path,
+    catalog: dict[str, Any],
+    request: dict[str, Any] | None,
+    workspace_root: Path,
+    org_root: Path | None,
+    governance_profile: str,
+    output_path: Path | None,
+    dry_run: bool,
+    diagnostics: list[Diagnostic],
+) -> dict[str, Any]:
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    workspace_id = (
+        request.get("workspace_id")
+        if isinstance(request, dict) and isinstance(request.get("workspace_id"), str)
+        else None
+    )
+    display_name = (
+        request.get("display_name")
+        if isinstance(request, dict) and isinstance(request.get("display_name"), str)
+        else workspace_id
+    )
+    pending_entry: dict[str, Any] | None = None
+    if workspace_id and display_name:
+        pending_entry = build_catalog_entry(
+            project_id=workspace_id,
+            display_name=display_name,
+            workspace_root=workspace_root,
+            org_root=org_root,
+            governance_profile=governance_profile,
+        )
+    return {
+        "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_REPORT_KIND,
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "ok": error_count == 0,
+        "dry_run": dry_run,
+        "creation_request_ref": str(request_path),
+        "catalog_ref": str(catalog_path),
+        "workspace": {
+            "workspace_id": workspace_id,
+            "display_name": display_name,
+            "route": request.get("route") if isinstance(request, dict) else None,
+            "workspace_root": str(workspace_root),
+            "governance_profile": governance_profile,
+            "repository_role": "product_spec_workspace",
+        },
+        "pending_catalog_entry": pending_entry if error_count == 0 else None,
+        "requested_operations": [
+            "validate_specspace_creation_request",
+            "plan_product_workspace_initialization",
+        ],
+        "executed_operations": [],
+        "local_files_written": (
+            [str(output_path)]
+            if output_path is not None and error_count == 0 and not dry_run
+            else []
+        ),
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "authority_boundary": product_workspace_creation_boundary(),
+        "summary": {
+            "status": "workspace_initialization_planned"
+            if error_count == 0
+            else "workspace_initialization_blocked",
+            "error_count": error_count,
+            "ready_for_platform_initialization": error_count == 0,
+            "catalog_written": False,
+            "workspace_files_created": False,
+        },
+    }
+
+
+def workspace_initialize_from_creation_request(args: argparse.Namespace) -> int:
+    request_path = Path(args.creation_request).resolve()
+    catalog_path = Path(args.catalog) if args.catalog else default_catalog_path()
+    request_state = load_json_mapping(request_path, label="workspace creation request")
+    catalog = load_init_catalog(catalog_path)
+    org_root, org_root_diagnostic = resolve_org_root(catalog)
+    workspace_root = expand_workspace_path(args.path, org_root)
+    diagnostics: list[Diagnostic] = []
+    if org_root_diagnostic is not None:
+        diagnostics.append(org_root_diagnostic)
+    request, request_diagnostics = product_workspace_creation_diagnostics(
+        request_state=request_state,
+        catalog=catalog,
+        selected_workspace_id=args.workspace_id,
+        workspace_root=workspace_root,
+    )
+    diagnostics.extend(request_diagnostics)
+    if args.governance_profile != "product_workspace":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_creation_governance_profile_invalid",
+                subject="governance_profile",
+                message="workspace initialization only supports product_workspace governance",
+            )
+        )
+
+    output_path = Path(args.output).resolve() if args.output else None
+    report = build_product_workspace_initialization_report(
+        request_path=request_path,
+        catalog_path=catalog_path,
+        catalog=catalog,
+        request=request,
+        workspace_root=workspace_root,
+        org_root=org_root,
+        governance_profile=args.governance_profile,
+        output_path=output_path,
+        dry_run=args.dry_run,
+        diagnostics=diagnostics,
+    )
+    if output_path is not None and report["ok"] and not args.dry_run:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        workspace = report["workspace"]
+        print(
+            render_rows(
+                [
+                    {
+                        "workspace": str(workspace.get("workspace_id") or ""),
+                        "route": str(workspace.get("route") or ""),
+                        "status": str(report["summary"]["status"]),
+                    }
+                ],
+                [
+                    ("workspace", "WORKSPACE"),
+                    ("route", "ROUTE"),
+                    ("status", "STATUS"),
+                ],
+            )
+        )
+    return 0 if report["ok"] else 1
+
+
 def init_timeout_seconds() -> float:
     raw = os.environ.get("PLATFORM_INIT_TIMEOUT_SECONDS")
     if not raw:
@@ -15223,6 +15605,65 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     init_parser.set_defaults(func=workspace_init)
+
+    initialize_from_request_parser = workspace_subcommands.add_parser(
+        "initialize-from-request",
+        help=(
+            "Validate a SpecSpace product workspace creation request and emit "
+            "a Platform initialization plan."
+        ),
+    )
+    initialize_from_request_parser.add_argument(
+        "--creation-request",
+        required=True,
+        help="Path to SpecSpace product_workspace_creation_requests.json state.",
+    )
+    initialize_from_request_parser.add_argument(
+        "--workspace-id",
+        help="Workspace id to select when the request state contains multiple entries.",
+    )
+    initialize_from_request_parser.add_argument(
+        "--path",
+        required=True,
+        help=(
+            "Planned workspace root, absolute or ${ORG_ROOT}/<rel>. "
+            "Must not exist or must be empty."
+        ),
+    )
+    initialize_from_request_parser.add_argument(
+        "--governance-profile",
+        choices=["product_workspace"],
+        default="product_workspace",
+    )
+    initialize_from_request_parser.add_argument(
+        "--catalog",
+        help=(
+            "Workspace catalog to validate against. Defaults to "
+            "PLATFORM_WORKSPACES_CATALOG, workspaces.local.yaml, then "
+            "workspaces.example.yaml."
+        ),
+    )
+    initialize_from_request_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path where the initialization plan report JSON should be "
+            "written. The report is not written in --dry-run mode."
+        ),
+    )
+    initialize_from_request_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the plan without writing the report.",
+    )
+    initialize_from_request_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    initialize_from_request_parser.set_defaults(
+        func=workspace_initialize_from_creation_request
+    )
 
     deployment_profile_parser = subcommands.add_parser(
         "deployment-profile",
