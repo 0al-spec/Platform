@@ -6435,9 +6435,9 @@ def real_idea_intake_execution_request_boundary_diagnostics(
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for key, value in sorted(mapping.items()):
-        if value is not True:
-            continue
         if key.startswith("may_") or key in REAL_IDEA_INTAKE_EXECUTION_REQUEST_FALSE_FIELDS:
+            if value is False:
+                continue
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
@@ -6453,6 +6453,7 @@ def real_idea_intake_execution_request_selection(
     *,
     request_state_path: Path,
     selected_workspace_id: str | None,
+    selected_entry_request_id: str | None,
 ) -> tuple[dict[str, Any] | None, list[Diagnostic]]:
     diagnostics: list[Diagnostic] = []
     try:
@@ -6489,7 +6490,7 @@ def real_idea_intake_execution_request_selection(
             )
         )
     for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
-        if state.get(field) is True:
+        if field in state and state.get(field) is not False:
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
@@ -6527,8 +6528,32 @@ def real_idea_intake_execution_request_selection(
             selected_workspace_id is None
             or item.get("workspace_id") == selected_workspace_id
         )
+        and (
+            selected_entry_request_id is None
+            or item.get("entry_request_id") == selected_entry_request_id
+        )
     ]
     if not candidates:
+        workspace_candidates = [
+            item
+            for item in requests
+            if isinstance(item, dict)
+            and item.get("status") == "requested"
+            and (
+                selected_workspace_id is None
+                or item.get("workspace_id") == selected_workspace_id
+            )
+        ]
+        if selected_entry_request_id is not None and workspace_candidates:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_intake_execution_request_entry_request_mismatch",
+                    subject="execution_request.requests[].entry_request_id",
+                    message="--request-id must match a requested execution entry_request_id",
+                )
+            )
+            return None, diagnostics
         diagnostics.append(
             Diagnostic(
                 level="ERROR",
@@ -7886,6 +7911,7 @@ def real_idea_entry_intake_execute_requested(args: argparse.Namespace) -> int:
     selected_request, diagnostics = real_idea_intake_execution_request_selection(
         request_state_path=request_state_path,
         selected_workspace_id=args.workspace_id,
+        selected_entry_request_id=args.request_id,
     )
 
     selected_workspace_id = (
@@ -7898,13 +7924,10 @@ def real_idea_entry_intake_execute_requested(args: argparse.Namespace) -> int:
         )
     )
     selected_entry_request_id = (
-        args.request_id
-        or (
-            selected_request.get("entry_request_id")
-            if isinstance(selected_request, dict)
-            and isinstance(selected_request.get("entry_request_id"), str)
-            else None
-        )
+        selected_request.get("entry_request_id")
+        if isinstance(selected_request, dict)
+        and isinstance(selected_request.get("entry_request_id"), str)
+        else args.request_id
     )
     selected_workspace_initialization = args.workspace_initialization or (
         selected_request.get("workspace_initialization_ref")

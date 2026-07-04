@@ -1912,9 +1912,16 @@ real-idea-intake-from-entry-request:
         entry_request_id: str = "real-idea-entry.pantry-rotation.20260704.abcd12",
         workspace_initialization_ref: str = "runs/pantry-rotation/platform_product_workspace_initialization_execution_report.json",
         authority_expanded: bool = False,
+        authority_value=None,
     ) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        may_execute_platform = True if authority_expanded else False
+        may_execute_platform = (
+            authority_value
+            if authority_value is not None
+            else True
+            if authority_expanded
+            else False
+        )
         path.write_text(
             json.dumps(
                 {
@@ -5164,6 +5171,74 @@ workspaces:
             codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
             self.assertIn(
                 "real_idea_intake_execution_request_authority_expanded",
+                codes,
+            )
+            self.assertFalse(payload["authority_boundary"]["executes_specgraph_make_target"])
+
+    def test_product_real_idea_intake_execute_requested_rejects_truthy_authority_value(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            execution_request = root / "specspace-state" / "real_idea_intake_execution_requests.json"
+            self.write_real_idea_intake_execution_request_state(
+                execution_request,
+                authority_value="true",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute-requested",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--execution-request",
+                str(execution_request),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_intake_execution_request_authority_expanded",
+                codes,
+            )
+
+    def test_product_real_idea_intake_execute_requested_rejects_request_id_mismatch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            execution_request = root / "specspace-state" / "real_idea_intake_execution_requests.json"
+            self.write_real_idea_intake_execution_request_state(execution_request)
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute-requested",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--execution-request",
+                str(execution_request),
+                "--request-id",
+                "real-idea-entry.other",
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_intake_execution_request_entry_request_mismatch",
                 codes,
             )
             self.assertFalse(payload["authority_boundary"]["executes_specgraph_make_target"])
