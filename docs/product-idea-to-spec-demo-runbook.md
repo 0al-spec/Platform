@@ -521,6 +521,37 @@ Authority boundaries remain unchanged:
 - Git Service dry-run does not create a worktree, commit, pull request, or read
   model publication.
 
+## Backend-Backed Workspace Creation Request
+
+After SpecSpace records a product workspace creation request, Platform can
+validate it and produce a report-only initialization plan. This bridges the UI
+route to the future workspace initialization boundary:
+
+```bash
+scripts/platform.py workspace initialize-from-request \
+  --creation-request <specspace-state>/product_workspace_creation_requests.json \
+  --workspace-id <workspace-id> \
+  --catalog workspaces.local.yaml \
+  --path "${ORG_ROOT}/<workspace-dir>" \
+  --output <run-dir>/product_workspace_initialization_plan.json \
+  --format json
+```
+
+Expected result:
+
+- `artifact_kind: platform_product_workspace_initialization_plan`;
+- `summary.ready_for_platform_initialization: true`;
+- `pending_catalog_entry.project_id` matches the selected workspace id;
+- `summary.catalog_written: false`;
+- `summary.workspace_files_created: false`;
+- `authority_boundary.updates_workspace_catalog: false`.
+
+This command intentionally does not update the workspace catalog, create
+workspace files, run SpecGraph, create Git commits, publish read models, or
+mutate canonical specs. It only converts SpecSpace-owned creation intent into a
+Platform-validated initialization plan. Actual catalog mutation and workspace
+file initialization remain a later controlled execution step.
+
 ## Real Idea Entry and Answer Continuation Handoffs
 
 After SpecSpace stores a raw idea entry request, Platform can hand it to

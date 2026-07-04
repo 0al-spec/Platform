@@ -8,6 +8,13 @@ asks not to. Keep the PR scoped to the task, push the branch, include the
 validation performed, and use the repository pull request template when one
 exists.
 
+## Python Environment
+
+Use the repository virtual environment for local Python commands. Prefer
+`.venv/bin/python` directly or run Make targets that default to it when present.
+Do not run broad local validation with the system Python unless no repository
+virtual environment exists yet.
+
 ## 0AL Local Ops Logging
 
 For cross-repo observations, coordination tasks, blockers, or handoffs, write a
