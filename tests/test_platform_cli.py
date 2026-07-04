@@ -1854,6 +1854,56 @@ real-idea-intake-from-entry-request:
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
 
+    def write_workspace_initialization_execution_report(
+        self,
+        path: Path,
+        *,
+        workspace_id: str = "pantry-rotation",
+        display_name: str = "Pantry Rotation",
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "artifact_kind": "platform_product_workspace_initialization_execution_report",
+                    "schema_version": 1,
+                    "ok": True,
+                    "dry_run": False,
+                    "workspace": {
+                        "workspace_id": workspace_id,
+                        "display_name": display_name,
+                        "route": f"/{workspace_id}",
+                        "workspace_root": f"/tmp/{workspace_id}",
+                        "governance_profile": "product_workspace",
+                        "repository_role": "product_spec_workspace",
+                    },
+                    "catalog_ref": "runs/product_workspaces_catalog.json",
+                    "specgraph_initialization_report_ref": (
+                        f"runs/{workspace_id}/product_workspace_initialization.json"
+                    ),
+                    "authority_boundary": {
+                        "creates_git_commits": False,
+                        "opens_pull_requests": False,
+                        "publishes_read_models": False,
+                        "mutates_canonical_specs": False,
+                        "writes_ontology_packages": False,
+                        "accepts_ontology_terms": False,
+                    },
+                    "summary": {
+                        "status": "workspace_initialization_executed",
+                        "error_count": 0,
+                        "specgraph_executed": True,
+                        "catalog_written": True,
+                        "workspace_files_created": True,
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
     def build_graph_repository_execution_plan(
         self,
         tmp_root: Path,
@@ -4875,6 +4925,148 @@ workspaces:
             self.assertTrue(payload["output_artifacts"]["raw_input"]["local_only"])
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_real_idea_intake_binds_initialized_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            entry_requests = root / "specspace-state" / "real_idea_entry_requests.json"
+            entry_requests.parent.mkdir()
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+            initialization = root / "platform_product_workspace_initialization_execution_report.json"
+            self.write_workspace_initialization_execution_report(initialization)
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-initialization",
+                str(initialization),
+                "--entry-requests",
+                str(entry_requests),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["run_dir"], "runs/pantry-rotation")
+            self.assertEqual(payload["summary"]["workspace_id"], "pantry-rotation")
+            self.assertEqual(
+                payload["summary"]["workspace_initialization_ref"],
+                str(initialization.resolve()),
+            )
+            self.assertEqual(
+                payload["workspace_initialization"]["workspace_id"],
+                "pantry-rotation",
+            )
+            self.assertEqual(
+                payload["target_make"]["variables"]["REAL_IDEA_SMOKE_RUN_DIR"],
+                "runs/pantry-rotation",
+            )
+            self.assertEqual(
+                payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ENTRY_WORKSPACE_ID"],
+                "pantry-rotation",
+            )
+            self.assertEqual(
+                payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ENTRY_REQUESTS"],
+                "runs/pantry-rotation/real_idea_entry_requests.json",
+            )
+            self.assertTrue(payload["entry_requests_copied_to_run_dir"])
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "pantry-rotation"
+                    / "real_idea_entry_requests.json"
+                ).is_file()
+            )
+
+    def test_product_real_idea_intake_rejects_workspace_initialization_mismatch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            entry_requests = root / "real_idea_entry_requests.json"
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+            initialization = root / "platform_product_workspace_initialization_execution_report.json"
+            self.write_workspace_initialization_execution_report(initialization)
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-initialization",
+                str(initialization),
+                "--workspace-id",
+                "different-workspace",
+                "--entry-requests",
+                str(entry_requests),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_entry_intake_workspace_initialization_workspace_mismatch",
+                codes,
+            )
+
+    def test_product_real_idea_intake_reports_bad_workspace_initialization_json(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            entry_requests = root / "real_idea_entry_requests.json"
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+            initialization = root / "platform_product_workspace_initialization_execution_report.json"
+            initialization.write_text("{not-json", encoding="utf-8")
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-initialization",
+                str(initialization),
+                "--entry-requests",
+                str(entry_requests),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_entry_intake_workspace_initialization_unreadable",
+                codes,
+            )
 
     def test_product_real_idea_intake_uses_inside_specgraph_entry_source_without_copy(
         self,
