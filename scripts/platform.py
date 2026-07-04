@@ -14873,6 +14873,9 @@ PRODUCT_WORKSPACE_CREATION_REQUEST_KIND = (
 PRODUCT_WORKSPACE_INITIALIZATION_REPORT_KIND = (
     "platform_product_workspace_initialization_plan"
 )
+PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_REQUEST_KIND = (
+    "platform_product_workspace_initialization_execution_request"
+)
 PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_KIND = (
     "platform_product_workspace_initialization_execution_report"
 )
@@ -14957,6 +14960,25 @@ def product_workspace_initialization_execution_boundary(
         "mutates_canonical_specs": False,
         "writes_ontology_packages": False,
         "accepts_ontology_terms": False,
+    }
+
+
+def product_workspace_initialization_execution_request_boundary() -> dict[str, Any]:
+    return {
+        "executes_specgraph": False,
+        "executes_platform": False,
+        "creates_workspace_files": False,
+        "updates_workspace_catalog": False,
+        "creates_git_commits": False,
+        "opens_pull_requests": False,
+        "publishes_read_models": False,
+        "mutates_canonical_specs": False,
+        "writes_ontology_packages": False,
+        "accepts_ontology_terms": False,
+        "may_execute_specgraph": False,
+        "may_execute_platform": False,
+        "may_write_catalog": False,
+        "may_create_workspace_files": False,
     }
 
 
@@ -15354,6 +15376,105 @@ def product_workspace_plan_diagnostics(
                 )
             )
     return diagnostics
+
+
+def build_product_workspace_initialization_execution_request(
+    *,
+    plan_path: Path,
+    output_path: Path | None,
+    operator_ref: str | None,
+    diagnostics: list[Diagnostic],
+) -> dict[str, Any]:
+    plan = load_json_mapping(plan_path, label="workspace initialization plan")
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    workspace = product_workspace_execution_plan_workspace(plan)
+    plan_digest = file_sha256(plan_path)
+    workspace_id = workspace.get("workspace_id") or ""
+    idempotency_basis = json.dumps(
+        {
+            "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_REQUEST_KIND,
+            "plan_ref": str(plan_path),
+            "plan_sha256": plan_digest,
+            "workspace_id": workspace_id,
+            "operation": "workspace.execute-initialization-plan",
+        },
+        sort_keys=True,
+    )
+    idempotency_key = hashlib.sha256(
+        idempotency_basis.encode("utf-8")
+    ).hexdigest()
+    return {
+        "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_REQUEST_KIND,
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "ok": error_count == 0,
+        "dry_run": False,
+        "request_only": True,
+        "plan_ref": str(plan_path),
+        "plan_sha256": plan_digest,
+        "operator_ref": operator_ref,
+        "requested_operation": "workspace.execute-initialization-plan",
+        "idempotency_key": idempotency_key,
+        "workspace": {
+            "workspace_id": workspace_id,
+            "display_name": workspace.get("display_name") or workspace_id,
+            "route": f"/{workspace_id}" if workspace_id else "",
+            "workspace_root": workspace.get("workspace_root") or "",
+            "governance_profile": workspace.get("governance_profile")
+            or "product_workspace",
+            "repository_role": "product_spec_workspace",
+        },
+        "workspace_binding": nested_mapping(plan, "workspace_binding"),
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "authority_boundary": product_workspace_initialization_execution_request_boundary(),
+        "local_files_written": (
+            [str(output_path)] if output_path is not None and error_count == 0 else []
+        ),
+        "summary": {
+            "status": "workspace_initialization_execution_requested"
+            if error_count == 0
+            else "workspace_initialization_execution_request_blocked",
+            "error_count": error_count,
+            "ready_for_managed_execution": error_count == 0,
+            "workspace_id": workspace_id,
+            "operation": "workspace.execute-initialization-plan",
+        },
+    }
+
+
+def workspace_request_initialization_execution(args: argparse.Namespace) -> int:
+    plan_path = Path(args.plan).resolve()
+    plan = load_json_mapping(plan_path, label="workspace initialization plan")
+    diagnostics = product_workspace_plan_diagnostics(plan)
+    output_path = Path(args.output).resolve() if args.output else None
+    report = build_product_workspace_initialization_execution_request(
+        plan_path=plan_path,
+        output_path=output_path,
+        operator_ref=args.operator_ref,
+        diagnostics=diagnostics,
+    )
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(
+            render_table(
+                [
+                    {
+                        "workspace": report["summary"].get("workspace_id") or "",
+                        "status": report["summary"]["status"],
+                        "ready": str(report["summary"]["ready_for_managed_execution"]).lower(),
+                    }
+                ],
+                [("workspace", "WORKSPACE"), ("status", "STATUS"), ("ready", "READY")],
+            )
+        )
+    return 0 if report["ok"] else 1
 
 
 def product_workspace_execution_plan_workspace(
@@ -17193,6 +17314,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     initialize_from_request_parser.set_defaults(
         func=workspace_initialize_from_creation_request
+    )
+
+    request_initialization_execution_parser = workspace_subcommands.add_parser(
+        "request-initialization-execution",
+        help=(
+            "Create a request-only handoff artifact for managed product "
+            "workspace initialization execution."
+        ),
+    )
+    request_initialization_execution_parser.add_argument(
+        "--plan",
+        required=True,
+        help="Path to a ready platform_product_workspace_initialization_plan.",
+    )
+    request_initialization_execution_parser.add_argument(
+        "--operator-ref",
+        help="Optional opaque operator/session ref for audit.",
+    )
+    request_initialization_execution_parser.add_argument(
+        "--output",
+        help="Optional path where the execution request artifact should be written.",
+    )
+    request_initialization_execution_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    request_initialization_execution_parser.set_defaults(
+        func=workspace_request_initialization_execution
     )
 
     execute_initialization_parser = workspace_subcommands.add_parser(

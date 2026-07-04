@@ -556,6 +556,30 @@ mutate canonical specs. It only converts SpecSpace-owned creation intent into a
 Platform-validated initialization plan. Actual catalog mutation and workspace
 file initialization remain a later controlled execution step.
 
+For hosted or queue-backed execution, Platform can also convert the ready plan
+into a request-only handoff artifact:
+
+```bash
+scripts/platform.py workspace request-initialization-execution \
+  --plan <run-dir>/product_workspace_initialization_plan.json \
+  --operator-ref operator://local-demo \
+  --output <run-dir>/product_workspace_initialization_execution_request.json \
+  --format json
+```
+
+Expected result:
+
+- `artifact_kind: platform_product_workspace_initialization_execution_request`;
+- `requested_operation: workspace.execute-initialization-plan`;
+- `summary.ready_for_managed_execution: true`;
+- `plan_sha256` and `idempotency_key` are present;
+- `workspace_binding` is copied from the initialization plan;
+- every authority flag remains `false`.
+
+This request does not execute Platform or SpecGraph. It is the durable handoff a
+future managed worker can validate before running the same controlled
+initialization operation.
+
 Once the initialization plan is ready, Platform can execute it through the
 SpecGraph-owned initializer:
 

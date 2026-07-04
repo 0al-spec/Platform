@@ -97,6 +97,15 @@ artifact-base URLs. These fields are coordination evidence only; they do not
 grant SpecSpace authority to initialize the workspace, write catalog entries,
 run SpecGraph, publish artifacts, or publish read models.
 
+For the hosted-service transition, Platform can now emit a separate
+`platform_product_workspace_initialization_execution_request` artifact from a
+ready initialization plan. The request pins the plan digest, requested operation,
+idempotency key, workspace binding, and request-only authority boundary. It is
+not an executor. A managed worker may later consume it and run
+`workspace.execute-initialization-plan`, but the request itself cannot create
+workspace files, update the catalog, execute SpecGraph, write Git history, or
+publish read models.
+
 ## Git Service Responsibilities
 
 The Git Service is the durable versioning and review subsystem for graph
