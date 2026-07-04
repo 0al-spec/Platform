@@ -216,6 +216,8 @@ class PlatformCliTests(unittest.TestCase):
                 "platform_product_workspace_initialization_execution_request",
             )
             self.assertTrue(payload["request_only"])
+            self.assertFalse(payload["canonical_mutations_allowed"])
+            self.assertFalse(payload["tracked_artifacts_written"])
             self.assertEqual(
                 payload["requested_operation"],
                 "workspace.execute-initialization-plan",
