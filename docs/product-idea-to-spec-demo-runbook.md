@@ -580,6 +580,19 @@ This request does not execute Platform or SpecGraph. It is the durable handoff a
 future managed worker can validate before running the same controlled
 initialization operation.
 
+To exercise that managed boundary locally, use the request-driven wrapper:
+
+```bash
+scripts/platform.py workspace execute-requested-initialization \
+  --execution-request <run-dir>/product_workspace_initialization_execution_request.json \
+  --format json
+```
+
+Expected result is the same execution report as
+`execute-initialization-plan`, with `execution_request_ref` pointing at the
+validated request. The wrapper rejects stale or tampered requests before running
+the initializer.
+
 Once the initialization plan is ready, Platform can execute it through the
 SpecGraph-owned initializer:
 

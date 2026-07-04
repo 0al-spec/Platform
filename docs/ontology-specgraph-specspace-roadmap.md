@@ -234,9 +234,10 @@ This separates the read path from the write path:
   service and validation result.
 - Product workspace initialization now has an intermediate
   `platform_product_workspace_initialization_execution_request` handoff. It
-  lets a future hosted/queue-backed worker receive a pinned plan digest and
-  idempotency key without letting SpecSpace or the browser execute Platform
-  directly.
+  lets a hosted/queue-backed worker receive a pinned plan digest and idempotency
+  key without letting SpecSpace or the browser execute Platform directly. The
+  local `workspace execute-requested-initialization` wrapper is the current
+  proof path for that boundary.
 
 ## Roadmap
 
