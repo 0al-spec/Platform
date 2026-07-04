@@ -58,14 +58,14 @@ changing the UI authority model.
 SpecSpace currently acts as an inspect/request surface. That remains the safe
 default: the browser may display artifacts and store operator-owned local state,
 but it must not mutate SpecGraph, Git repositories, Ontology packages, or public
-read models directly.
+read-models directly.
 
 The transition from read-only Product Workspace UX to managed operations should
 be staged:
 
-1. **Inspect-only lifecycle**: SpecSpace reads published artifacts, mutable
-   state hygiene, Idea Maturity, candidate overview, approval, and promotion
-   reports.
+1. **Inspect-only lifecycle**: SpecSpace reads published artifacts and reports
+   for mutable state hygiene, Idea Maturity, candidate overview, approval, and
+   promotion.
 2. **Operator-owned intent**: SpecSpace stores bounded local state such as raw
    idea entries, clarification answers, repair drafts, ontology decisions,
    rerun requests, approval intents, and future workspace creation intents.

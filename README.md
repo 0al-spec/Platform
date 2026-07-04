@@ -38,7 +38,7 @@ Platform owns:
 - calling a SpecGraph-owned initializer when workspace creation needs canonical
   SpecGraph semantics.
 
-SpecSpace may expose product workspace creation UI, but route navigation is not
+SpecSpace may expose a product workspace creation UI, but route navigation is not
 workspace authority. A production creation flow should pass operator intent to a
 Platform-owned boundary that records the workspace, validates identifiers and
 repository role, calls SpecGraph initialization when needed, and returns a
