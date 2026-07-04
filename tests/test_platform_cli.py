@@ -4204,6 +4204,106 @@ workspaces:
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
 
+    def test_product_real_idea_continuation_defaults_to_run_dir_answer_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            run_dir = specgraph_dir / "runs" / "idea-alpha"
+            answer_handoff = run_dir / "idea_to_spec_intake_clarification_answers.json"
+            answer_handoff.parent.mkdir(parents=True)
+            answer_handoff.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "specspace_idea_intake_clarification_answer_state",
+                        "answers": [
+                            {
+                                "workspace_id": "team-decision-log",
+                                "request_id": "clarification.intake.question-active-frame-domain-refs",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["answer_state_explicit"])
+            self.assertFalse(payload["answer_state_copied_to_run_dir"])
+            self.assertEqual(
+                payload["answer_state_source_ref"],
+                "runs/idea-alpha/idea_to_spec_intake_clarification_answers.json",
+            )
+            self.assertEqual(
+                payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ANSWER_STATE"],
+                "runs/idea-alpha/idea_to_spec_intake_clarification_answers.json",
+            )
+
+    def test_product_real_idea_continuation_rejects_implicit_handoff_overwrite(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            run_dir = specgraph_dir / "runs" / "idea-alpha"
+            handoff = run_dir / "idea_to_spec_intake_clarification_answers.json"
+            handoff.parent.mkdir(parents=True)
+            handoff.write_text('{"artifact_kind":"existing"}', encoding="utf-8")
+            external_answer_state = (
+                Path(tmp_dir)
+                / "specspace-state"
+                / "idea_to_spec_intake_clarification_answers.json"
+            )
+            external_answer_state.parent.mkdir(parents=True)
+            external_answer_state.write_text(
+                '{"artifact_kind":"replacement"}',
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--answer-state",
+                str(external_answer_state),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_answer_continuation_answer_state_handoff_exists",
+                codes,
+            )
+            self.assertFalse(payload["answer_state_copied_to_run_dir"])
+            self.assertEqual(
+                json.loads(handoff.read_text(encoding="utf-8"))["artifact_kind"],
+                "existing",
+            )
+
     def test_product_real_idea_continuation_execute_supports_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             specgraph_dir = Path(tmp_dir) / "SpecGraph"

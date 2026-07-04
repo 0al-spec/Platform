@@ -7090,11 +7090,13 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
                 message="run-dir must name a dedicated child directory",
             )
         )
-    answer_source = input_path_arg_or_existing(
-        args.answer_state,
-        base_dir=specgraph_dir,
-    )
     answer_handoff = run_dir / "idea_to_spec_intake_clarification_answers.json"
+    answer_state_explicit = bool(args.answer_state)
+    answer_source = (
+        input_path_arg_or_existing(args.answer_state, base_dir=specgraph_dir)
+        if answer_state_explicit
+        else answer_handoff
+    )
     if not args.dry_run and not answer_source.is_file():
         diagnostics.append(
             Diagnostic(
@@ -7102,6 +7104,24 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
                 code="real_idea_answer_continuation_answer_state_missing",
                 subject="answer_state",
                 message="SpecSpace real idea answer state file is required",
+            )
+        )
+    if (
+        not diagnostics
+        and answer_state_explicit
+        and answer_source.resolve() != answer_handoff.resolve()
+        and answer_handoff.exists()
+        and not args.overwrite_answer_state
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_answer_state_handoff_exists",
+                subject="answer_state",
+                message=(
+                    "run-dir already contains an answer-state handoff; pass "
+                    "--overwrite-answer-state to replace it explicitly"
+                ),
             )
         )
     answer_state_copied_to_run_dir = False
@@ -7221,6 +7241,7 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         "run_dir": run_dir_ref,
         "answer_state_source_ref": answer_state_source_ref,
         "answer_state_handoff_ref": f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json",
+        "answer_state_explicit": answer_state_explicit,
         "answer_state_copied_to_run_dir": answer_state_copied_to_run_dir,
         "answer_state_source_digest": file_sha256(answer_source)
         if answer_source.is_file()
@@ -16312,11 +16333,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     real_idea_continuation_execute_parser.add_argument(
         "--answer-state",
-        default="runs/real_idea_smoke/idea_to_spec_intake_clarification_answers.json",
         help=(
-            "SpecSpace-owned intake clarification answer state. If the path is "
-            "outside --specgraph-dir or outside --run-dir, Platform copies it "
-            "into --run-dir before invoking SpecGraph."
+            "SpecSpace-owned intake clarification answer state. If omitted, "
+            "Platform uses the existing handoff file in --run-dir. If the path "
+            "is outside --specgraph-dir or outside --run-dir, Platform copies "
+            "it into --run-dir before invoking SpecGraph."
+        ),
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--overwrite-answer-state",
+        action="store_true",
+        help=(
+            "Allow an explicit --answer-state outside --run-dir to replace an "
+            "existing run-dir answer-state handoff."
         ),
     )
     real_idea_continuation_execute_parser.add_argument(

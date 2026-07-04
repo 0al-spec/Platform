@@ -577,6 +577,17 @@ scripts/platform.py product-real-idea-continuation execute \
   --format json
 ```
 
+If the selected `--run-dir` already contains
+`idea_to_spec_intake_clarification_answers.json`, omit `--answer-state` to use
+that run-local handoff:
+
+```bash
+scripts/platform.py product-real-idea-continuation execute \
+  --specgraph-dir ../SpecGraph \
+  --run-dir runs/<idea-smoke-run> \
+  --format json
+```
+
 The command runs the fixed SpecGraph target:
 
 ```text
@@ -587,7 +598,10 @@ When `--answer-state` points outside the selected SpecGraph run directory,
 Platform copies it into that run directory and rewrites the handoff refs to the
 run-local `idea_intake_clarification_requests.json` and
 `real_idea_answer_template.json` artifacts. The source digest is still recorded
-in the execution report.
+in the execution report. If the run directory already has an answer-state
+handoff, Platform refuses to overwrite it unless the operator passes
+`--overwrite-answer-state`; this prevents a stale SpecSpace state file from
+silently replacing answers prepared for a different run.
 
 It writes:
 
