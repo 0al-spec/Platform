@@ -309,6 +309,183 @@ class PlatformCliTests(unittest.TestCase):
             self.assertEqual(payload["local_files_written"], [str(output_path.resolve())])
             self.assertTrue(output_path.is_file())
 
+    def test_workspace_execute_requested_initialization_uses_request_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog_path = root / "workspaces.yaml"
+            request_path = root / "product_workspace_creation_requests.json"
+            plan_path = root / "runs" / "product_workspace_initialization_plan.json"
+            execution_request_path = (
+                root / "runs" / "product_workspace_initialization_execution_request.json"
+            )
+            execution_report_path = (
+                root / "runs" / "platform_product_workspace_initialization_execution_report.json"
+            )
+            workspace_root = root / "PantryRotation"
+            catalog_path.write_text(
+                "schema_version: 1\n"
+                "artifact_kind: platform_workspace_catalog\n"
+                f"organization_root: {json.dumps(str(root))}\n"
+                "workspaces: []\n",
+                encoding="utf-8",
+            )
+            request_path.write_text(
+                json.dumps(workspace_creation_request(), indent=2),
+                encoding="utf-8",
+            )
+            plan_result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(request_path),
+                "--catalog",
+                str(catalog_path),
+                "--path",
+                str(workspace_root),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr + plan_result.stdout)
+            request_result = self.run_cli(
+                "workspace",
+                "request-initialization-execution",
+                "--plan",
+                "runs/product_workspace_initialization_plan.json",
+                "--output",
+                "runs/product_workspace_initialization_execution_request.json",
+                "--format",
+                "json",
+                cwd=root,
+            )
+            self.assertEqual(
+                request_result.returncode,
+                0,
+                request_result.stderr + request_result.stdout,
+            )
+
+            result = self.run_cli(
+                "workspace",
+                "execute-requested-initialization",
+                "--execution-request",
+                "runs/product_workspace_initialization_execution_request.json",
+                "--catalog",
+                str(catalog_path),
+                "--output",
+                str(execution_report_path),
+                "--dry-run",
+                "--format",
+                "json",
+                cwd=root,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_workspace_initialization_execution_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(
+                payload["summary"]["status"],
+                "workspace_initialization_dry_run",
+            )
+            self.assertEqual(
+                payload["execution_request_ref"],
+                str(execution_request_path.resolve()),
+            )
+            self.assertFalse(payload["summary"]["specgraph_executed"])
+            self.assertFalse(payload["summary"]["catalog_written"])
+
+    def test_workspace_execute_requested_initialization_blocks_digest_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan_path = root / "runs" / "product_workspace_initialization_plan.json"
+            request_path = (
+                root / "runs" / "product_workspace_initialization_execution_request.json"
+            )
+            output_path = root / "runs" / "execution_report.json"
+            plan_path.parent.mkdir(parents=True)
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "platform_product_workspace_initialization_plan",
+                        "schema_version": 1,
+                        "ok": True,
+                        "summary": {
+                            "ready_for_platform_initialization": True,
+                        },
+                        "authority_boundary": {},
+                        "workspace": {
+                            "workspace_id": "pantry-rotation",
+                            "display_name": "Pantry Rotation",
+                            "workspace_root": str(root / "PantryRotation"),
+                        },
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            request_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": (
+                            "platform_product_workspace_initialization_execution_request"
+                        ),
+                        "schema_version": 1,
+                        "ok": True,
+                        "request_only": True,
+                        "canonical_mutations_allowed": False,
+                        "tracked_artifacts_written": False,
+                        "plan_ref": "runs/product_workspace_initialization_plan.json",
+                        "plan_sha256": "0" * 64,
+                        "requested_operation": "workspace.execute-initialization-plan",
+                        "summary": {
+                            "ready_for_managed_execution": True,
+                        },
+                        "workspace": {
+                            "workspace_id": "pantry-rotation",
+                            "display_name": "Pantry Rotation",
+                            "workspace_root": str(root / "PantryRotation"),
+                        },
+                        "authority_boundary": {
+                            "executes_platform": False,
+                            "executes_specgraph": False,
+                        },
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "workspace",
+                "execute-requested-initialization",
+                "--execution-request",
+                str(request_path),
+                "--output",
+                str(output_path),
+                "--dry-run",
+                "--format",
+                "json",
+                cwd=root,
+            )
+
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(
+                payload["summary"]["status"],
+                "workspace_initialization_blocked",
+            )
+            self.assertIn(
+                "product_workspace_initialization_execution_request_plan_digest_mismatch",
+                {item["code"] for item in payload["diagnostics"]},
+            )
+            self.assertTrue(output_path.is_file())
+
     def test_workspace_initialize_from_request_blocks_duplicate_catalog_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

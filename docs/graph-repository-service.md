@@ -106,6 +106,12 @@ not an executor. A managed worker may later consume it and run
 workspace files, update the catalog, execute SpecGraph, write Git history, or
 publish read models.
 
+The local proof of that managed boundary is
+`workspace execute-requested-initialization`: it validates the request artifact,
+checks the pinned plan digest and workspace identity, then delegates to the
+fixed initialization operation. This keeps the execution authority in Platform
+while giving SpecSpace a durable request surface to display.
+
 ## Git Service Responsibilities
 
 The Git Service is the durable versioning and review subsystem for graph

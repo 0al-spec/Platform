@@ -15482,6 +15482,238 @@ def workspace_request_initialization_execution(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
+def resolve_workspace_initialization_request_plan_path(
+    *,
+    request_path: Path,
+    request: dict[str, Any],
+) -> Path:
+    plan_ref = request.get("plan_ref")
+    if not isinstance(plan_ref, str) or not plan_ref.strip():
+        raise PlatformError("workspace initialization execution request is missing plan_ref")
+    candidate = Path(plan_ref)
+    if candidate.is_absolute():
+        return candidate.resolve()
+    workspace_root = nested_mapping(request, "workspace").get("workspace_root")
+    candidates = []
+    if isinstance(workspace_root, str) and workspace_root.strip():
+        candidates.append(Path(workspace_root) / candidate)
+    candidates.extend(
+        [
+            Path.cwd() / candidate,
+            request_path.parent / candidate,
+            request_path.parent.parent / candidate,
+        ]
+    )
+    for item in candidates:
+        if item.is_file():
+            return item.resolve()
+    return candidates[0].resolve()
+
+
+def product_workspace_initialization_execution_request_diagnostics(
+    *,
+    request: dict[str, Any],
+    request_path: Path,
+    plan: dict[str, Any] | None,
+    plan_path: Path | None,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if request.get("artifact_kind") != PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_REQUEST_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_kind_mismatch",
+                subject="execution_request.artifact_kind",
+                message="execution request must be a Platform workspace initialization execution request",
+            )
+        )
+    if request.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_not_ready",
+                subject="execution_request.ok",
+                message="execution request must be ready before managed execution",
+            )
+        )
+    if request.get("request_only") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_not_request_only",
+                subject="execution_request.request_only",
+                message="execution request must declare request_only true",
+            )
+        )
+    if request.get("canonical_mutations_allowed") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_authority_expanded",
+                subject="execution_request.canonical_mutations_allowed",
+                message="execution request must not allow canonical mutations",
+            )
+        )
+    if request.get("tracked_artifacts_written") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_authority_expanded",
+                subject="execution_request.tracked_artifacts_written",
+                message="execution request must not claim tracked artifact writes",
+            )
+        )
+    if request.get("requested_operation") != "workspace.execute-initialization-plan":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_operation_mismatch",
+                subject="execution_request.requested_operation",
+                message="execution request must target workspace.execute-initialization-plan",
+            )
+        )
+    summary = nested_mapping(request, "summary")
+    if summary.get("ready_for_managed_execution") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_not_ready",
+                subject="execution_request.summary.ready_for_managed_execution",
+                message="execution request must be ready for managed execution",
+            )
+        )
+    boundary = nested_mapping(request, "authority_boundary")
+    for key, value in boundary.items():
+        if value is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_workspace_initialization_execution_request_authority_expanded",
+                    subject=f"execution_request.authority_boundary.{key}",
+                    message="execution request must remain request-only",
+                )
+            )
+    if plan is None or plan_path is None:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_plan_unreadable",
+                subject="execution_request.plan_ref",
+                message="execution request plan_ref must resolve to a readable plan",
+            )
+        )
+        return diagnostics
+    request_digest = request.get("plan_sha256")
+    actual_digest = file_sha256(plan_path)
+    if not isinstance(request_digest, str) or request_digest != actual_digest:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_plan_digest_mismatch",
+                subject="execution_request.plan_sha256",
+                message="execution request plan digest must match the selected plan",
+            )
+        )
+    request_workspace_id = nested_mapping(request, "workspace").get("workspace_id")
+    plan_workspace_id = nested_mapping(plan, "workspace").get("workspace_id")
+    if request_workspace_id != plan_workspace_id:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_workspace_mismatch",
+                subject="execution_request.workspace.workspace_id",
+                message="execution request workspace must match the selected plan workspace",
+            )
+        )
+    return diagnostics
+
+
+def workspace_execute_requested_initialization(args: argparse.Namespace) -> int:
+    request_path = Path(args.execution_request).resolve()
+    request = load_json_mapping(
+        request_path,
+        label="workspace initialization execution request",
+    )
+    plan_path: Path | None = None
+    plan: dict[str, Any] | None = None
+    plan_load_error: PlatformError | None = None
+    try:
+        plan_path = resolve_workspace_initialization_request_plan_path(
+            request_path=request_path,
+            request=request,
+        )
+        plan = load_json_mapping(plan_path, label="workspace initialization plan")
+    except PlatformError as exc:
+        plan_load_error = exc
+    diagnostics = product_workspace_initialization_execution_request_diagnostics(
+        request=request,
+        request_path=request_path,
+        plan=plan,
+        plan_path=plan_path,
+    )
+    if plan_load_error is not None:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_plan_unreadable",
+                subject="execution_request.plan_ref",
+                message=str(plan_load_error),
+            )
+        )
+    if any(diagnostic.level == "ERROR" for diagnostic in diagnostics):
+        workspace = (
+            product_workspace_execution_plan_workspace(plan)
+            if plan is not None
+            else {
+                "workspace_id": str(nested_mapping(request, "workspace").get("workspace_id") or ""),
+                "display_name": str(nested_mapping(request, "workspace").get("display_name") or ""),
+                "workspace_root": str(nested_mapping(request, "workspace").get("workspace_root") or ""),
+                "governance_profile": "product_workspace",
+            }
+        )
+        output_path = Path(args.output).resolve() if args.output else None
+        catalog_path = Path(args.catalog).resolve() if args.catalog else default_catalog_path()
+        report = build_product_workspace_initialization_execution_report(
+            plan_path=plan_path or Path(str(request.get("plan_ref") or "")).resolve(),
+            execution_request_path=request_path,
+            catalog_path=catalog_path,
+            workspace=workspace,
+            workspace_root=Path(workspace.get("workspace_root") or ".").resolve(),
+            execution_report_path=output_path,
+            specgraph_report_path=None,
+            artifact_base_url=args.artifact_base_url,
+            product_artifact_base_url=args.product_artifact_base_url,
+            catalog_written=False,
+            specgraph_executed=False,
+            dry_run=args.dry_run,
+            diagnostics=diagnostics,
+        )
+        if output_path is not None and not args.no_write_report:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if args.format == "json":
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(render_diagnostic_table(diagnostics))
+        return 1
+    child_args = argparse.Namespace(
+        plan=str(plan_path),
+        catalog=args.catalog,
+        artifact_base_url=args.artifact_base_url,
+        product_artifact_base_url=args.product_artifact_base_url,
+        path=args.path,
+        output=args.output,
+        dry_run=args.dry_run,
+        no_write_report=args.no_write_report,
+        format=args.format,
+        execution_request=str(request_path),
+    )
+    return workspace_execute_initialization_plan(child_args)
+
+
 def product_workspace_execution_plan_workspace(
     plan: dict[str, Any],
 ) -> dict[str, str]:
@@ -15545,6 +15777,7 @@ def product_workspace_execution_catalog_entry(
 def build_product_workspace_initialization_execution_report(
     *,
     plan_path: Path,
+    execution_request_path: Path | None = None,
     catalog_path: Path,
     workspace: dict[str, str],
     workspace_root: Path,
@@ -15573,6 +15806,11 @@ def build_product_workspace_initialization_execution_report(
         "ok": error_count == 0,
         "dry_run": dry_run,
         "plan_ref": str(plan_path),
+        "execution_request_ref": (
+            str(execution_request_path)
+            if execution_request_path is not None
+            else None
+        ),
         "catalog_ref": str(catalog_path),
         "workspace": {
             "workspace_id": workspace.get("workspace_id") or "",
@@ -15762,6 +16000,11 @@ def workspace_execute_initialization_plan(args: argparse.Namespace) -> int:
 
     report = build_product_workspace_initialization_execution_report(
         plan_path=plan_path,
+        execution_request_path=(
+            Path(args.execution_request).resolve()
+            if getattr(args, "execution_request", None)
+            else None
+        ),
         catalog_path=catalog_path,
         workspace=workspace,
         workspace_root=workspace_root,
@@ -17349,6 +17592,66 @@ def build_parser() -> argparse.ArgumentParser:
     )
     request_initialization_execution_parser.set_defaults(
         func=workspace_request_initialization_execution
+    )
+
+    execute_requested_initialization_parser = workspace_subcommands.add_parser(
+        "execute-requested-initialization",
+        help=(
+            "Validate a workspace initialization execution request, then run "
+            "the fixed initialization operation."
+        ),
+    )
+    execute_requested_initialization_parser.add_argument(
+        "--execution-request",
+        required=True,
+        help="Path to platform_product_workspace_initialization_execution_request.",
+    )
+    execute_requested_initialization_parser.add_argument(
+        "--catalog",
+        help=(
+            "Catalog to update. Defaults to the selected plan catalog_ref, then "
+            "normal workspace catalog discovery."
+        ),
+    )
+    execute_requested_initialization_parser.add_argument(
+        "--artifact-base-url",
+        help=(
+            "Optional root static artifact base URL for the execution report."
+        ),
+    )
+    execute_requested_initialization_parser.add_argument(
+        "--product-artifact-base-url",
+        help=(
+            "Optional explicit static artifact base URL for the selected product "
+            "workspace."
+        ),
+    )
+    execute_requested_initialization_parser.add_argument(
+        "--path",
+        help="Optional planned workspace root override.",
+    )
+    execute_requested_initialization_parser.add_argument(
+        "--output",
+        help="Optional path for the execution report.",
+    )
+    execute_requested_initialization_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the request and plan without running SpecGraph or writing the catalog.",
+    )
+    execute_requested_initialization_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the execution report.",
+    )
+    execute_requested_initialization_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    execute_requested_initialization_parser.set_defaults(
+        func=workspace_execute_requested_initialization
     )
 
     execute_initialization_parser = workspace_subcommands.add_parser(
