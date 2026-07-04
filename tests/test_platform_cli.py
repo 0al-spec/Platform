@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1409,23 +1410,44 @@ class PlatformCliTests(unittest.TestCase):
 
     def write_product_repair_makefile(self, specgraph_dir: Path) -> None:
         makefile = """\
+SPECSPACE_REPAIR_DRAFT_RERUN_REPORT_OUTPUT ?= runs/specspace_repair_draft_rerun_report.json
+IDEA_TO_SPEC_REPAIR_SESSION_OUTPUT ?= runs/idea_to_spec_repair_session.json
+IDEA_TO_SPEC_RERUN_PREVIEW_OUTPUT ?= runs/idea_to_spec_rerun_preview.json
+IDEA_TO_SPEC_RERUN_MATERIALIZATION_OUTPUT ?= runs/idea_to_spec_rerun_materialization.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_ACTIVE_CANDIDATE_OUTPUT ?= runs/repaired_active_idea_to_spec_candidate.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_CANDIDATE_GRAPH_OUTPUT ?= runs/repaired_candidate_spec_graph.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PRE_SIB_OUTPUT ?= runs/repaired_pre_sib_coherence_report.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_LOOP_OUTPUT ?= runs/repaired_candidate_repair_loop_report.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_MATERIALIZATION_OUTPUT ?= runs/repaired_candidate_spec_materialization_report.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PROMOTION_GATE_OUTPUT ?= runs/repaired_idea_to_spec_promotion_gate.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_SESSION_OUTPUT ?= runs/repaired_idea_to_spec_repair_session.json
+REPAIRED_CANDIDATE_PROMOTION_HANDOFF_OUTPUT ?= runs/repaired_candidate_promotion_handoff_report.json
+
+specspace-repair-draft-import-preview:
+\t@mkdir -p $$(dirname "$(SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT)")
+\t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_import_preview","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-import-preview.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repair_draft_import_preview_ready","blocked_by":[]},"summary":{"status":"repair_draft_import_preview_ready","accepted_for_rerun_count":1},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_import_into_specgraph":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > "$(SPECSPACE_REPAIR_DRAFT_IMPORT_OUTPUT)"
+
+specspace-repair-rerun-request-gate:
+\t@mkdir -p $$(dirname "$(SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT)")
+\t@printf '%s\\n' '{"artifact_kind":"specspace_repair_rerun_request_gate","contract_ref":"specgraph.idea-to-spec.specspace-repair-rerun-request-gate.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"ready","blocked_by":[]},"summary":{"selected_request_id":"repair-rerun-request.idea-alpha","workspace_id":"idea-alpha-workspace","candidate_id":"idea-alpha"},"resolved_inputs":{"workspace_id":"idea-alpha-workspace","candidate_id":"idea-alpha"},"recommended_invocation":{"make_target":"product-workspace-requested-repair-draft-rerun"},"authority_boundary":{"may_execute_specgraph_from_request":false,"may_run_make_target_from_request":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false,"may_open_pull_request":false,"may_execute_git_service_operation":false}}' > "$(SPECSPACE_REPAIR_RERUN_REQUEST_OUTPUT)"
+
 product-workspace-requested-repair-draft-rerun:
-\t@mkdir -p runs
-\t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_rerun_report","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-rerun.v0.1","readiness":{"ready":true,"review_state":"repair_draft_rerun_ready"},"summary":{"status":"ready"}}' > runs/specspace_repair_draft_rerun_report.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready"},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/idea_to_spec_promotion_gate.json"}}}' > runs/idea_to_spec_repair_session.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_preview"}' > runs/idea_to_spec_rerun_preview.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_materialization"}' > runs/idea_to_spec_rerun_materialization.json
+\t@mkdir -p $$(dirname "$(SPECSPACE_REPAIR_DRAFT_RERUN_REPORT_OUTPUT)") $$(dirname "$(IDEA_TO_SPEC_REPAIR_SESSION_OUTPUT)") $$(dirname "$(IDEA_TO_SPEC_RERUN_PREVIEW_OUTPUT)") $$(dirname "$(IDEA_TO_SPEC_RERUN_MATERIALIZATION_OUTPUT)")
+\t@printf '%s\\n' '{"artifact_kind":"specspace_repair_draft_rerun_report","contract_ref":"specgraph.idea-to-spec.specspace-repair-draft-rerun.v0.1","readiness":{"ready":true,"review_state":"repair_draft_rerun_ready"},"summary":{"status":"ready"}}' > "$(SPECSPACE_REPAIR_DRAFT_RERUN_REPORT_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready"},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/idea_to_spec_promotion_gate.json"}}}' > "$(IDEA_TO_SPEC_REPAIR_SESSION_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_preview"}' > "$(IDEA_TO_SPEC_RERUN_PREVIEW_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_rerun_materialization"}' > "$(IDEA_TO_SPEC_RERUN_MATERIALIZATION_OUTPUT)"
 
 product-workspace-repaired-promotion-handoff:
-\t@mkdir -p runs
-\t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","contract_ref":"specgraph.idea-to-spec.active-candidate-source.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"active_candidate_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > runs/repaired_active_idea_to_spec_candidate.json
-\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_graph","readiness":{"ready":true,"review_state":"ready_for_pre_sib","blocked_by":[]},"summary":{"status":"ready_for_pre_sib"}}' > runs/repaired_candidate_spec_graph.json
-\t@printf '%s\\n' '{"artifact_kind":"pre_sib_coherence_report","readiness":{"ready":true,"review_state":"pre_sib_ready","blocked_by":[]},"summary":{"status":"pre_sib_ready"}}' > runs/repaired_pre_sib_coherence_report.json
-\t@printf '%s\\n' '{"artifact_kind":"candidate_repair_loop_report","readiness":{"ready":true,"review_state":"repair_preview_ready","blocked_by":[]},"summary":{"status":"repair_preview_ready"}}' > runs/repaired_candidate_repair_loop_report.json
-\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_materialization_report","readiness":{"ready":true,"review_state":"materialized_candidate_review_ready","blocked_by":[]},"summary":{"status":"materialized_candidate_review_ready"}}' > runs/repaired_candidate_spec_materialization_report.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_promotion_gate","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"ready_for_platform_promotion_request","blocked_by":[]},"promotion_request":{"paths":["specs/nodes/SG-SPEC-CANDIDATE.yaml"]},"summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_open_pull_request":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false}}' > runs/repaired_idea_to_spec_promotion_gate.json
-\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/repaired_active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/repaired_idea_to_spec_promotion_gate.json"}}}' > runs/repaired_idea_to_spec_repair_session.json
-\t@printf '%s\\n' '{"artifact_kind":"repaired_candidate_promotion_handoff_report","contract_ref":"specgraph.idea-to-spec.repaired-candidate-promotion-handoff.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repaired_candidate_promotion_handoff_ready","blocked_by":[]},"summary":{"status":"repaired_candidate_promotion_handoff_ready","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_candidate_gap_count":0,"unresolved_ontology_gap_count":0,"resolved_candidate_gap_count":1,"resolved_ontology_gap_count":1,"removed_gap_count":2},"output_artifacts":{"repaired_active_candidate":{"artifact_kind":"active_idea_to_spec_candidate","source_ref":"runs/repaired_active_idea_to_spec_candidate.json","summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1}},"repaired_repair_session":{"artifact_kind":"idea_to_spec_repair_session_journal","source_ref":"runs/repaired_idea_to_spec_repair_session.json","summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0}},"repaired_promotion_gate":{"artifact_kind":"idea_to_spec_promotion_gate","source_ref":"runs/repaired_idea_to_spec_promotion_gate.json","summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1}}},"authority_boundary":{"may_accept_ontology_terms":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_materialize_candidate_approval_decision":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > runs/repaired_candidate_promotion_handoff_report.json
+\t@mkdir -p $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_ACTIVE_CANDIDATE_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_CANDIDATE_GRAPH_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PRE_SIB_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_LOOP_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_MATERIALIZATION_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PROMOTION_GATE_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_SESSION_OUTPUT)") $$(dirname "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_OUTPUT)")
+\t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","contract_ref":"specgraph.idea-to-spec.active-candidate-source.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"active_candidate_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_ACTIVE_CANDIDATE_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_graph","readiness":{"ready":true,"review_state":"ready_for_pre_sib","blocked_by":[]},"summary":{"status":"ready_for_pre_sib"}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_CANDIDATE_GRAPH_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"pre_sib_coherence_report","readiness":{"ready":true,"review_state":"pre_sib_ready","blocked_by":[]},"summary":{"status":"pre_sib_ready"}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PRE_SIB_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"candidate_repair_loop_report","readiness":{"ready":true,"review_state":"repair_preview_ready","blocked_by":[]},"summary":{"status":"repair_preview_ready"}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_LOOP_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"candidate_spec_materialization_report","readiness":{"ready":true,"review_state":"materialized_candidate_review_ready","blocked_by":[]},"summary":{"status":"materialized_candidate_review_ready"}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_MATERIALIZATION_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_promotion_gate","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"ready_for_platform_promotion_request","blocked_by":[]},"promotion_request":{"paths":["specs/nodes/SG-SPEC-CANDIDATE.yaml"]},"summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1},"authority_boundary":{"may_create_branch_or_commit":false,"may_open_pull_request":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_PROMOTION_GATE_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0},"readiness_impact":{"intermediate_artifacts_ready":true,"ready_for_candidate_approval":true,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"runs/repaired_active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"runs/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"runs/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"runs/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"runs/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"runs/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"runs/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"runs/repaired_idea_to_spec_promotion_gate.json"}}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_REPAIR_SESSION_OUTPUT)"
+\t@printf '%s\\n' '{"artifact_kind":"repaired_candidate_promotion_handoff_report","contract_ref":"specgraph.idea-to-spec.repaired-candidate-promotion-handoff.v0.1","canonical_mutations_allowed":false,"tracked_artifacts_written":false,"readiness":{"ready":true,"review_state":"repaired_candidate_promotion_handoff_ready","blocked_by":[]},"summary":{"status":"repaired_candidate_promotion_handoff_ready","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_candidate_gap_count":0,"unresolved_ontology_gap_count":0,"resolved_candidate_gap_count":1,"resolved_ontology_gap_count":1,"removed_gap_count":2},"output_artifacts":{"repaired_active_candidate":{"artifact_kind":"active_idea_to_spec_candidate","source_ref":"runs/repaired_active_idea_to_spec_candidate.json","summary":{"candidate_id":"idea-alpha","workspace_route":"/idea-alpha","status":"active_candidate_ready","promotion_path_count":1}},"repaired_repair_session":{"artifact_kind":"idea_to_spec_repair_session_journal","source_ref":"runs/repaired_idea_to_spec_repair_session.json","summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":true,"ready_for_platform_promotion":false,"unresolved_ontology_gap_count":0,"unresolved_candidate_gap_count":0}},"repaired_promotion_gate":{"artifact_kind":"idea_to_spec_promotion_gate","source_ref":"runs/repaired_idea_to_spec_promotion_gate.json","summary":{"workspace_id":"idea-alpha","candidate_id":"idea-alpha","promotion_path_count":1}}},"authority_boundary":{"may_accept_ontology_terms":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_materialize_candidate_approval_decision":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false}}' > "$(REPAIRED_CANDIDATE_PROMOTION_HANDOFF_OUTPUT)"
 
 publish-bundle:
 \t@mkdir -p dist/specgraph-public/runs
@@ -1451,6 +1473,7 @@ publish-bundle:
         makefile = """\
 real-idea-intake-continue-from-specspace-answers:
 \t@mkdir -p $(REAL_IDEA_SMOKE_RUN_DIR)
+\t@test -f $(SPECSPACE_REAL_IDEA_ANSWER_STATE)
 \t@printf '%s\\n' '{"artifact_kind":"specspace_real_idea_answer_import_preview","contract_ref":"specgraph.idea-to-spec.specspace-real-idea-answer-import-preview.v0.1","readiness":{"ready":true,"review_state":"specspace_real_idea_answers_ready_for_continuation"},"summary":{"status":"specspace_real_idea_answers_ready_for_continuation","answer_count":1,"accepted_answer_count":1},"authority_boundary":{"may_execute_specgraph":false,"may_execute_platform":false,"may_apply_answers":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_prompt_published":false,"raw_model_output_published":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/specspace_real_idea_answer_import_preview.json
 \t@printf '%s\\n' '{"artifact_kind":"real_idea_answer_continuation_report","contract_ref":"specgraph.idea-to-spec.real-idea-answer-continuation.v0.1","readiness":{"ready":true,"review_state":"real_idea_answer_continuation_ready"},"summary":{"status":"real_idea_answer_continuation_ready","answer_count":1,"accepted_answer_count":1},"authority_boundary":{"may_execute_specgraph":false,"may_execute_platform":false,"may_apply_answers":false,"may_mutate_canonical_specs":false,"may_write_ontology_package":false,"may_accept_ontology_terms":false,"may_create_branch_or_commit":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_prompt_published":false,"raw_model_output_published":false},"outputs":{"validated_answers":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_intake_clarification_answers.json"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/real_idea_answer_continuation_report.json
 \t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_clarification_answer_set","answers":[{"request_id":"clarification.intake.domain","answer_kind":"answer_question","status":"accepted_for_candidate"}]}' > $(REAL_IDEA_SMOKE_RUN_DIR)/real_idea_answer_set.json
@@ -3507,6 +3530,52 @@ workspaces:
             "runs/repaired_candidate_promotion_handoff_report.json",
         )
 
+    def test_graph_repository_plan_accepts_isolated_repaired_source_refs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            runs_dir = specgraph_dir / "runs" / "ui-started-smoke"
+            runs_dir.mkdir(parents=True)
+            self.write_graph_repository_run_artifacts(
+                runs_dir,
+                candidate_ready=False,
+                repair_session_ready_for_candidate_approval=False,
+            )
+            self.write_graph_repository_repaired_run_artifacts(runs_dir)
+            active_ref = "runs/ui-started-smoke/repaired_active_idea_to_spec_candidate.json"
+            session_ref = "runs/ui-started-smoke/repaired_idea_to_spec_repair_session.json"
+            gate_ref = "runs/ui-started-smoke/repaired_idea_to_spec_promotion_gate.json"
+            repair_session_path = runs_dir / "repaired_idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            repair_session["source_artifacts"]["active_candidate"]["source_ref"] = active_ref
+            repair_session["source_artifacts"]["promotion_gate"]["source_ref"] = gate_ref
+            repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
+            handoff_path = runs_dir / "repaired_candidate_promotion_handoff_report.json"
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            handoff["output_artifacts"]["repaired_active_candidate"]["source_ref"] = active_ref
+            handoff["output_artifacts"]["repaired_repair_session"]["source_ref"] = session_ref
+            handoff["output_artifacts"]["repaired_promotion_gate"]["source_ref"] = gate_ref
+            handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                str(Path("graph-repository-service.example.json").resolve()),
+                "--runs-dir",
+                str(runs_dir),
+                "--repaired-handoff",
+                str(handoff_path),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["ready_for_branch"])
+
     def test_graph_repository_plan_prefers_runs_dir_repaired_handoff_path(
         self,
     ) -> None:
@@ -3820,6 +3889,214 @@ workspaces:
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
             self.assertEqual(payload["summary"]["workspace_id"], "idea-alpha-workspace")
 
+    def test_product_repair_rerun_import_preview_rebases_draft_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            repair_session_path = specgraph_dir / "runs" / "idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            repair_session["session"]["session_id"] = "repair-session.idea-alpha"
+            repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
+            draft_state = Path(tmp_dir) / "specspace-state" / "idea_to_spec_repair_drafts.json"
+            draft_state.parent.mkdir(parents=True)
+            draft_state.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "specspace_idea_to_spec_repair_draft_state",
+                        "schema_version": 1,
+                        "state_owner": "SpecSpace",
+                        "canonical_mutations_allowed": False,
+                        "tracked_artifacts_written": False,
+                        "source_artifacts": {
+                            "idea_to_spec_repair_session": "runs/stale_repair_session.json"
+                        },
+                        "drafts": [
+                            {
+                                "workspace_id": "idea-alpha-workspace",
+                                "candidate_id": "idea-alpha",
+                                "repair_session_ref": "runs/stale_repair_session.json",
+                                "source_artifact": "runs/stale_repair_session.json",
+                                "request_id": "clarification.repair.ontology-gap",
+                                "allowed_action": "propose_project_local_term",
+                                "answer_value": {"terms": ["Decision Owner"]},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            report_path = (
+                specgraph_dir
+                / "runs"
+                / "platform_product_repair_draft_import_preview_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "import-preview",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--draft-state",
+                str(draft_state),
+                "--repair-session",
+                "runs/idea_to_spec_repair_session.json",
+                "--clarification-requests",
+                "runs/idea_to_spec_clarification_requests.json",
+                "--workspace-id",
+                "idea-alpha-workspace",
+                "--output",
+                str(report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            persisted = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload, persisted)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_repair_draft_import_preview_execution_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(
+                payload["target_make"]["target"],
+                "specspace-repair-draft-import-preview",
+            )
+            self.assertTrue(payload["draft_state_copied_to_run_dir"])
+            handoff_state = json.loads(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "idea-alpha"
+                    / "idea_to_spec_repair_drafts.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                handoff_state["source_artifacts"]["idea_to_spec_repair_session"],
+                "runs/idea_to_spec_repair_session.json",
+            )
+            self.assertEqual(
+                handoff_state["drafts"][0]["repair_session_ref"],
+                "runs/idea_to_spec_repair_session.json",
+            )
+            self.assertEqual(
+                handoff_state["drafts"][0]["repair_session_id"],
+                "repair-session.idea-alpha",
+            )
+            self.assertTrue(payload["output_artifacts"]["import_preview"]["ready"])
+            self.assertEqual(
+                payload["output_artifacts"]["import_preview"]["summary"][
+                    "accepted_for_rerun_count"
+                ],
+                1,
+            )
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+
+    def test_product_repair_rerun_request_gate_runs_specgraph_target(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            runs_dir = specgraph_dir / "runs"
+            runs_dir.mkdir()
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            request_state = runs_dir / "idea_to_spec_repair_rerun_requests.json"
+            request_state.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "specspace_idea_to_spec_repair_rerun_request_state",
+                        "schema_version": 1,
+                        "state_owner": "SpecSpace",
+                        "canonical_mutations_allowed": False,
+                        "tracked_artifacts_written": False,
+                        "requests": [
+                            {
+                                "id": "repair-rerun-request.idea-alpha",
+                                "status": "requested",
+                                "requested_action": "prepare_repair_draft_rerun",
+                                "workspace_id": "idea-alpha-workspace",
+                                "candidate_id": "idea-alpha",
+                                "repair_session_ref": "runs/stale_repair_session.json",
+                                "draft_state_ref": "specspace-state://idea_to_spec_repair_drafts.json",
+                                "import_preview_ref": "runs/stale_import_preview.json",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            run_dir = runs_dir / "idea-alpha"
+            gate_path = run_dir / "specspace_repair_rerun_request_gate.json"
+            report_path = (
+                runs_dir
+                / "platform_product_repair_rerun_request_gate_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "request-gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--rerun-request",
+                "runs/idea_to_spec_repair_rerun_requests.json",
+                "--import-preview",
+                "runs/specspace_repair_draft_import_preview.json",
+                "--repair-session",
+                "runs/idea_to_spec_repair_session.json",
+                "--workspace-id",
+                "idea-alpha-workspace",
+                "--output-gate",
+                "runs/idea-alpha/specspace_repair_rerun_request_gate.json",
+                "--output",
+                str(report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_repair_rerun_request_gate_execution_report",
+            )
+            self.assertTrue(payload["ok"])
+            self.assertTrue(gate_path.is_file())
+            handoff_state = json.loads(
+                (run_dir / "idea_to_spec_repair_rerun_requests.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                handoff_state["requests"][0]["repair_session_ref"],
+                "runs/idea_to_spec_repair_session.json",
+            )
+            self.assertEqual(
+                handoff_state["requests"][0]["import_preview_ref"],
+                "runs/specspace_repair_draft_import_preview.json",
+            )
+            self.assertTrue(payload["request_state_copied_to_run_dir"])
+            self.assertEqual(
+                payload["target_make"]["target"],
+                "specspace-repair-rerun-request-gate",
+            )
+            self.assertEqual(
+                payload["output_artifacts"]["request_gate"]["artifact_kind"],
+                "specspace_repair_rerun_request_gate",
+            )
+            self.assertTrue(payload["output_artifacts"]["request_gate"]["ready"])
+            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+
     def test_product_real_idea_continuation_execute_runs_specgraph_target(
         self,
     ) -> None:
@@ -3827,6 +4104,26 @@ workspaces:
             specgraph_dir = Path(tmp_dir) / "SpecGraph"
             specgraph_dir.mkdir()
             self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            answer_state = (
+                Path(tmp_dir)
+                / "specspace-state"
+                / "idea_to_spec_intake_clarification_answers.json"
+            )
+            answer_state.parent.mkdir(parents=True)
+            answer_state.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "specspace_idea_intake_clarification_answer_state",
+                        "answers": [
+                            {
+                                "workspace_id": "team-decision-log",
+                                "request_id": "clarification.intake.question-active-frame-domain-refs",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             output = (
                 specgraph_dir
                 / "runs"
@@ -3840,6 +4137,8 @@ workspaces:
                 str(specgraph_dir),
                 "--run-dir",
                 "runs/idea-alpha",
+                "--answer-state",
+                str(answer_state),
                 "--output",
                 str(output),
                 "--format",
@@ -3864,6 +4163,39 @@ workspaces:
                 payload["target_make"]["variables"]["REAL_IDEA_SMOKE_RUN_DIR"],
                 "runs/idea-alpha",
             )
+            self.assertTrue(payload["answer_state_copied_to_run_dir"])
+            self.assertEqual(
+                payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ANSWER_STATE"],
+                "runs/idea-alpha/idea_to_spec_intake_clarification_answers.json",
+            )
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "idea-alpha"
+                    / "idea_to_spec_intake_clarification_answers.json"
+                ).exists()
+            )
+            handoff_state = json.loads(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "idea-alpha"
+                    / "idea_to_spec_intake_clarification_answers.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                handoff_state["source_artifacts"]["intake_clarification_requests"],
+                "runs/idea-alpha/idea_intake_clarification_requests.json",
+            )
+            self.assertEqual(
+                handoff_state["selected_workspace_id"],
+                "team-decision-log",
+            )
+            self.assertEqual(
+                handoff_state["source_artifacts"]["real_idea_answer_template"],
+                "runs/idea-alpha/real_idea_answer_template.json",
+            )
             self.assertEqual(payload["command_result"]["returncode"], 0)
             self.assertTrue(payload["output_artifacts"]["import_preview"]["ready"])
             self.assertTrue(
@@ -3871,6 +4203,106 @@ workspaces:
             )
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_real_idea_continuation_defaults_to_run_dir_answer_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            run_dir = specgraph_dir / "runs" / "idea-alpha"
+            answer_handoff = run_dir / "idea_to_spec_intake_clarification_answers.json"
+            answer_handoff.parent.mkdir(parents=True)
+            answer_handoff.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "specspace_idea_intake_clarification_answer_state",
+                        "answers": [
+                            {
+                                "workspace_id": "team-decision-log",
+                                "request_id": "clarification.intake.question-active-frame-domain-refs",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["answer_state_explicit"])
+            self.assertFalse(payload["answer_state_copied_to_run_dir"])
+            self.assertEqual(
+                payload["answer_state_source_ref"],
+                "runs/idea-alpha/idea_to_spec_intake_clarification_answers.json",
+            )
+            self.assertEqual(
+                payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ANSWER_STATE"],
+                "runs/idea-alpha/idea_to_spec_intake_clarification_answers.json",
+            )
+
+    def test_product_real_idea_continuation_rejects_implicit_handoff_overwrite(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            run_dir = specgraph_dir / "runs" / "idea-alpha"
+            handoff = run_dir / "idea_to_spec_intake_clarification_answers.json"
+            handoff.parent.mkdir(parents=True)
+            handoff.write_text('{"artifact_kind":"existing"}', encoding="utf-8")
+            external_answer_state = (
+                Path(tmp_dir)
+                / "specspace-state"
+                / "idea_to_spec_intake_clarification_answers.json"
+            )
+            external_answer_state.parent.mkdir(parents=True)
+            external_answer_state.write_text(
+                '{"artifact_kind":"replacement"}',
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--answer-state",
+                str(external_answer_state),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_answer_continuation_answer_state_handoff_exists",
+                codes,
+            )
+            self.assertFalse(payload["answer_state_copied_to_run_dir"])
+            self.assertEqual(
+                json.loads(handoff.read_text(encoding="utf-8"))["artifact_kind"],
+                "existing",
+            )
 
     def test_product_real_idea_continuation_execute_supports_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -3931,6 +4363,40 @@ workspaces:
             )
             self.assertEqual(payload["output_artifacts"], {})
 
+    def test_product_real_idea_continuation_rejects_missing_answer_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--answer-state",
+                str(Path(tmp_dir) / "missing_answers.json"),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_answer_continuation_answer_state_missing",
+                codes,
+            )
+            self.assertEqual(
+                payload["operations"][0]["status"],
+                "skipped",
+            )
+
     def test_product_real_idea_continuation_rejects_output_authority_expansion(
         self,
     ) -> None:
@@ -3945,6 +4411,16 @@ workspaces:
                 1,
             )
             (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+            answer_state = (
+                Path(tmp_dir)
+                / "specspace-state"
+                / "idea_to_spec_intake_clarification_answers.json"
+            )
+            answer_state.parent.mkdir(parents=True)
+            answer_state.write_text(
+                '{"artifact_kind":"specspace_idea_intake_clarification_answer_state"}',
+                encoding="utf-8",
+            )
 
             result = self.run_cli(
                 "product-real-idea-continuation",
@@ -3953,6 +4429,8 @@ workspaces:
                 str(specgraph_dir),
                 "--run-dir",
                 "runs/idea-alpha",
+                "--answer-state",
+                str(answer_state),
                 "--no-write-report",
                 "--format",
                 "json",
@@ -4306,6 +4784,141 @@ workspaces:
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["ready_to_execute"])
 
+    def test_product_repair_rerun_plan_accepts_selected_run_dir_repair_session_refs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            runs_dir = specgraph_dir / "runs"
+            selected_run_dir = runs_dir / "idea-alpha"
+            selected_run_dir.mkdir()
+            for filename in (
+                "idea_to_spec_repair_rerun_requests.json",
+                "specspace_repair_draft_import_preview.json",
+                "specspace_repair_rerun_request_gate.json",
+                "idea_to_spec_repair_session.json",
+            ):
+                shutil.copyfile(runs_dir / filename, selected_run_dir / filename)
+            repair_session_path = selected_run_dir / "idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+            repair_session_path.write_text(
+                json.dumps(repair_session),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--rerun-request",
+                str(selected_run_dir / "idea_to_spec_repair_rerun_requests.json"),
+                "--import-preview",
+                str(selected_run_dir / "specspace_repair_draft_import_preview.json"),
+                "--repair-session",
+                str(repair_session_path),
+                "--request-gate",
+                str(selected_run_dir / "specspace_repair_rerun_request_gate.json"),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["ready_to_execute"])
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
+        self.assertEqual(
+            Path(payload["expected_outputs"]["repair_session"]).resolve(),
+            (selected_run_dir / "idea_to_spec_repair_session.json").resolve(),
+        )
+        self.assertEqual(
+            Path(payload["repaired_expected_outputs"]["repaired_handoff"]).resolve(),
+            (
+                selected_run_dir / "repaired_candidate_promotion_handoff_report.json"
+            ).resolve(),
+        )
+        self.assertEqual(
+            payload["target_make"]["variables"]["IDEA_TO_SPEC_REPAIR_SESSION_OUTPUT"],
+            "runs/idea-alpha/idea_to_spec_repair_session.json",
+        )
+        self.assertEqual(
+            payload["target_make"]["variables"]["SPECSPACE_REPAIR_DRAFT_IMPORT_DRAFTS"],
+            "runs/idea-alpha/idea_to_spec_repair_drafts.json",
+        )
+        self.assertEqual(
+            payload["target_make"]["variables"][
+                "SPECSPACE_REPAIR_DRAFT_IMPORT_CLARIFICATION_REQUESTS"
+            ],
+            "runs/idea-alpha/idea_to_spec_clarification_requests.json",
+        )
+
+    def test_product_repair_rerun_plan_rejects_stale_selected_run_dir_repair_session_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            runs_dir = specgraph_dir / "runs"
+            selected_run_dir = runs_dir / "idea-alpha"
+            selected_run_dir.mkdir()
+            for filename in (
+                "idea_to_spec_repair_rerun_requests.json",
+                "specspace_repair_draft_import_preview.json",
+                "specspace_repair_rerun_request_gate.json",
+                "idea_to_spec_repair_session.json",
+            ):
+                shutil.copyfile(runs_dir / filename, selected_run_dir / filename)
+            repair_session_path = selected_run_dir / "idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+            repair_session["source_artifacts"]["rerun_preview"][
+                "source_ref"
+            ] = "runs/idea-alpha/stale_rerun_preview.json"
+            repair_session_path.write_text(
+                json.dumps(repair_session),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--rerun-request",
+                str(selected_run_dir / "idea_to_spec_repair_rerun_requests.json"),
+                "--import-preview",
+                str(selected_run_dir / "specspace_repair_draft_import_preview.json"),
+                "--repair-session",
+                str(repair_session_path),
+                "--request-gate",
+                str(selected_run_dir / "specspace_repair_rerun_request_gate.json"),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_repair_session_source_ref_stale", codes)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["ready_to_execute"])
+
     def test_product_repair_rerun_execute_runs_specgraph_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             specgraph_dir = Path(tmp_dir) / "SpecGraph"
@@ -4398,6 +5011,10 @@ workspaces:
             )
             self.assertTrue(payload["summary"]["repaired_handoff_requested"])
             self.assertTrue(payload["summary"]["repaired_handoff_built"])
+            self.assertTrue(payload["summary"]["rerun_report_ready"])
+            self.assertFalse(
+                payload["summary"]["rerun_report_accepted_as_intermediate_evidence"]
+            )
             self.assertIsInstance(
                 payload["summary"]["repaired_handoff_digest"],
                 str,
@@ -4430,6 +5047,144 @@ workspaces:
                     / "runs"
                     / "repaired_candidate_promotion_handoff_report.json"
                 ).is_file()
+            )
+
+    def test_product_repair_rerun_execute_surfaces_intermediate_rerun_report(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            makefile = (specgraph_dir / "Makefile").read_text(encoding="utf-8")
+            makefile = makefile.replace(
+                '"readiness":{"ready":true,"review_state":"repair_draft_rerun_ready"}',
+                '"readiness":{"ready":false,"review_state":"repair_draft_rerun_review_required"}',
+            )
+            makefile = makefile.replace(
+                '"summary":{"status":"ready"}}',
+                '"summary":{"status":"repair_draft_rerun_review_required"}}',
+            )
+            (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            execution_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_execution.json"
+            )
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--output",
+                str(execution_report_path),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["summary"]["rerun_report_ready"])
+        self.assertTrue(
+            payload["summary"]["rerun_report_accepted_as_intermediate_evidence"]
+        )
+        self.assertEqual(
+            payload["output_artifacts"]["rerun_report"]["status"],
+            "repair_draft_rerun_review_required",
+        )
+
+    def test_product_repair_rerun_execute_builds_repaired_handoff_in_run_dir(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            selected_run_dir = specgraph_dir / "runs" / "idea-alpha"
+            selected_run_dir.mkdir()
+            for filename in (
+                "idea_to_spec_repair_rerun_requests.json",
+                "specspace_repair_draft_import_preview.json",
+                "specspace_repair_rerun_request_gate.json",
+                "idea_to_spec_repair_session.json",
+            ):
+                shutil.copyfile(
+                    specgraph_dir / "runs" / filename,
+                    selected_run_dir / filename,
+                )
+            repair_session_path = selected_run_dir / "idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+            repair_session_path.write_text(
+                json.dumps(repair_session),
+                encoding="utf-8",
+            )
+            plan_path = selected_run_dir / "product_repair_rerun_plan.json"
+            execution_report_path = selected_run_dir / "product_repair_rerun_execution.json"
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stdout)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--output",
+                str(execution_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertTrue(
+                (
+                    selected_run_dir
+                    / "repaired_candidate_promotion_handoff_report.json"
+                ).is_file()
+            )
+            self.assertFalse(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "repaired_candidate_promotion_handoff_report.json"
+                ).is_file()
+            )
+            self.assertEqual(
+                Path(payload["output_artifacts"]["repaired_handoff"]["path"]).resolve(),
+                (
+                    selected_run_dir / "repaired_candidate_promotion_handoff_report.json"
+                ).resolve(),
             )
 
     def test_product_repair_rerun_execute_rejects_tampered_plan_target(
@@ -6775,6 +7530,62 @@ workspaces:
             payload["source_refs"]["repaired_handoff"],
             "runs/repaired_candidate_promotion_handoff_report.json",
         )
+
+    def test_product_candidate_approval_gate_accepts_isolated_repaired_input_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+            )
+            isolated_dir = specgraph_dir / "runs" / "ui-started-smoke"
+            isolated_dir.mkdir()
+            for filename in (
+                "repaired_active_idea_to_spec_candidate.json",
+                "repaired_idea_to_spec_repair_session.json",
+                "repaired_idea_to_spec_promotion_gate.json",
+                "repaired_candidate_promotion_handoff_report.json",
+            ):
+                shutil.copyfile(
+                    specgraph_dir / "runs" / filename,
+                    isolated_dir / filename,
+                )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--active-candidate",
+                str(isolated_dir / "repaired_active_idea_to_spec_candidate.json"),
+                "--repair-session",
+                str(isolated_dir / "repaired_idea_to_spec_repair_session.json"),
+                "--promotion-gate",
+                str(isolated_dir / "repaired_idea_to_spec_promotion_gate.json"),
+                "--repaired-handoff",
+                str(isolated_dir / "repaired_candidate_promotion_handoff_report.json"),
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+                cwd=specgraph_dir,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ready_to_materialize"])
 
     def test_product_candidate_approval_gate_rejects_stale_repaired_handoff_ref(
         self,
