@@ -269,6 +269,219 @@ class PlatformCliTests(unittest.TestCase):
             {item["code"] for item in payload["diagnostics"]},
         )
 
+    def test_workspace_initialize_from_request_blocks_authority_state_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog_path = root / "workspaces.yaml"
+            request_path = root / "product_workspace_creation_requests.json"
+            catalog_path.write_text(
+                "schema_version: 1\n"
+                "artifact_kind: platform_workspace_catalog\n"
+                f"organization_root: {json.dumps(str(root))}\n"
+                "workspaces: []\n",
+                encoding="utf-8",
+            )
+            request = workspace_creation_request()
+            request["authority_boundary"][
+                "product_workspace_creation_request_state_is_authority"
+            ] = True
+            request["requests"][0]["authority_boundary"][
+                "product_workspace_creation_request_state_is_authority"
+            ] = True
+            request_path.write_text(json.dumps(request, indent=2), encoding="utf-8")
+
+            result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(request_path),
+                "--catalog",
+                str(catalog_path),
+                "--path",
+                str(root / "PantryRotation"),
+                "--format",
+                "json",
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        subjects = {item["subject"] for item in payload["diagnostics"]}
+        self.assertIn(
+            "creation_request.authority_boundary.product_workspace_creation_request_state_is_authority",
+            subjects,
+        )
+        self.assertIn(
+            "creation_request.requests[].authority_boundary.product_workspace_creation_request_state_is_authority",
+            subjects,
+        )
+
+    def test_workspace_initialize_from_request_blocks_report_authority_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog_path = root / "workspaces.yaml"
+            request_path = root / "product_workspace_creation_requests.json"
+            catalog_path.write_text(
+                "schema_version: 1\n"
+                "artifact_kind: platform_workspace_catalog\n"
+                f"organization_root: {json.dumps(str(root))}\n"
+                "workspaces: []\n",
+                encoding="utf-8",
+            )
+            request = workspace_creation_request()
+            request["requests"][0]["authority_boundary"]["updates_workspace_catalog"] = True
+            request["requests"][0]["authority_boundary"]["creates_git_commits"] = True
+            request_path.write_text(json.dumps(request, indent=2), encoding="utf-8")
+
+            result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(request_path),
+                "--catalog",
+                str(catalog_path),
+                "--path",
+                str(root / "PantryRotation"),
+                "--format",
+                "json",
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        subjects = {item["subject"] for item in payload["diagnostics"]}
+        self.assertIn(
+            "creation_request.requests[].authority_boundary.updates_workspace_catalog",
+            subjects,
+        )
+        self.assertIn(
+            "creation_request.requests[].authority_boundary.creates_git_commits",
+            subjects,
+        )
+
+    def test_workspace_initialize_from_request_rejects_non_product_workspace_id(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog_path = root / "workspaces.yaml"
+            request_path = root / "product_workspace_creation_requests.json"
+            catalog_path.write_text(
+                "schema_version: 1\n"
+                "artifact_kind: platform_workspace_catalog\n"
+                f"organization_root: {json.dumps(str(root))}\n"
+                "workspaces: []\n",
+                encoding="utf-8",
+            )
+            request_path.write_text(
+                json.dumps(
+                    workspace_creation_request(workspace_id="pantry_rotation"),
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(request_path),
+                "--catalog",
+                str(catalog_path),
+                "--path",
+                str(root / "PantryRotation"),
+                "--format",
+                "json",
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertIn(
+            "product_workspace_creation_workspace_id_invalid",
+            {item["code"] for item in payload["diagnostics"]},
+        )
+
+    def test_workspace_initialize_from_request_avoids_spurious_duplicate_for_invalid_id(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog_path = root / "workspaces.yaml"
+            request_path = root / "product_workspace_creation_requests.json"
+            catalog_path.write_text(
+                "schema_version: 1\n"
+                "artifact_kind: platform_workspace_catalog\n"
+                f"organization_root: {json.dumps(str(root))}\n"
+                "workspaces:\n"
+                "  - display_name: Missing Project Id\n",
+                encoding="utf-8",
+            )
+            request = workspace_creation_request()
+            request["requests"][0]["workspace_id"] = None
+            request["requests"][0]["route"] = None
+            request_path.write_text(json.dumps(request, indent=2), encoding="utf-8")
+
+            result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(request_path),
+                "--catalog",
+                str(catalog_path),
+                "--path",
+                str(root / "PantryRotation"),
+                "--format",
+                "json",
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        codes = {item["code"] for item in payload["diagnostics"]}
+        self.assertIn("product_workspace_creation_workspace_id_invalid", codes)
+        self.assertNotIn("product_workspace_creation_catalog_duplicate", codes)
+
+    def test_workspace_initialize_from_request_rejects_output_inside_workspace(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog_path = root / "workspaces.yaml"
+            request_path = root / "product_workspace_creation_requests.json"
+            workspace_root = root / "PantryRotation"
+            output_path = workspace_root / "runs" / "product_workspace_initialization_plan.json"
+            catalog_path.write_text(
+                "schema_version: 1\n"
+                "artifact_kind: platform_workspace_catalog\n"
+                f"organization_root: {json.dumps(str(root))}\n"
+                "workspaces: []\n",
+                encoding="utf-8",
+            )
+            request_path.write_text(
+                json.dumps(workspace_creation_request(), indent=2),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(request_path),
+                "--catalog",
+                str(catalog_path),
+                "--path",
+                str(workspace_root),
+                "--output",
+                str(output_path),
+                "--format",
+                "json",
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(workspace_root.exists())
+        payload = json.loads(result.stdout)
+        self.assertIn(
+            "product_workspace_initialization_output_inside_workspace",
+            {item["code"] for item in payload["diagnostics"]},
+        )
+
     def write_graph_repository_run_artifacts(
         self,
         runs_dir: Path,
