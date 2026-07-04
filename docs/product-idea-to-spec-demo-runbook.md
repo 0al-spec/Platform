@@ -619,18 +619,28 @@ This is an intake handoff only. Platform does not run Git Service, create a
 branch/commit/PR, write Ontology packages, accept Ontology terms, or mutate
 canonical specs.
 
-After SpecSpace stores real-idea clarification answers, Platform can run the
-controlled continuation handoff without giving SpecSpace execution authority:
+After SpecSpace stores real-idea clarification answers, the user requests
+controlled continuation from the Product Workspace. SpecSpace stores that
+request as `real_idea_answer_continuation_execution_requests.json`; it still
+does not execute Platform or SpecGraph. Platform consumes that request with:
 
 ```bash
-scripts/platform.py product-real-idea-continuation execute \
+scripts/platform.py product-real-idea-continuation execute-requested \
   --specgraph-dir ../SpecGraph \
+  --execution-request <SpecSpace state dir>/real_idea_answer_continuation_execution_requests.json \
   --run-dir runs/<idea-smoke-run> \
-  --answer-state <SpecSpace state dir>/idea_to_spec_intake_clarification_answers.json \
+  --workspace-initialization <Platform initialization report> \
+  --intake-execution <Platform real idea intake execution report> \
   --format json
 ```
 
-If the selected `--run-dir` already contains
+The request points to the SpecSpace-owned answer state and the prior intake
+execution evidence. Platform validates the request-only authority boundary,
+workspace identity, workspace initialization, and successful non-dry-run intake
+execution before invoking SpecGraph.
+
+For low-level debugging, Platform can still execute directly against an answer
+state. If the selected `--run-dir` already contains
 `idea_to_spec_intake_clarification_answers.json`, omit `--answer-state` to use
 that run-local handoff:
 
