@@ -15410,6 +15410,8 @@ def build_product_workspace_initialization_execution_request(
         "ok": error_count == 0,
         "dry_run": False,
         "request_only": True,
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
         "plan_ref": plan_ref,
         "plan_sha256": plan_digest,
         "operator_ref": operator_ref,
