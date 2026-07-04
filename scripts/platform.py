@@ -230,6 +230,9 @@ PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS = tuple(
 REAL_IDEA_ANSWER_CONTINUATION_EXECUTION_REPORT_KIND = (
     "platform_real_idea_answer_continuation_execution_report"
 )
+REAL_IDEA_ANSWER_CONTINUATION_EXECUTION_REQUEST_KIND = (
+    "specspace_real_idea_answer_continuation_execution_request_state"
+)
 REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET = (
     "real-idea-intake-continue-from-specspace-answers"
 )
@@ -6618,6 +6621,296 @@ def real_idea_intake_execution_request_selection(
     return request, diagnostics
 
 
+def real_idea_answer_continuation_execution_request_boundary_diagnostics(
+    *,
+    mapping: dict[str, Any],
+    subject_prefix: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for key, value in sorted(mapping.items()):
+        if key.startswith("may_") or key in REAL_IDEA_INTAKE_EXECUTION_REQUEST_FALSE_FIELDS:
+            if value is False:
+                continue
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_execution_request_authority_expanded",
+                    subject=f"{subject_prefix}.{key}",
+                    message="real idea answer continuation execution request must remain request-only",
+                )
+            )
+    return diagnostics
+
+
+def real_idea_answer_continuation_execution_request_selection(
+    *,
+    request_state_path: Path,
+    selected_workspace_id: str | None,
+    selected_request_id: str | None,
+) -> tuple[dict[str, Any] | None, list[Diagnostic]]:
+    diagnostics: list[Diagnostic] = []
+    try:
+        state = load_json_mapping(
+            request_state_path,
+            label="real idea answer continuation execution request state",
+        )
+    except PlatformError as exc:
+        return None, [
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_execution_request_unreadable",
+                subject="execution_request",
+                message=str(exc),
+            )
+        ]
+
+    if state.get("artifact_kind") != REAL_IDEA_ANSWER_CONTINUATION_EXECUTION_REQUEST_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_execution_request_kind_mismatch",
+                subject="execution_request.artifact_kind",
+                message="execution request must be SpecSpace real idea answer continuation execution request state",
+            )
+        )
+    if state.get("state_owner") != "SpecSpace":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_execution_request_owner_mismatch",
+                subject="execution_request.state_owner",
+                message="execution request state must be owned by SpecSpace",
+            )
+        )
+    for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
+        if field in state and state.get(field) is not False:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_execution_request_authority_expanded",
+                    subject=f"execution_request.{field}",
+                    message="execution request must not claim write authority",
+                )
+            )
+    for boundary_name in ("consumer_boundary", "authority_boundary"):
+        diagnostics.extend(
+            real_idea_answer_continuation_execution_request_boundary_diagnostics(
+                mapping=nested_mapping(state, boundary_name),
+                subject_prefix=f"execution_request.{boundary_name}",
+            )
+        )
+
+    requests = state.get("requests")
+    if not isinstance(requests, list):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_execution_requests_missing",
+                subject="execution_request.requests",
+                message="execution request state must contain a requests list",
+            )
+        )
+        return None, diagnostics
+
+    candidates = [
+        item
+        for item in requests
+        if isinstance(item, dict)
+        and item.get("status") == "requested"
+        and (
+            selected_workspace_id is None
+            or item.get("workspace_id") == selected_workspace_id
+        )
+        and (
+            selected_request_id is None
+            or item.get("request_id") == selected_request_id
+        )
+    ]
+    if not candidates:
+        workspace_candidates = [
+            item
+            for item in requests
+            if isinstance(item, dict)
+            and item.get("status") == "requested"
+            and (
+                selected_workspace_id is None
+                or item.get("workspace_id") == selected_workspace_id
+            )
+        ]
+        if selected_request_id is not None and workspace_candidates:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_execution_request_id_mismatch",
+                    subject="execution_request.requests[].request_id",
+                    message="--request-id must match a requested continuation execution request_id",
+                )
+            )
+            return None, diagnostics
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_execution_request_missing",
+                subject="execution_request.requests",
+                message="no active requested answer continuation execution matches the selected workspace",
+            )
+        )
+        return None, diagnostics
+    if len(candidates) > 1:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_execution_request_ambiguous",
+                subject="execution_request.requests",
+                message="multiple requested answer continuation executions match the selected workspace",
+            )
+        )
+        return None, diagnostics
+
+    request = candidates[0]
+    workspace_id = request.get("workspace_id")
+    if not isinstance(workspace_id, str) or not PRODUCT_WORKSPACE_ID_RE.fullmatch(workspace_id):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_execution_request_workspace_invalid",
+                subject="execution_request.requests[].workspace_id",
+                message="execution request must include a safe product workspace id",
+            )
+        )
+    for ref_field in (
+        "answer_state_ref",
+        "intake_execution_ref",
+        "workspace_initialization_ref",
+    ):
+        ref_value = request.get(ref_field)
+        if not isinstance(ref_value, str) or not ref_value.strip():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code=f"real_idea_answer_continuation_execution_request_{ref_field}_missing",
+                    subject=f"execution_request.requests[].{ref_field}",
+                    message=f"execution request must reference {ref_field}",
+                )
+            )
+    for boundary_name in ("consumer_boundary", "authority_boundary"):
+        diagnostics.extend(
+            real_idea_answer_continuation_execution_request_boundary_diagnostics(
+                mapping=nested_mapping(request, boundary_name),
+                subject_prefix=f"execution_request.requests[].{boundary_name}",
+            )
+        )
+    return request, diagnostics
+
+
+def specspace_state_ref_to_path(ref: str, *, request_state_path: Path, base_dir: Path) -> Path:
+    prefix = "specspace-state://"
+    if ref.startswith(prefix):
+        return (request_state_path.parent / ref[len(prefix):]).resolve()
+    return input_path_arg_or_existing(ref, base_dir=base_dir)
+
+
+def real_idea_answer_continuation_intake_execution_binding(
+    *,
+    report_path: Path | None,
+    selected_workspace_id: str | None,
+) -> tuple[dict[str, Any] | None, list[Diagnostic]]:
+    if report_path is None:
+        return None, [
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_intake_execution_missing",
+                subject="intake_execution",
+                message="answer continuation execution request must reference a real idea intake execution report",
+            )
+        ]
+    diagnostics: list[Diagnostic] = []
+    try:
+        report = load_json_mapping(
+            report_path,
+            label="real idea intake execution report",
+        )
+    except PlatformError as exc:
+        return None, [
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_intake_execution_unreadable",
+                subject="intake_execution",
+                message=str(exc),
+            )
+        ]
+    if report.get("artifact_kind") != REAL_IDEA_ENTRY_INTAKE_EXECUTION_REPORT_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_intake_execution_kind_mismatch",
+                subject="intake_execution.artifact_kind",
+                message="intake execution input must be a Platform real idea intake execution report",
+            )
+        )
+    if report.get("ok") is not True or report.get("dry_run") is True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_intake_execution_not_ready",
+                subject="intake_execution.ok",
+                message="intake execution report must be successful and non-dry-run",
+            )
+        )
+    summary = nested_mapping(report, "summary")
+    workspace_id = summary.get("workspace_id")
+    if not isinstance(workspace_id, str) or not PRODUCT_WORKSPACE_ID_RE.fullmatch(workspace_id):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_intake_execution_workspace_invalid",
+                subject="intake_execution.summary.workspace_id",
+                message="intake execution report must include a safe product workspace id",
+            )
+        )
+    elif selected_workspace_id and selected_workspace_id != workspace_id:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_intake_execution_workspace_mismatch",
+                subject="intake_execution.summary.workspace_id",
+                message="intake execution workspace_id must match selected workspace",
+            )
+        )
+    boundary = nested_mapping(report, "authority_boundary")
+    for key in (
+        "executes_git_commands",
+        "opens_pull_requests",
+        "merges_pull_requests",
+        "writes_ontology_packages",
+        "accepts_ontology_terms",
+        "mutates_canonical_specs",
+        "publishes_private_artifacts",
+    ):
+        if boundary.get(key) is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_answer_continuation_intake_execution_authority_expanded",
+                    subject=f"intake_execution.authority_boundary.{key}",
+                    message="intake execution report must not claim downstream Git/Ontology/spec authority",
+                )
+            )
+    binding = {
+        "source_ref": str(report_path),
+        "source_digest": file_sha256(report_path) if report_path.is_file() else None,
+        "workspace_id": workspace_id if isinstance(workspace_id, str) else None,
+        "status": summary.get("status") if isinstance(summary.get("status"), str) else None,
+        "intake_session_status": summary.get("intake_session_status")
+        if isinstance(summary.get("intake_session_status"), str)
+        else None,
+        "answer_template_status": summary.get("answer_template_status")
+        if isinstance(summary.get("answer_template_status"), str)
+        else None,
+    }
+    return binding, diagnostics
+
+
 def product_repair_draft_import_make_command(
     *,
     draft_state_ref: str,
@@ -7549,6 +7842,8 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         "started_at": started_at,
         "specgraph_dir": str(specgraph_dir),
         "run_dir": run_dir_ref,
+        "execution_request_ref": getattr(args, "execution_request", None),
+        "intake_execution_ref": getattr(args, "intake_execution", None),
         "answer_state_source_ref": answer_state_source_ref,
         "answer_state_handoff_ref": f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json",
         "answer_state_explicit": answer_state_explicit,
@@ -7627,6 +7922,174 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
             )
         )
     return 0 if ok else 1
+
+
+def real_idea_answer_continuation_execute_requested(args: argparse.Namespace) -> int:
+    specgraph_dir = Path(args.specgraph_dir).resolve()
+    request_state_path = input_path_arg_or_existing(
+        args.execution_request,
+        base_dir=specgraph_dir,
+    )
+    selected_request, diagnostics = (
+        real_idea_answer_continuation_execution_request_selection(
+            request_state_path=request_state_path,
+            selected_workspace_id=args.workspace_id,
+            selected_request_id=args.request_id,
+        )
+    )
+
+    selected_workspace_id = (
+        args.workspace_id
+        or (
+            selected_request.get("workspace_id")
+            if isinstance(selected_request, dict)
+            and isinstance(selected_request.get("workspace_id"), str)
+            else None
+        )
+    )
+    selected_answer_state_ref = (
+        selected_request.get("answer_state_ref")
+        if isinstance(selected_request, dict)
+        and isinstance(selected_request.get("answer_state_ref"), str)
+        else None
+    )
+    selected_workspace_initialization = args.workspace_initialization or (
+        selected_request.get("workspace_initialization_ref")
+        if isinstance(selected_request, dict)
+        and isinstance(selected_request.get("workspace_initialization_ref"), str)
+        else None
+    )
+    selected_intake_execution_ref = args.intake_execution or (
+        selected_request.get("intake_execution_ref")
+        if isinstance(selected_request, dict)
+        and isinstance(selected_request.get("intake_execution_ref"), str)
+        else None
+    )
+    workspace_binding: dict[str, Any] | None = None
+    workspace_initialization_path: Path | None = None
+    if selected_workspace_initialization:
+        workspace_initialization_path = specspace_state_ref_to_path(
+            selected_workspace_initialization,
+            request_state_path=request_state_path,
+            base_dir=specgraph_dir,
+        )
+        workspace_binding, init_diagnostics = (
+            real_idea_entry_intake_workspace_initialization_binding(
+                report_path=workspace_initialization_path,
+                selected_workspace_id=selected_workspace_id,
+            )
+        )
+        diagnostics.extend(init_diagnostics)
+    intake_execution_binding: dict[str, Any] | None = None
+    intake_execution_path: Path | None = None
+    if selected_intake_execution_ref:
+        intake_execution_path = specspace_state_ref_to_path(
+            selected_intake_execution_ref,
+            request_state_path=request_state_path,
+            base_dir=specgraph_dir,
+        )
+    intake_execution_binding, intake_execution_diagnostics = (
+        real_idea_answer_continuation_intake_execution_binding(
+            report_path=intake_execution_path,
+            selected_workspace_id=selected_workspace_id,
+        )
+    )
+    diagnostics.extend(intake_execution_diagnostics)
+    run_dir = args.run_dir
+    if run_dir is None and selected_workspace_id:
+        run_dir = f"runs/{selected_workspace_id}"
+    selected_answer_state = args.answer_state
+    if selected_answer_state is None and selected_answer_state_ref:
+        selected_answer_state = str(
+            specspace_state_ref_to_path(
+                selected_answer_state_ref,
+                request_state_path=request_state_path,
+                base_dir=specgraph_dir,
+            )
+        )
+
+    output_path = (
+        Path(args.output)
+        if args.output
+        else specgraph_dir / "runs" / "platform_real_idea_answer_continuation_execution_report.json"
+    )
+    if diagnostics:
+        report = {
+            "schema_version": 1,
+            "artifact_kind": REAL_IDEA_ANSWER_CONTINUATION_EXECUTION_REPORT_KIND,
+            "generated_at": utc_now_iso(),
+            "specgraph_dir": str(specgraph_dir),
+            "execution_request_ref": str(request_state_path),
+            "workspace_initialization": workspace_binding,
+            "intake_execution": intake_execution_binding,
+            "ok": False,
+            "dry_run": args.dry_run,
+            "canonical_mutations_allowed": False,
+            "tracked_artifacts_written": False,
+            "authority_boundary": {
+                "executes_specgraph_make_target": False,
+                "executes_git_commands": False,
+                "opens_pull_requests": False,
+                "merges_pull_requests": False,
+                "writes_ontology_packages": False,
+                "accepts_ontology_terms": False,
+                "mutates_canonical_specs": False,
+                "publishes_private_artifacts": False,
+            },
+            "operations": [
+                {
+                    "name": "validate_specspace_real_idea_answer_continuation_execution_request",
+                    "status": "failed",
+                    "reason": "execution_request_invalid",
+                    "evidence": [str(request_state_path)],
+                }
+            ],
+            "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+            "summary": {
+                "status": "failed",
+                "error_count": sum(
+                    1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+                ),
+                "workspace_id": selected_workspace_id,
+                "request_id": (
+                    selected_request.get("request_id")
+                    if isinstance(selected_request, dict)
+                    else args.request_id
+                ),
+                "workspace_initialization_ref": str(workspace_initialization_path)
+                if workspace_initialization_path is not None
+                else None,
+                "intake_execution_ref": str(intake_execution_path)
+                if intake_execution_path is not None
+                else None,
+            },
+        }
+        if not args.no_write_report:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if args.format == "json":
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(render_diagnostic_table(diagnostics))
+        return 1
+
+    child_args = argparse.Namespace(
+        specgraph_dir=str(specgraph_dir),
+        run_dir=run_dir,
+        answer_state=selected_answer_state,
+        overwrite_answer_state=args.overwrite_answer_state,
+        python=args.python,
+        dry_run=args.dry_run,
+        output=args.output,
+        no_write_report=args.no_write_report,
+        format=args.format,
+        execution_request=str(request_state_path),
+        intake_execution=str(intake_execution_path) if intake_execution_path is not None else None,
+    )
+    return real_idea_answer_continuation_execute(child_args)
 
 
 def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
@@ -17752,6 +18215,103 @@ def build_parser() -> argparse.ArgumentParser:
     )
     real_idea_continuation_execute_parser.set_defaults(
         func=real_idea_answer_continuation_execute
+    )
+
+    real_idea_continuation_execute_requested_parser = (
+        real_idea_continuation_subcommands.add_parser(
+            "execute-requested",
+            help=(
+                "Validate a SpecSpace-owned real idea answer continuation "
+                "execution request, then run the fixed SpecGraph continuation "
+                "make target."
+            ),
+        )
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--execution-request",
+        required=True,
+        help=(
+            "SpecSpace-owned "
+            "real_idea_answer_continuation_execution_requests.json state."
+        ),
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--specgraph-dir",
+        default=str((REPO_ROOT.parent / "SpecGraph").resolve()),
+        help="Local SpecGraph checkout that owns the continuation make target.",
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--run-dir",
+        default=None,
+        help=(
+            "SpecGraph run directory for continuation artifacts. Defaults to "
+            "runs/<workspace-id> once the execution request has selected a workspace."
+        ),
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--answer-state",
+        default=None,
+        help=(
+            "Optional override for SpecSpace-owned intake clarification answer "
+            "state. Defaults to the answer_state_ref selected by the execution request."
+        ),
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--workspace-initialization",
+        help=(
+            "Optional override for platform_product_workspace_initialization_execution_report.json. "
+            "Defaults to the ref selected by the execution request."
+        ),
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--intake-execution",
+        help=(
+            "Optional override for platform_real_idea_entry_intake_execution_report.json. "
+            "Defaults to the ref selected by the execution request."
+        ),
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--workspace-id",
+        help="Optional workspace selector for the requested continuation execution.",
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--request-id",
+        help="Optional continuation execution request selector.",
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--overwrite-answer-state",
+        action="store_true",
+        help=(
+            "Allow the selected answer state outside --run-dir to replace an "
+            "existing run-dir answer-state handoff."
+        ),
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--python",
+        help="Optional PYTHON make variable passed to SpecGraph.",
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and render the make invocation without executing it.",
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--output",
+        help="Optional path where the execution report JSON should be written.",
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the execution report.",
+    )
+    real_idea_continuation_execute_requested_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    real_idea_continuation_execute_requested_parser.set_defaults(
+        func=real_idea_answer_continuation_execute_requested
     )
 
     real_idea_intake_parser = subcommands.add_parser(

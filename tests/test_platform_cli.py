@@ -1989,6 +1989,122 @@ real-idea-intake-from-entry-request:
             encoding="utf-8",
         )
 
+    def write_real_idea_answer_continuation_execution_request_state(
+        self,
+        path: Path,
+        *,
+        workspace_id: str = "pantry-rotation",
+        workspace_initialization_ref: str = "runs/pantry-rotation/platform_product_workspace_initialization_execution_report.json",
+        authority_expanded: bool = False,
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        may_execute_platform = True if authority_expanded else False
+        path.write_text(
+            json.dumps(
+                {
+                    "artifact_kind": "specspace_real_idea_answer_continuation_execution_request_state",
+                    "schema_version": 1,
+                    "state_owner": "SpecSpace",
+                    "canonical_mutations_allowed": False,
+                    "tracked_artifacts_written": False,
+                    "consumer_boundary": {
+                        "may_execute_specgraph": False,
+                        "may_execute_platform": may_execute_platform,
+                        "may_apply_answers": False,
+                        "may_mutate_canonical_specs": False,
+                        "may_write_ontology_package": False,
+                        "may_accept_ontology_terms": False,
+                        "may_create_branch_or_commit": False,
+                        "may_open_pull_request": False,
+                    },
+                    "authority_boundary": {
+                        "may_execute_specgraph": False,
+                        "may_execute_platform": False,
+                        "may_mutate_canonical_specs": False,
+                        "may_write_ontology_package": False,
+                        "may_accept_ontology_terms": False,
+                        "may_create_branch_or_commit": False,
+                        "may_open_pull_request": False,
+                    },
+                    "requests": [
+                        {
+                            "request_id": "real-idea-answer-continuation-execute.pantry-rotation.20260704.abcd12",
+                            "workspace_id": workspace_id,
+                            "answer_state_ref": "specspace-state://idea_to_spec_intake_clarification_answers.json",
+                            "answer_template_ref": "runs/real_idea_smoke/real_idea_answer_template.json",
+                            "intake_execution_ref": "runs/platform_real_idea_entry_intake_execution_report.json",
+                            "workspace_initialization_ref": workspace_initialization_ref,
+                            "status": "requested",
+                            "consumer_boundary": {
+                                "may_execute_specgraph": False,
+                                "may_execute_platform": False,
+                                "may_apply_answers": False,
+                                "may_mutate_canonical_specs": False,
+                                "may_write_ontology_package": False,
+                                "may_accept_ontology_terms": False,
+                                "may_create_branch_or_commit": False,
+                                "may_open_pull_request": False,
+                            },
+                            "authority_boundary": {
+                                "may_execute_specgraph": False,
+                                "may_execute_platform": False,
+                                "may_mutate_canonical_specs": False,
+                                "may_write_ontology_package": False,
+                                "may_accept_ontology_terms": False,
+                                "may_create_branch_or_commit": False,
+                                "may_open_pull_request": False,
+                            },
+                        }
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def write_real_idea_entry_intake_execution_report(
+        self,
+        path: Path,
+        *,
+        workspace_id: str = "pantry-rotation",
+        authority_expanded: bool = False,
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "artifact_kind": "platform_real_idea_entry_intake_execution_report",
+                    "schema_version": 1,
+                    "ok": True,
+                    "dry_run": False,
+                    "canonical_mutations_allowed": False,
+                    "tracked_artifacts_written": False,
+                    "authority_boundary": {
+                        "executes_specgraph_make_target": True,
+                        "executes_git_commands": False,
+                        "opens_pull_requests": False,
+                        "merges_pull_requests": False,
+                        "writes_ontology_packages": authority_expanded,
+                        "accepts_ontology_terms": False,
+                        "mutates_canonical_specs": False,
+                        "publishes_private_artifacts": False,
+                    },
+                    "summary": {
+                        "status": "completed",
+                        "workspace_id": workspace_id,
+                        "intake_session_status": "needs_clarification",
+                        "answer_template_status": "real_idea_answer_template_ready",
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
     def build_graph_repository_execution_plan(
         self,
         tmp_root: Path,
@@ -4693,6 +4809,131 @@ workspaces:
             )
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_real_idea_continuation_execute_requested_uses_specspace_request(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            state_dir = root / "specspace-state"
+            answer_state = state_dir / "idea_to_spec_intake_clarification_answers.json"
+            answer_state.parent.mkdir(parents=True)
+            answer_state.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "specspace_idea_intake_clarification_answer_state",
+                        "answers": [
+                            {
+                                "workspace_id": "pantry-rotation",
+                                "request_id": "clarification.intake.domain",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            initialization = root / "platform_product_workspace_initialization_execution_report.json"
+            self.write_workspace_initialization_execution_report(initialization)
+            self.write_real_idea_entry_intake_execution_report(
+                specgraph_dir / "runs" / "platform_real_idea_entry_intake_execution_report.json"
+            )
+            execution_request = (
+                state_dir / "real_idea_answer_continuation_execution_requests.json"
+            )
+            self.write_real_idea_answer_continuation_execution_request_state(
+                execution_request,
+                workspace_initialization_ref=str(initialization),
+            )
+            output = (
+                specgraph_dir
+                / "runs"
+                / "platform_real_idea_answer_continuation_execution_report.json"
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute-requested",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--execution-request",
+                str(execution_request),
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["execution_request_ref"], str(execution_request.resolve()))
+            self.assertEqual(
+                payload["intake_execution_ref"],
+                str(
+                    (
+                        specgraph_dir
+                        / "runs"
+                        / "platform_real_idea_entry_intake_execution_report.json"
+                    ).resolve()
+                ),
+            )
+            self.assertEqual(payload["run_dir"], "runs/pantry-rotation")
+            self.assertEqual(
+                payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ANSWER_STATE"],
+                "runs/pantry-rotation/idea_to_spec_intake_clarification_answers.json",
+            )
+            self.assertTrue(payload["answer_state_copied_to_run_dir"])
+            self.assertTrue(
+                (
+                    specgraph_dir
+                    / "runs"
+                    / "pantry-rotation"
+                    / "idea_to_spec_intake_clarification_answers.json"
+                ).is_file()
+            )
+            self.assertTrue(payload["output_artifacts"]["continuation_report"]["ready"])
+
+    def test_product_real_idea_continuation_execute_requested_rejects_authority_expansion(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            execution_request = (
+                root
+                / "specspace-state"
+                / "real_idea_answer_continuation_execution_requests.json"
+            )
+            self.write_real_idea_answer_continuation_execution_request_state(
+                execution_request,
+                authority_expanded=True,
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute-requested",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--execution-request",
+                str(execution_request),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            payload = json.loads(result.stdout)
+            codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_answer_continuation_execution_request_authority_expanded",
+                codes,
+            )
+            self.assertFalse(payload["authority_boundary"]["executes_specgraph_make_target"])
 
     def test_product_real_idea_continuation_defaults_to_run_dir_answer_state(
         self,
