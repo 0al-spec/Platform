@@ -33,6 +33,26 @@ All four repositories should be on their intended branches. Generated
 `runs/*.json` and `dist/specgraph-public/*` files are normally ignored, but
 they still affect local demos.
 
+Before interpreting a Product Workspace UI state or a Platform smoke result,
+check that the three mutable/demo surfaces refer to the same workspace and
+repair session:
+
+- **SpecSpace-owned state directory**: drafts, rerun requests, approval intents,
+  and real-idea entry/answer state come from the `--specspace-state-dir`
+  selected when `viewer/server.py` starts.
+- **SpecGraph run directory**: Platform commands should use the same
+  `--run-dir`/`runs/*` artifacts that the SpecSpace API is reading through the
+  product workspace artifact base.
+- **Product workspace artifact base**: `/team-decision-log` should point at the
+  workspace bundle, for example
+  `http://127.0.0.1:9009/workspaces/team-decision-log`, not the root showcase
+  bundle.
+
+If these three surfaces disagree, prefer the hygiene report over visual
+guesswork. A blocked `workspace_state_hygiene` report means the demo state is
+inconsistent; it is not evidence that the published read-only bundle or Git
+Service gate is broken.
+
 Before running Platform smoke, ensure SpecSpace-owned state artifacts in
 `../SpecGraph/runs` belong to the workspace being demonstrated:
 
