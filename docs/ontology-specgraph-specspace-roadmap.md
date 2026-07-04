@@ -232,6 +232,11 @@ This separates the read path from the write path:
 - No browser workflow should silently mutate `specs/nodes/*.yaml`, write
   ontology packages, or advance canonical graph history without a repository
   service and validation result.
+- Product workspace initialization now has an intermediate
+  `platform_product_workspace_initialization_execution_request` handoff. It
+  lets a future hosted/queue-backed worker receive a pinned plan digest and
+  idempotency key without letting SpecSpace or the browser execute Platform
+  directly.
 
 ## Roadmap
 

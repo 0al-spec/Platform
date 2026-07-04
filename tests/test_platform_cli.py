@@ -151,6 +151,162 @@ class PlatformCliTests(unittest.TestCase):
             self.assertFalse(payload["authority_boundary"]["updates_workspace_catalog"])
             self.assertTrue(output_path.is_file())
 
+    def test_workspace_request_initialization_execution_writes_request_only_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog_path = root / "workspaces.yaml"
+            request_path = root / "product_workspace_creation_requests.json"
+            plan_path = root / "runs" / "product_workspace_initialization_plan.json"
+            execution_request_path = (
+                root / "runs" / "product_workspace_initialization_execution_request.json"
+            )
+            workspace_root = root / "PantryRotation"
+            catalog_path.write_text(
+                "schema_version: 1\n"
+                "artifact_kind: platform_workspace_catalog\n"
+                f"organization_root: {json.dumps(str(root))}\n"
+                "workspaces: []\n",
+                encoding="utf-8",
+            )
+            request_path.write_text(
+                json.dumps(workspace_creation_request(), indent=2),
+                encoding="utf-8",
+            )
+            plan_result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(request_path),
+                "--catalog",
+                str(catalog_path),
+                "--path",
+                str(workspace_root),
+                "--artifact-base-url",
+                "https://specgraph.tech",
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(
+                plan_result.returncode,
+                0,
+                plan_result.stderr + plan_result.stdout,
+            )
+
+            result = self.run_cli(
+                "workspace",
+                "request-initialization-execution",
+                "--plan",
+                "runs/product_workspace_initialization_plan.json",
+                "--operator-ref",
+                "operator://local-smoke",
+                "--output",
+                "runs/product_workspace_initialization_execution_request.json",
+                "--format",
+                "json",
+                cwd=root,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_workspace_initialization_execution_request",
+            )
+            self.assertTrue(payload["request_only"])
+            self.assertEqual(
+                payload["requested_operation"],
+                "workspace.execute-initialization-plan",
+            )
+            self.assertEqual(payload["workspace"]["workspace_id"], "pantry-rotation")
+            self.assertEqual(
+                payload["workspace_binding"]["product_artifact_manifest_url"],
+                "https://specgraph.tech/workspaces/pantry-rotation/artifact_manifest.json",
+            )
+            self.assertEqual(
+                payload["summary"]["status"],
+                "workspace_initialization_execution_requested",
+            )
+            self.assertTrue(payload["summary"]["ready_for_managed_execution"])
+            self.assertEqual(payload["operator_ref"], "operator://local-smoke")
+            self.assertEqual(
+                payload["plan_ref"],
+                "runs/product_workspace_initialization_plan.json",
+            )
+            self.assertRegex(payload["plan_sha256"], r"^[0-9a-f]{64}$")
+            self.assertRegex(payload["idempotency_key"], r"^[0-9a-f]{64}$")
+            for key, value in payload["authority_boundary"].items():
+                with self.subTest(key=key):
+                    self.assertFalse(value)
+            self.assertTrue(execution_request_path.is_file())
+
+            table_result = self.run_cli(
+                "workspace",
+                "request-initialization-execution",
+                "--plan",
+                "runs/product_workspace_initialization_plan.json",
+                cwd=root,
+            )
+            self.assertEqual(
+                table_result.returncode,
+                0,
+                table_result.stderr + table_result.stdout,
+            )
+            self.assertIn(
+                "workspace_initialization_execution_requested",
+                table_result.stdout,
+            )
+
+    def test_workspace_request_initialization_execution_blocks_unready_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan_path = root / "plan.json"
+            output_path = root / "request.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "platform_product_workspace_initialization_plan",
+                        "schema_version": 1,
+                        "ok": False,
+                        "summary": {
+                            "ready_for_platform_initialization": False,
+                        },
+                        "authority_boundary": {},
+                        "workspace": {
+                            "workspace_id": "pantry-rotation",
+                            "display_name": "Pantry Rotation",
+                            "workspace_root": str(root / "PantryRotation"),
+                        },
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "workspace",
+                "request-initialization-execution",
+                "--plan",
+                str(plan_path),
+                "--output",
+                str(output_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(
+                payload["summary"]["status"],
+                "workspace_initialization_execution_request_blocked",
+            )
+            self.assertFalse(payload["summary"]["ready_for_managed_execution"])
+            self.assertEqual(payload["local_files_written"], [str(output_path.resolve())])
+            self.assertTrue(output_path.is_file())
+
     def test_workspace_initialize_from_request_blocks_duplicate_catalog_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
