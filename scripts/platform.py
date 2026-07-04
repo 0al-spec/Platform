@@ -15380,12 +15380,13 @@ def product_workspace_plan_diagnostics(
 
 def build_product_workspace_initialization_execution_request(
     *,
+    plan: dict[str, Any],
     plan_path: Path,
+    plan_ref: str,
     output_path: Path | None,
     operator_ref: str | None,
     diagnostics: list[Diagnostic],
 ) -> dict[str, Any]:
-    plan = load_json_mapping(plan_path, label="workspace initialization plan")
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     workspace = product_workspace_execution_plan_workspace(plan)
     plan_digest = file_sha256(plan_path)
@@ -15393,7 +15394,6 @@ def build_product_workspace_initialization_execution_request(
     idempotency_basis = json.dumps(
         {
             "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_REQUEST_KIND,
-            "plan_ref": str(plan_path),
             "plan_sha256": plan_digest,
             "workspace_id": workspace_id,
             "operation": "workspace.execute-initialization-plan",
@@ -15410,7 +15410,7 @@ def build_product_workspace_initialization_execution_request(
         "ok": error_count == 0,
         "dry_run": False,
         "request_only": True,
-        "plan_ref": str(plan_path),
+        "plan_ref": plan_ref,
         "plan_sha256": plan_digest,
         "operator_ref": operator_ref,
         "requested_operation": "workspace.execute-initialization-plan",
@@ -15428,7 +15428,7 @@ def build_product_workspace_initialization_execution_request(
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
         "authority_boundary": product_workspace_initialization_execution_request_boundary(),
         "local_files_written": (
-            [str(output_path)] if output_path is not None and error_count == 0 else []
+            [str(output_path)] if output_path is not None else []
         ),
         "summary": {
             "status": "workspace_initialization_execution_requested"
@@ -15443,12 +15443,15 @@ def build_product_workspace_initialization_execution_request(
 
 
 def workspace_request_initialization_execution(args: argparse.Namespace) -> int:
+    plan_ref = str(args.plan)
     plan_path = Path(args.plan).resolve()
     plan = load_json_mapping(plan_path, label="workspace initialization plan")
     diagnostics = product_workspace_plan_diagnostics(plan)
     output_path = Path(args.output).resolve() if args.output else None
     report = build_product_workspace_initialization_execution_request(
+        plan=plan,
         plan_path=plan_path,
+        plan_ref=plan_ref,
         output_path=output_path,
         operator_ref=args.operator_ref,
         diagnostics=diagnostics,
@@ -15463,7 +15466,7 @@ def workspace_request_initialization_execution(args: argparse.Namespace) -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print(
-            render_table(
+            render_rows(
                 [
                     {
                         "workspace": report["summary"].get("workspace_id") or "",

@@ -198,13 +198,14 @@ class PlatformCliTests(unittest.TestCase):
                 "workspace",
                 "request-initialization-execution",
                 "--plan",
-                str(plan_path),
+                "runs/product_workspace_initialization_plan.json",
                 "--operator-ref",
                 "operator://local-smoke",
                 "--output",
-                str(execution_request_path),
+                "runs/product_workspace_initialization_execution_request.json",
                 "--format",
                 "json",
+                cwd=root,
             )
 
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -230,12 +231,33 @@ class PlatformCliTests(unittest.TestCase):
             )
             self.assertTrue(payload["summary"]["ready_for_managed_execution"])
             self.assertEqual(payload["operator_ref"], "operator://local-smoke")
+            self.assertEqual(
+                payload["plan_ref"],
+                "runs/product_workspace_initialization_plan.json",
+            )
             self.assertRegex(payload["plan_sha256"], r"^[0-9a-f]{64}$")
             self.assertRegex(payload["idempotency_key"], r"^[0-9a-f]{64}$")
             for key, value in payload["authority_boundary"].items():
                 with self.subTest(key=key):
                     self.assertFalse(value)
             self.assertTrue(execution_request_path.is_file())
+
+            table_result = self.run_cli(
+                "workspace",
+                "request-initialization-execution",
+                "--plan",
+                "runs/product_workspace_initialization_plan.json",
+                cwd=root,
+            )
+            self.assertEqual(
+                table_result.returncode,
+                0,
+                table_result.stderr + table_result.stdout,
+            )
+            self.assertIn(
+                "workspace_initialization_execution_requested",
+                table_result.stdout,
+            )
 
     def test_workspace_request_initialization_execution_blocks_unready_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -282,6 +304,7 @@ class PlatformCliTests(unittest.TestCase):
                 "workspace_initialization_execution_request_blocked",
             )
             self.assertFalse(payload["summary"]["ready_for_managed_execution"])
+            self.assertEqual(payload["local_files_written"], [str(output_path.resolve())])
             self.assertTrue(output_path.is_file())
 
     def test_workspace_initialize_from_request_blocks_duplicate_catalog_entry(self) -> None:
