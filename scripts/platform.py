@@ -6285,6 +6285,118 @@ def real_idea_entry_intake_make_command(
     return command
 
 
+def real_idea_entry_intake_workspace_initialization_binding(
+    *,
+    report_path: Path | None,
+    selected_workspace_id: str | None,
+) -> tuple[dict[str, Any] | None, list[Diagnostic]]:
+    if report_path is None:
+        return None, []
+    diagnostics: list[Diagnostic] = []
+    try:
+        report = load_json_mapping(
+            report_path,
+            label="workspace initialization execution report",
+        )
+    except PlatformError as exc:
+        return None, [
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_workspace_initialization_unreadable",
+                subject="workspace_initialization",
+                message=str(exc),
+            )
+        ]
+    if report.get("artifact_kind") != PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_workspace_initialization_kind_mismatch",
+                subject="workspace_initialization.artifact_kind",
+                message="workspace initialization input must be a Platform initialization execution report",
+            )
+        )
+    if report.get("ok") is not True or report.get("dry_run") is True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_workspace_initialization_not_ready",
+                subject="workspace_initialization.ok",
+                message="workspace initialization report must be successful and non-dry-run",
+            )
+        )
+    summary = nested_mapping(report, "summary")
+    if (
+        summary.get("status") != "workspace_initialization_executed"
+        or summary.get("catalog_written") is not True
+        or summary.get("workspace_files_created") is not True
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_workspace_initialization_not_ready",
+                subject="workspace_initialization.summary",
+                message="workspace initialization summary must prove catalog and workspace files were created",
+            )
+        )
+    workspace = nested_mapping(report, "workspace")
+    workspace_id = workspace.get("workspace_id")
+    if not isinstance(workspace_id, str) or not PRODUCT_WORKSPACE_ID_RE.fullmatch(workspace_id):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_workspace_initialization_workspace_invalid",
+                subject="workspace_initialization.workspace.workspace_id",
+                message="workspace initialization report must include a safe product workspace id",
+            )
+        )
+    elif selected_workspace_id and selected_workspace_id != workspace_id:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_workspace_initialization_workspace_mismatch",
+                subject="workspace_initialization.workspace.workspace_id",
+                message="workspace initialization workspace_id must match selected workspace",
+            )
+        )
+    boundary = nested_mapping(report, "authority_boundary")
+    for key in (
+        "creates_git_commits",
+        "opens_pull_requests",
+        "publishes_read_models",
+        "mutates_canonical_specs",
+        "writes_ontology_packages",
+        "accepts_ontology_terms",
+    ):
+        if boundary.get(key) is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_entry_intake_workspace_initialization_authority_expanded",
+                    subject=f"workspace_initialization.authority_boundary.{key}",
+                    message="workspace initialization must not claim downstream Git/Ontology/spec authority",
+                )
+            )
+    workspace_root_value = workspace.get("workspace_root")
+    if not isinstance(workspace_root_value, str):
+        workspace_root_value = report.get("workspace_root")
+        if not isinstance(workspace_root_value, str):
+            workspace_root_value = None
+    binding = {
+        "source_ref": str(report_path),
+        "source_digest": file_sha256(report_path) if report_path.is_file() else None,
+        "workspace_id": workspace_id if isinstance(workspace_id, str) else None,
+        "display_name": workspace.get("display_name") if isinstance(workspace.get("display_name"), str) else None,
+        "route": workspace.get("route") if isinstance(workspace.get("route"), str) else None,
+        "workspace_root": workspace_root_value,
+        "catalog_ref": report.get("catalog_ref") if isinstance(report.get("catalog_ref"), str) else None,
+        "specgraph_initialization_report_ref": report.get("specgraph_initialization_report_ref")
+        if isinstance(report.get("specgraph_initialization_report_ref"), str)
+        else None,
+    }
+    return binding, diagnostics
+
+
 def product_repair_draft_import_make_command(
     *,
     draft_state_ref: str,
@@ -7303,7 +7415,30 @@ def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
         code_prefix="real_idea_entry_intake",
         subject="specgraph_dir",
     )
-    raw_run_dir = Path(args.run_dir)
+    workspace_initialization_path = (
+        input_path_arg_or_existing(args.workspace_initialization, base_dir=specgraph_dir)
+        if args.workspace_initialization
+        else None
+    )
+    workspace_binding, workspace_binding_diagnostics = (
+        real_idea_entry_intake_workspace_initialization_binding(
+            report_path=workspace_initialization_path,
+            selected_workspace_id=args.workspace_id,
+        )
+    )
+    diagnostics.extend(workspace_binding_diagnostics)
+    effective_workspace_id = args.workspace_id or (
+        workspace_binding.get("workspace_id")
+        if isinstance(workspace_binding, dict)
+        and isinstance(workspace_binding.get("workspace_id"), str)
+        else None
+    )
+    raw_run_dir_value = args.run_dir or (
+        f"runs/{effective_workspace_id}"
+        if effective_workspace_id and workspace_initialization_path is not None
+        else "runs/real_idea_smoke"
+    )
+    raw_run_dir = Path(raw_run_dir_value)
     run_dir = (
         raw_run_dir.resolve()
         if raw_run_dir.is_absolute()
@@ -7330,8 +7465,9 @@ def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
                 message="run-dir must name a dedicated child directory",
             )
         )
+    entry_requests_arg = args.entry_requests or f"{run_dir_ref}/real_idea_entry_requests.json"
     entry_source = input_path_arg_or_existing(
-        args.entry_requests,
+        entry_requests_arg,
         base_dir=specgraph_dir,
     )
     entry_handoff = run_dir / "real_idea_entry_requests.json"
@@ -7372,7 +7508,7 @@ def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
     command = real_idea_entry_intake_make_command(
         run_dir_ref=run_dir_ref,
         entry_requests_ref=source_ref_for_command,
-        workspace_id=args.workspace_id,
+        workspace_id=effective_workspace_id,
         request_id=args.request_id,
         python=args.python,
     )
@@ -7449,6 +7585,7 @@ def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
         "started_at": started_at,
         "specgraph_dir": str(specgraph_dir),
         "run_dir": run_dir_ref,
+        "workspace_initialization": workspace_binding,
         "entry_requests_source_ref": str(entry_source),
         "entry_requests_handoff_ref": source_ref_for_command,
         "entry_requests_copied_to_run_dir": entry_requests_copied_to_run_dir,
@@ -7475,7 +7612,7 @@ def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
             "variables": {
                 "REAL_IDEA_SMOKE_RUN_DIR": run_dir_ref,
                 "SPECSPACE_REAL_IDEA_ENTRY_REQUESTS": source_ref_for_command,
-                "SPECSPACE_REAL_IDEA_ENTRY_WORKSPACE_ID": args.workspace_id or "",
+                "SPECSPACE_REAL_IDEA_ENTRY_WORKSPACE_ID": effective_workspace_id or "",
                 "SPECSPACE_REAL_IDEA_ENTRY_REQUEST_ID": args.request_id or "",
             },
         },
@@ -7503,6 +7640,10 @@ def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
                 output_records,
                 "entry_intake_report",
             ).get("sha256"),
+            "workspace_id": effective_workspace_id,
+            "workspace_initialization_ref": str(workspace_initialization_path)
+            if workspace_initialization_path is not None
+            else None,
             "intake_session_status": nested_mapping(
                 output_records,
                 "intake_session",
@@ -14430,6 +14571,7 @@ def build_product_workspace_initialization_execution_report(
     *,
     plan_path: Path,
     catalog_path: Path,
+    workspace: dict[str, str],
     workspace_root: Path,
     execution_report_path: Path | None,
     specgraph_report_path: Path | None,
@@ -14447,6 +14589,14 @@ def build_product_workspace_initialization_execution_report(
         "dry_run": dry_run,
         "plan_ref": str(plan_path),
         "catalog_ref": str(catalog_path),
+        "workspace": {
+            "workspace_id": workspace.get("workspace_id") or "",
+            "display_name": workspace.get("display_name") or workspace.get("workspace_id") or "",
+            "route": f"/{workspace.get('workspace_id') or ''}",
+            "workspace_root": str(workspace_root),
+            "governance_profile": workspace.get("governance_profile") or "product_workspace",
+            "repository_role": "product_spec_workspace",
+        },
         "workspace_root": str(workspace_root),
         "specgraph_initialization_report_ref": (
             str(specgraph_report_path) if specgraph_report_path is not None else None
@@ -14627,6 +14777,7 @@ def workspace_execute_initialization_plan(args: argparse.Namespace) -> int:
     report = build_product_workspace_initialization_execution_report(
         plan_path=plan_path,
         catalog_path=catalog_path,
+        workspace=workspace,
         workspace_root=workspace_root,
         execution_report_path=output_path,
         specgraph_report_path=specgraph_report_path
@@ -17292,19 +17443,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     real_idea_intake_execute_parser.add_argument(
         "--run-dir",
-        default="runs/real_idea_smoke",
+        default=None,
         help=(
             "SpecGraph run directory where the entry request handoff and real-idea "
-            "intake artifacts should be written. Must resolve inside --specgraph-dir."
+            "intake artifacts should be written. Must resolve inside --specgraph-dir. "
+            "Defaults to runs/<workspace-id> when --workspace-initialization is provided, "
+            "otherwise runs/real_idea_smoke."
         ),
     )
     real_idea_intake_execute_parser.add_argument(
         "--entry-requests",
-        default="runs/real_idea_smoke/real_idea_entry_requests.json",
+        default=None,
         help=(
             "SpecSpace-owned real_idea_entry_requests.json state. If the path is "
             "outside --specgraph-dir, Platform copies it into --run-dir as a "
-            "handoff input before invoking SpecGraph."
+            "handoff input before invoking SpecGraph. Defaults to "
+            "<run-dir>/real_idea_entry_requests.json."
+        ),
+    )
+    real_idea_intake_execute_parser.add_argument(
+        "--workspace-initialization",
+        help=(
+            "Optional platform_product_workspace_initialization_execution_report.json "
+            "that binds real-idea intake to an initialized product workspace."
         ),
     )
     real_idea_intake_execute_parser.add_argument(
