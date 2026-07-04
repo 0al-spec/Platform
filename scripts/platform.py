@@ -13896,6 +13896,9 @@ PRODUCT_WORKSPACE_CREATION_REQUEST_KIND = (
 PRODUCT_WORKSPACE_INITIALIZATION_REPORT_KIND = (
     "platform_product_workspace_initialization_plan"
 )
+PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_KIND = (
+    "platform_product_workspace_initialization_execution_report"
+)
 
 
 def product_workspace_creation_boundary() -> dict[str, Any]:
@@ -13959,6 +13962,25 @@ def product_workspace_creation_boundary_diagnostics(
                 )
             )
     return diagnostics
+
+
+def product_workspace_initialization_execution_boundary(
+    *,
+    executed: bool,
+    catalog_written: bool,
+) -> dict[str, Any]:
+    return {
+        "executes_specgraph": executed,
+        "executes_platform": True,
+        "creates_workspace_files": executed,
+        "updates_workspace_catalog": catalog_written,
+        "creates_git_commits": False,
+        "opens_pull_requests": False,
+        "publishes_read_models": False,
+        "mutates_canonical_specs": False,
+        "writes_ontology_packages": False,
+        "accepts_ontology_terms": False,
+    }
 
 
 def product_workspace_creation_diagnostics(
@@ -14298,6 +14320,358 @@ def workspace_initialize_from_creation_request(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
+def product_workspace_plan_diagnostics(
+    plan: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if plan.get("artifact_kind") != PRODUCT_WORKSPACE_INITIALIZATION_REPORT_KIND:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_plan_kind_mismatch",
+                subject="plan.artifact_kind",
+                message="initialization plan must be a Platform workspace initialization plan",
+            )
+        )
+    if plan.get("ok") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_plan_not_ready",
+                subject="plan.ok",
+                message="initialization plan must be ready before execution",
+            )
+        )
+    summary = nested_mapping(plan, "summary")
+    if summary.get("ready_for_platform_initialization") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_plan_not_ready",
+                subject="plan.summary.ready_for_platform_initialization",
+                message="initialization plan must be ready for Platform initialization",
+            )
+        )
+    boundary = nested_mapping(plan, "authority_boundary")
+    for key, value in boundary.items():
+        if value is True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_workspace_initialization_plan_authority_expanded",
+                    subject=f"plan.authority_boundary.{key}",
+                    message="initialization plan must be report-only before execution",
+                )
+            )
+    return diagnostics
+
+
+def product_workspace_execution_plan_workspace(
+    plan: dict[str, Any],
+) -> dict[str, str]:
+    workspace = nested_mapping(plan, "workspace")
+    return {
+        "workspace_id": str(workspace.get("workspace_id") or ""),
+        "display_name": str(workspace.get("display_name") or ""),
+        "workspace_root": str(workspace.get("workspace_root") or ""),
+        "governance_profile": str(
+            workspace.get("governance_profile") or "product_workspace"
+        ),
+    }
+
+
+def product_workspace_execution_catalog_entry(
+    plan: dict[str, Any],
+    *,
+    workspace_root: Path,
+    org_root: Path | None,
+) -> tuple[dict[str, Any] | None, list[Diagnostic]]:
+    diagnostics: list[Diagnostic] = []
+    pending = nested_mapping(plan, "pending_catalog_entry")
+    workspace = product_workspace_execution_plan_workspace(plan)
+    workspace_id = workspace["workspace_id"]
+    display_name = workspace["display_name"] or workspace_id
+    governance_profile = workspace["governance_profile"] or "product_workspace"
+    if not pending:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_catalog_entry_missing",
+                subject="plan.pending_catalog_entry",
+                message="initialization plan must include a pending catalog entry",
+            )
+        )
+        return None, diagnostics
+    if workspace_id:
+        expected = build_catalog_entry(
+            project_id=workspace_id,
+            display_name=display_name,
+            workspace_root=workspace_root,
+            org_root=org_root,
+            governance_profile=governance_profile,
+        )
+        if pending != expected:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_workspace_initialization_catalog_entry_mismatch",
+                    subject="plan.pending_catalog_entry",
+                    message=(
+                        "pending catalog entry must match the selected workspace, "
+                        "path, and governance profile"
+                    ),
+                )
+            )
+            return None, diagnostics
+    return pending, diagnostics
+
+
+def build_product_workspace_initialization_execution_report(
+    *,
+    plan_path: Path,
+    catalog_path: Path,
+    workspace_root: Path,
+    execution_report_path: Path | None,
+    specgraph_report_path: Path | None,
+    catalog_written: bool,
+    specgraph_executed: bool,
+    dry_run: bool,
+    diagnostics: list[Diagnostic],
+) -> dict[str, Any]:
+    error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    return {
+        "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_KIND,
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "ok": error_count == 0,
+        "dry_run": dry_run,
+        "plan_ref": str(plan_path),
+        "catalog_ref": str(catalog_path),
+        "workspace_root": str(workspace_root),
+        "specgraph_initialization_report_ref": (
+            str(specgraph_report_path) if specgraph_report_path is not None else None
+        ),
+        "executed_operations": [
+            "validate_product_workspace_initialization_plan",
+            *(
+                ["execute_specgraph_product_workspace_initializer"]
+                if specgraph_executed
+                else []
+            ),
+            *(
+                ["append_platform_workspace_catalog_entry"]
+                if catalog_written
+                else []
+            ),
+        ],
+        "local_files_written": (
+            [str(execution_report_path)]
+            if execution_report_path is not None
+            and not dry_run
+            and (error_count == 0 or specgraph_executed)
+            else []
+        ),
+        "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
+        "authority_boundary": product_workspace_initialization_execution_boundary(
+            executed=specgraph_executed,
+            catalog_written=catalog_written,
+        ),
+        "summary": {
+            "status": "workspace_initialization_executed"
+            if error_count == 0 and specgraph_executed and catalog_written
+            else "workspace_initialization_dry_run"
+            if error_count == 0 and dry_run
+            else "workspace_initialization_blocked",
+            "error_count": error_count,
+            "specgraph_executed": specgraph_executed,
+            "catalog_written": catalog_written,
+            "workspace_files_created": (
+                specgraph_executed and specgraph_report_path is not None
+            ),
+        },
+    }
+
+
+def workspace_execute_initialization_plan(args: argparse.Namespace) -> int:
+    plan_path = Path(args.plan).resolve()
+    plan = load_json_mapping(plan_path, label="workspace initialization plan")
+    catalog_path = Path(args.catalog) if args.catalog else Path(
+        plan.get("catalog_ref") if isinstance(plan.get("catalog_ref"), str) else default_catalog_path()
+    )
+    if catalog_path.resolve() == DEFAULT_EXAMPLE_CATALOG.resolve() and not args.dry_run:
+        raise PlatformError(
+            f"refusing to write tracked example catalog: {catalog_path}"
+        )
+    catalog = load_init_catalog(catalog_path)
+    org_root, org_root_diagnostic = resolve_org_root(catalog)
+    workspace = product_workspace_execution_plan_workspace(plan)
+    workspace_root = expand_workspace_path(
+        args.path or workspace["workspace_root"],
+        org_root,
+    )
+    diagnostics = product_workspace_plan_diagnostics(plan)
+    if org_root_diagnostic is not None:
+        diagnostics.append(org_root_diagnostic)
+    request: dict[str, Any] | None = {
+        "workspace_id": workspace["workspace_id"],
+        "display_name": workspace["display_name"],
+        "route": f"/{workspace['workspace_id']}",
+        "status": "requested",
+    }
+    _, request_like_diagnostics = product_workspace_creation_diagnostics(
+        request_state={
+            "artifact_kind": PRODUCT_WORKSPACE_CREATION_REQUEST_KIND,
+            "state_owner": "SpecSpace",
+            "canonical_mutations_allowed": False,
+            "tracked_artifacts_written": False,
+            "requests": [request],
+            "consumer_boundary": {},
+            "authority_boundary": {},
+        },
+        catalog=catalog,
+        selected_workspace_id=workspace["workspace_id"],
+        workspace_root=workspace_root,
+    )
+    diagnostics.extend(request_like_diagnostics)
+    entry, entry_diagnostics = product_workspace_execution_catalog_entry(
+        plan,
+        workspace_root=workspace_root,
+        org_root=org_root,
+    )
+    diagnostics.extend(entry_diagnostics)
+
+    output_path = Path(args.output).resolve() if args.output else (
+        workspace_root / "runs" / "platform_product_workspace_initialization_execution_report.json"
+    )
+    specgraph_report_path = workspace_root / "runs" / "product_workspace_initialization.json"
+    preflight_error_count = sum(
+        1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
+    )
+    specgraph_executed = False
+    catalog_written = False
+
+    if preflight_error_count == 0 and not args.dry_run:
+        try:
+            result = run_specgraph_init(
+                resolve_specgraph_supervisor(),
+                project_id=workspace["workspace_id"],
+                display_name=workspace["display_name"] or workspace["workspace_id"],
+                workspace_root=workspace_root,
+                root_intent=None,
+            )
+        except subprocess.TimeoutExpired:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_workspace_initialization_specgraph_timeout",
+                    subject="specgraph_initializer",
+                    message=(
+                        f"SpecGraph supervisor timed out after "
+                        f"{init_timeout_seconds()}s"
+                    ),
+                )
+            )
+        else:
+            specgraph_executed = True
+            if result.returncode != 0:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_workspace_initialization_specgraph_failed",
+                        subject="specgraph_initializer",
+                        message=f"SpecGraph supervisor exited with code {result.returncode}",
+                    )
+                )
+            else:
+                try:
+                    specgraph_report = load_initialization_report(workspace_root)
+                except PlatformError as exc:
+                    diagnostics.append(
+                        Diagnostic(
+                            level="ERROR",
+                            code="product_workspace_initialization_report_missing",
+                            subject="workspace.runs.product_workspace_initialization",
+                            message=str(exc),
+                        )
+                    )
+                else:
+                    diagnostics.extend(report_findings_to_diagnostics(specgraph_report))
+                    status = nested_mapping(specgraph_report, "summary").get("status")
+                    if status not in ("initialized", "ready"):
+                        diagnostics.append(
+                            Diagnostic(
+                                level="ERROR",
+                                code="product_workspace_initialization_report_blocked",
+                                subject="specgraph_report.summary.status",
+                                message="SpecGraph initialization report is not ready",
+                            )
+                        )
+        if (
+            sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR") == 0
+            and entry is not None
+        ):
+            try:
+                append_workspace_to_catalog(catalog_path, catalog, entry)
+            except (OSError, PlatformError) as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_workspace_initialization_catalog_write_failed",
+                        subject="catalog_ref",
+                        message=str(exc),
+                    )
+                )
+            else:
+                catalog_written = True
+
+    report = build_product_workspace_initialization_execution_report(
+        plan_path=plan_path,
+        catalog_path=catalog_path,
+        workspace_root=workspace_root,
+        execution_report_path=output_path,
+        specgraph_report_path=specgraph_report_path
+        if specgraph_report_path.exists()
+        else None,
+        catalog_written=catalog_written,
+        specgraph_executed=specgraph_executed,
+        dry_run=args.dry_run,
+        diagnostics=diagnostics,
+    )
+    if (
+        not args.dry_run
+        and not args.no_write_report
+        and (report["ok"] or specgraph_report_path.exists())
+    ):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(
+            render_rows(
+                [
+                    {
+                        "workspace": workspace["workspace_id"],
+                        "status": str(report["summary"]["status"]),
+                        "catalog": str(catalog_written),
+                    }
+                ],
+                [
+                    ("workspace", "WORKSPACE"),
+                    ("status", "STATUS"),
+                    ("catalog", "CATALOG"),
+                ],
+            )
+        )
+    return 0 if report["ok"] else 1
+
+
 def init_timeout_seconds() -> float:
     raw = os.environ.get("PLATFORM_INIT_TIMEOUT_SECONDS")
     if not raw:
@@ -14419,12 +14793,29 @@ def append_workspace_to_catalog(
     catalog: dict[str, Any],
     entry: dict[str, Any],
 ) -> None:
-    workspaces = catalog.get("workspaces")
+    _ = catalog
+    try:
+        current_catalog = load_init_catalog(catalog_path)
+    except (OSError, PlatformError) as exc:
+        raise PlatformError(f"could not read workspace catalog before write: {exc}") from exc
+
+    project_id = entry.get("project_id")
+    for index, workspace in enumerate(catalog_workspace_mappings(current_catalog)):
+        if workspace.get("project_id") == project_id:
+            raise PlatformError(
+                "workspace catalog already contains "
+                f"project_id {project_id!r} at workspaces[{index}]"
+            )
+
+    workspaces = current_catalog.get("workspaces")
     if not isinstance(workspaces, list):
         workspaces = []
-        catalog["workspaces"] = workspaces
+        current_catalog["workspaces"] = workspaces
     workspaces.append(entry)
-    dump_yaml(catalog, catalog_path)
+    try:
+        dump_yaml(current_catalog, catalog_path)
+    except (OSError, PlatformError) as exc:
+        raise PlatformError(f"could not write workspace catalog: {exc}") from exc
 
 
 def workspace_init(args: argparse.Namespace) -> int:
@@ -14569,7 +14960,7 @@ def workspace_init(args: argparse.Namespace) -> int:
 
     try:
         append_workspace_to_catalog(catalog_path, catalog, entry)
-    except OSError as exc:
+    except (OSError, PlatformError) as exc:
         snippet = format_manual_yaml_entry(entry)
         print(
             f"platform: SpecGraph initialized workspace at {workspace_root}, "
@@ -15697,6 +16088,57 @@ def build_parser() -> argparse.ArgumentParser:
     )
     initialize_from_request_parser.set_defaults(
         func=workspace_initialize_from_creation_request
+    )
+
+    execute_initialization_parser = workspace_subcommands.add_parser(
+        "execute-initialization-plan",
+        help=(
+            "Execute a ready Platform product workspace initialization plan "
+            "through the SpecGraph-owned initializer."
+        ),
+    )
+    execute_initialization_parser.add_argument(
+        "--plan",
+        required=True,
+        help="Path to platform_product_workspace_initialization_plan.",
+    )
+    execute_initialization_parser.add_argument(
+        "--catalog",
+        help=(
+            "Catalog to update. Defaults to the plan catalog_ref, then normal "
+            "workspace catalog discovery."
+        ),
+    )
+    execute_initialization_parser.add_argument(
+        "--path",
+        help="Optional planned workspace root override.",
+    )
+    execute_initialization_parser.add_argument(
+        "--output",
+        help=(
+            "Optional path for the execution report. Defaults to "
+            "runs/platform_product_workspace_initialization_execution_report.json "
+            "inside the workspace root."
+        ),
+    )
+    execute_initialization_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the plan without running SpecGraph or writing the catalog.",
+    )
+    execute_initialization_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the execution report.",
+    )
+    execute_initialization_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    execute_initialization_parser.set_defaults(
+        func=workspace_execute_initialization_plan
     )
 
     deployment_profile_parser = subcommands.add_parser(
