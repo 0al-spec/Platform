@@ -13,6 +13,61 @@ CLI = REPO_ROOT / "scripts" / "platform.py"
 FAKE_SUPERVISOR = REPO_ROOT / "tests" / "fixtures" / "fake_specgraph_supervisor.py"
 
 
+def workspace_creation_request(
+    *,
+    workspace_id: str = "pantry-rotation",
+    display_name: str = "Pantry Rotation",
+) -> dict[str, object]:
+    return {
+        "artifact_kind": "specspace_product_workspace_creation_request_state",
+        "schema_version": 1,
+        "state_owner": "SpecSpace",
+        "canonical_mutations_allowed": False,
+        "tracked_artifacts_written": False,
+        "selected_workspace_id": workspace_id,
+        "requests": [
+            {
+                "request_id": f"product-workspace-create.{workspace_id}",
+                "workspace_id": workspace_id,
+                "display_name": display_name,
+                "route": f"/{workspace_id}",
+                "operator_ref": "operator://specspace-local",
+                "status": "requested",
+                "created_at": "2026-07-04T00:00:00Z",
+                "updated_at": "2026-07-04T00:00:00Z",
+                "canonical_mutations_allowed": False,
+                "tracked_artifacts_written": False,
+                "consumer_boundary": {
+                    "specspace_owned_state": True,
+                    "may_execute_platform": False,
+                    "may_initialize_workspace": False,
+                    "may_create_branch_or_commit": False,
+                },
+                "authority_boundary": {
+                    "product_workspace_creation_request_state_is_authority": False,
+                    "platform_execution_authority": False,
+                    "workspace_catalog_authority": False,
+                    "git_service_authority": False,
+                    "canonical_mutations_allowed": False,
+                },
+            }
+        ],
+        "consumer_boundary": {
+            "specspace_owned_state": True,
+            "may_execute_platform": False,
+            "may_initialize_workspace": False,
+            "may_create_branch_or_commit": False,
+        },
+        "authority_boundary": {
+            "product_workspace_creation_request_state_is_authority": False,
+            "platform_execution_authority": False,
+            "workspace_catalog_authority": False,
+            "git_service_authority": False,
+            "canonical_mutations_allowed": False,
+        },
+    }
+
+
 @contextlib.contextmanager
 def specgraph_home(outcome: str = "ready"):
     with tempfile.TemporaryDirectory() as base:
@@ -147,6 +202,166 @@ class PlatformInitTests(unittest.TestCase):
             invocations = self._read_argv_log(argv_log)
             argv = invocations[0]
             self.assertEqual(argv[argv.index("--display-name") + 1], "no-display")
+
+    def test_execute_initialization_plan_runs_specgraph_and_writes_catalog(self) -> None:
+        with specgraph_home("ready") as (env, argv_log), tempfile.TemporaryDirectory() as org:
+            catalog = Path(org) / "workspaces.yaml"
+            request_path = Path(org) / "product_workspace_creation_requests.json"
+            plan_path = Path(org) / "runs" / "product_workspace_initialization_plan.json"
+            workspace = Path(org) / "PantryRotation"
+            request_path.write_text(
+                json.dumps(workspace_creation_request(), indent=2),
+                encoding="utf-8",
+            )
+            plan_result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(request_path),
+                "--catalog",
+                str(catalog),
+                "--path",
+                str(workspace),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+                env_overrides={**env, "ORG_ROOT": org},
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+
+            result = self.run_cli(
+                "workspace",
+                "execute-initialization-plan",
+                "--plan",
+                str(plan_path),
+                "--format",
+                "json",
+                env_overrides={**env, "ORG_ROOT": org},
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_product_workspace_initialization_execution_report",
+            )
+            self.assertEqual(
+                payload["summary"]["status"],
+                "workspace_initialization_executed",
+            )
+            self.assertTrue(payload["summary"]["specgraph_executed"])
+            self.assertTrue(payload["summary"]["catalog_written"])
+            self.assertTrue(payload["summary"]["workspace_files_created"])
+            self.assertTrue(payload["authority_boundary"]["executes_specgraph"])
+            self.assertTrue(payload["authority_boundary"]["updates_workspace_catalog"])
+            self.assertFalse(payload["authority_boundary"]["creates_git_commits"])
+            self.assertFalse(payload["authority_boundary"]["writes_ontology_packages"])
+            self.assertTrue(
+                (workspace / "runs" / "platform_product_workspace_initialization_execution_report.json").is_file()
+            )
+            self.assertTrue((workspace / "specgraph.project.yaml").is_file())
+            import yaml
+
+            catalog_data = yaml.safe_load(catalog.read_text(encoding="utf-8"))
+            entries = catalog_data["workspaces"]
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["project_id"], "pantry-rotation")
+            invocations = self._read_argv_log(argv_log)
+            self.assertEqual(len(invocations), 1)
+            argv = invocations[0]
+            self.assertIn("--project-id", argv)
+            self.assertEqual(argv[argv.index("--project-id") + 1], "pantry-rotation")
+
+    def test_execute_initialization_plan_dry_run_does_not_write(self) -> None:
+        with specgraph_home("ready") as (env, argv_log), tempfile.TemporaryDirectory() as org:
+            catalog = Path(org) / "workspaces.yaml"
+            request_path = Path(org) / "product_workspace_creation_requests.json"
+            plan_path = Path(org) / "runs" / "product_workspace_initialization_plan.json"
+            workspace = Path(org) / "PantryRotation"
+            request_path.write_text(
+                json.dumps(workspace_creation_request(), indent=2),
+                encoding="utf-8",
+            )
+            plan_result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(request_path),
+                "--catalog",
+                str(catalog),
+                "--path",
+                str(workspace),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+                env_overrides={**env, "ORG_ROOT": org},
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+
+            result = self.run_cli(
+                "workspace",
+                "execute-initialization-plan",
+                "--plan",
+                str(plan_path),
+                "--dry-run",
+                "--format",
+                "json",
+                env_overrides={**env, "ORG_ROOT": org},
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["summary"]["status"],
+                "workspace_initialization_dry_run",
+            )
+            self.assertFalse(payload["summary"]["specgraph_executed"])
+            self.assertFalse(payload["summary"]["catalog_written"])
+            self.assertFalse(payload["summary"]["workspace_files_created"])
+            self.assertFalse(workspace.exists())
+            self.assertFalse(catalog.exists())
+            self.assertEqual(self._read_argv_log(argv_log), [])
+
+    def test_execute_initialization_plan_blocks_unready_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as org:
+            plan_path = Path(org) / "bad_plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "platform_product_workspace_initialization_plan",
+                        "ok": False,
+                        "summary": {
+                            "ready_for_platform_initialization": False,
+                        },
+                        "workspace": {
+                            "workspace_id": "pantry-rotation",
+                            "display_name": "Pantry Rotation",
+                            "workspace_root": str(Path(org) / "PantryRotation"),
+                        },
+                        "authority_boundary": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "workspace",
+                "execute-initialization-plan",
+                "--plan",
+                str(plan_path),
+                "--dry-run",
+                "--format",
+                "json",
+                env_overrides={"ORG_ROOT": org},
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        codes = {item["code"] for item in payload["diagnostics"]}
+        self.assertIn("product_workspace_initialization_plan_not_ready", codes)
 
     def test_init_blocked_report_does_not_write_catalog(self) -> None:
         with specgraph_home("blocked") as (env, argv_log), tempfile.TemporaryDirectory() as org:

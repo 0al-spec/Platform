@@ -469,13 +469,14 @@ specificity from the system layer while keeping Team Decision Log as data:
 
 Status: active next infrastructure layer before production write UX. SpecSpace
 now records backend-backed product workspace creation intent as SpecSpace-owned
-state, and Platform can validate that request into a report-only initialization
-plan. The remaining gap is controlled execution: catalog binding, workspace
-file initialization, artifact base allocation, and run-dir binding must move
-through a Platform/Git Service boundary rather than browser-side mutation. The
-local CLI executor is an MVP adapter; production should expose the same
-operations through a Git Service rather than relying on an arbitrary local
-checkout.
+state. Platform can validate that request into a report-only initialization
+plan and execute the ready plan by delegating workspace file creation to the
+SpecGraph-owned initializer before appending the Platform catalog entry. The
+remaining gap is service integration: artifact base allocation, run-dir binding,
+hosted execution, and read-model publication must move through a Platform/Git
+Service boundary rather than browser-side mutation. The local CLI executor is
+an MVP adapter; production should expose the same operations through a Git
+Service rather than relying on an arbitrary local checkout.
 
 Define a repository service over Git instead of letting SpecSpace mutate a local
 checkout directly. The service should own:

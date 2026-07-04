@@ -552,6 +552,28 @@ mutate canonical specs. It only converts SpecSpace-owned creation intent into a
 Platform-validated initialization plan. Actual catalog mutation and workspace
 file initialization remain a later controlled execution step.
 
+Once the initialization plan is ready, Platform can execute it through the
+SpecGraph-owned initializer:
+
+```bash
+scripts/platform.py workspace execute-initialization-plan \
+  --plan <run-dir>/product_workspace_initialization_plan.json \
+  --format json
+```
+
+Expected result:
+
+- `artifact_kind: platform_product_workspace_initialization_execution_report`;
+- `summary.status: workspace_initialization_executed`;
+- `summary.specgraph_executed: true`;
+- `summary.workspace_files_created: true`;
+- `summary.catalog_written: true`;
+- no Git commits, pull requests, read-model publication, Ontology writes, or
+  canonical spec mutations.
+
+Use `--dry-run` to revalidate the plan without running SpecGraph or writing the
+catalog.
+
 ## Real Idea Entry and Answer Continuation Handoffs
 
 After SpecSpace stores a raw idea entry request, Platform can hand it to

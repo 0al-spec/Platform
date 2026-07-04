@@ -206,3 +206,30 @@ Exit codes:
 
 After a successful init, run `workspace doctor` to confirm the new entry
 validates against the catalog schema.
+
+## Backend-Backed Creation Request Flow
+
+For SpecSpace-started product workspaces, prefer the two-step request flow over
+hand-entering `workspace init` arguments:
+
+```bash
+scripts/platform.py workspace initialize-from-request \
+  --creation-request <specspace-state>/product_workspace_creation_requests.json \
+  --workspace-id <workspace-id> \
+  --catalog workspaces.local.yaml \
+  --path "${ORG_ROOT}/<WorkspaceDir>" \
+  --output <run-dir>/product_workspace_initialization_plan.json
+
+scripts/platform.py workspace execute-initialization-plan \
+  --plan <run-dir>/product_workspace_initialization_plan.json
+```
+
+`initialize-from-request` validates the SpecSpace-owned creation intent and
+writes a report-only Platform plan. It does not update the catalog, run
+SpecGraph, or create workspace files.
+
+`execute-initialization-plan` revalidates the plan, delegates workspace file
+creation to the SpecGraph-owned initializer, and then appends the Platform
+catalog entry only after SpecGraph reports `initialized` or `ready`. It still
+does not create Git commits, open pull requests, publish read models, write
+Ontology packages, or mutate canonical specs directly.
