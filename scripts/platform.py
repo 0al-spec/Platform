@@ -15516,6 +15516,7 @@ def product_workspace_initialization_execution_request_diagnostics(
     request_path: Path,
     plan: dict[str, Any] | None,
     plan_path: Path | None,
+    plan_load_error: PlatformError | None = None,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     if request.get("artifact_kind") != PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_REQUEST_KIND:
@@ -15599,7 +15600,9 @@ def product_workspace_initialization_execution_request_diagnostics(
                 level="ERROR",
                 code="product_workspace_initialization_execution_request_plan_unreadable",
                 subject="execution_request.plan_ref",
-                message="execution request plan_ref must resolve to a readable plan",
+                message=str(plan_load_error)
+                if plan_load_error is not None
+                else "execution request plan_ref must resolve to a readable plan",
             )
         )
         return diagnostics
@@ -15650,16 +15653,8 @@ def workspace_execute_requested_initialization(args: argparse.Namespace) -> int:
         request_path=request_path,
         plan=plan,
         plan_path=plan_path,
+        plan_load_error=plan_load_error,
     )
-    if plan_load_error is not None:
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="product_workspace_initialization_execution_request_plan_unreadable",
-                subject="execution_request.plan_ref",
-                message=str(plan_load_error),
-            )
-        )
     if any(diagnostic.level == "ERROR" for diagnostic in diagnostics):
         workspace = (
             product_workspace_execution_plan_workspace(plan)
@@ -15672,9 +15667,17 @@ def workspace_execute_requested_initialization(args: argparse.Namespace) -> int:
             }
         )
         output_path = Path(args.output).resolve() if args.output else None
-        catalog_path = Path(args.catalog).resolve() if args.catalog else default_catalog_path()
+        catalog_path = (
+            Path(args.catalog).resolve()
+            if args.catalog
+            else Path(plan.get("catalog_ref")).resolve()
+            if plan is not None and isinstance(plan.get("catalog_ref"), str)
+            else default_catalog_path()
+        )
+        plan_ref = optional_text(request.get("plan_ref"))
         report = build_product_workspace_initialization_execution_report(
-            plan_path=plan_path or Path(str(request.get("plan_ref") or "")).resolve(),
+            plan_path=plan_path or request_path.parent / "__unresolved_plan_ref__",
+            plan_ref=plan_ref or "",
             execution_request_path=request_path,
             catalog_path=catalog_path,
             workspace=workspace,
@@ -15689,6 +15692,7 @@ def workspace_execute_requested_initialization(args: argparse.Namespace) -> int:
             diagnostics=diagnostics,
         )
         if output_path is not None and not args.no_write_report:
+            report["local_files_written"] = [str(output_path)]
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(
                 json.dumps(report, indent=2, sort_keys=True) + "\n",
@@ -15777,6 +15781,7 @@ def product_workspace_execution_catalog_entry(
 def build_product_workspace_initialization_execution_report(
     *,
     plan_path: Path,
+    plan_ref: str | None = None,
     execution_request_path: Path | None = None,
     catalog_path: Path,
     workspace: dict[str, str],
@@ -15805,7 +15810,11 @@ def build_product_workspace_initialization_execution_report(
         "generated_at": utc_now_iso(),
         "ok": error_count == 0,
         "dry_run": dry_run,
-        "plan_ref": str(plan_path),
+        "plan_ref": None
+        if plan_ref == ""
+        else plan_ref
+        if plan_ref is not None
+        else str(plan_path),
         "execution_request_ref": (
             str(execution_request_path)
             if execution_request_path is not None
