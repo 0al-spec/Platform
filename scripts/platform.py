@@ -3811,6 +3811,8 @@ def graph_repository_repaired_source_ref(
     runs_dir: Path,
     filename: str,
 ) -> str:
+    if runs_dir.parent.name == "runs":
+        return f"runs/{runs_dir.name}/{filename}"
     return f"runs/{filename}"
 
 
@@ -3819,10 +3821,7 @@ def graph_repository_repaired_source_ref_aliases(
     runs_dir: Path,
     filename: str,
 ) -> tuple[str, ...]:
-    refs = {graph_repository_repaired_source_ref(runs_dir=runs_dir, filename=filename)}
-    if runs_dir.parent.name == "runs":
-        refs.add(f"runs/{runs_dir.name}/{filename}")
-    return tuple(sorted(refs))
+    return (graph_repository_repaired_source_ref(runs_dir=runs_dir, filename=filename),)
 
 
 def graph_repository_operation(
@@ -4084,18 +4083,87 @@ def graph_repository_repair_session_diagnostics(
     return diagnostics
 
 
-def repair_session_source_refs(
-    repair_session: dict[str, Any],
+def repair_session_expected_source_refs_for_run_dir(
+    run_dir_ref: str | None,
 ) -> dict[str, tuple[str, ...]]:
-    source_artifacts = nested_mapping(repair_session, "source_artifacts")
-    refs: dict[str, tuple[str, ...]] = {}
-    for key, value in source_artifacts.items():
-        if not isinstance(key, str) or not isinstance(value, dict):
-            continue
-        source_ref = value.get("source_ref")
-        if isinstance(source_ref, str) and source_ref:
-            refs[key] = (source_ref,)
-    return refs
+    if not run_dir_ref or run_dir_ref == "runs":
+        return {
+            key: (value,)
+            for key, value in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items()
+        }
+    return {
+        key: (f"{run_dir_ref}/{Path(value).name}",)
+        for key, value in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items()
+    }
+
+
+@dataclass(frozen=True)
+class RunDirResolution:
+    path: Path
+    ref: str | None
+    diagnostics: list[Diagnostic]
+
+
+def resolve_run_dir(
+    *,
+    specgraph_dir: Path,
+    raw: str | None,
+    code_prefix: str,
+) -> RunDirResolution:
+    if not raw:
+        return RunDirResolution(path=specgraph_dir, ref=None, diagnostics=[])
+
+    raw_run_dir = Path(raw)
+    run_dir = (
+        raw_run_dir.resolve()
+        if raw_run_dir.is_absolute()
+        else (specgraph_dir / raw_run_dir).resolve()
+    )
+    diagnostics: list[Diagnostic] = []
+    try:
+        run_dir_ref = run_dir.relative_to(specgraph_dir).as_posix()
+    except ValueError:
+        run_dir_ref = str(raw_run_dir)
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=f"{code_prefix}_run_dir_outside_specgraph",
+                subject="run_dir",
+                message="run-dir must resolve inside the SpecGraph checkout",
+            )
+        )
+    if run_dir_ref in {"", "."}:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=f"{code_prefix}_run_dir_invalid",
+                subject="run_dir",
+                message="run-dir must name a dedicated child directory",
+            )
+        )
+    return RunDirResolution(path=run_dir, ref=run_dir_ref, diagnostics=diagnostics)
+
+
+def product_repair_rerun_output_rel_by_key(run_dir_ref: str) -> dict[str, str]:
+    output_rel_by_key = {
+        key: f"{run_dir_ref}/{Path(value).name}"
+        for key, value in PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS.items()
+    }
+    output_rel_by_key.update(
+        {
+            "clarification_answers": f"{run_dir_ref}/idea_to_spec_clarification_answers.json",
+            "ontology_decisions": f"{run_dir_ref}/product_ontology_gap_review_decisions.json",
+            "rerun_input": f"{run_dir_ref}/idea_to_spec_answer_rerun_input.json",
+        }
+    )
+    return output_rel_by_key
+
+
+def product_repair_rerun_repaired_output_rel_by_key(run_dir_ref: str) -> dict[str, str]:
+    return {
+        key: f"{run_dir_ref}/{Path(value).name}"
+        for key, value in PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.items()
+    }
 
 
 def build_graph_repository_execution_plan(
@@ -5159,7 +5227,9 @@ def build_product_repair_rerun_execution_plan(
         diagnostics.extend(
             graph_repository_repair_session_diagnostics(
                 repair_session,
-                expected_source_refs=repair_session_source_refs(repair_session),
+                expected_source_refs=repair_session_expected_source_refs_for_run_dir(
+                    run_dir_ref
+                ),
                 subject="repair_session",
             )
         )
@@ -5253,25 +5323,14 @@ def build_product_repair_rerun_execution_plan(
         for key, value in PRODUCT_REPAIR_RERUN_REPAIRED_OUTPUTS.items()
     }
     if run_dir_ref:
-        output_rel_by_key = {
-            "request_gate": f"{run_dir_ref}/specspace_repair_rerun_request_gate.json",
-            "rerun_report": f"{run_dir_ref}/specspace_repair_draft_rerun_report.json",
-            "repair_session": f"{run_dir_ref}/idea_to_spec_repair_session.json",
-            "rerun_preview": f"{run_dir_ref}/idea_to_spec_rerun_preview.json",
-            "rerun_materialization": f"{run_dir_ref}/idea_to_spec_rerun_materialization.json",
-            "clarification_answers": f"{run_dir_ref}/idea_to_spec_clarification_answers.json",
-            "ontology_decisions": f"{run_dir_ref}/product_ontology_gap_review_decisions.json",
-            "rerun_input": f"{run_dir_ref}/idea_to_spec_answer_rerun_input.json",
-        }
+        output_rel_by_key = product_repair_rerun_output_rel_by_key(run_dir_ref)
         output_refs = {
             key: str(specgraph_dir / rel)
             for key, rel in output_rel_by_key.items()
             if key in PRODUCT_REPAIR_RERUN_DEFAULT_OUTPUTS
         }
         for key, variable in PRODUCT_REPAIR_RERUN_OUTPUT_MAKE_VARIABLES.items():
-            rel = output_rel_by_key.get(key)
-            if rel:
-                target_variables[variable] = rel
+            target_variables[variable] = output_rel_by_key[key]
         target_variables.update(
             {
                 "SPECSPACE_REPAIR_DRAFT_IMPORT_DRAFTS": (
@@ -5298,24 +5357,15 @@ def build_product_repair_rerun_execution_plan(
             }
         )
 
-        repaired_output_rel_by_key = {
-            "repaired_handoff": f"{run_dir_ref}/repaired_candidate_promotion_handoff_report.json",
-            "repaired_active_candidate": f"{run_dir_ref}/repaired_active_idea_to_spec_candidate.json",
-            "repaired_candidate_graph": f"{run_dir_ref}/repaired_candidate_spec_graph.json",
-            "repaired_pre_sib": f"{run_dir_ref}/repaired_pre_sib_coherence_report.json",
-            "repaired_repair_loop": f"{run_dir_ref}/repaired_candidate_repair_loop_report.json",
-            "repaired_materialization": f"{run_dir_ref}/repaired_candidate_spec_materialization_report.json",
-            "repaired_repair_session": f"{run_dir_ref}/repaired_idea_to_spec_repair_session.json",
-            "repaired_promotion_gate": f"{run_dir_ref}/repaired_idea_to_spec_promotion_gate.json",
-        }
+        repaired_output_rel_by_key = product_repair_rerun_repaired_output_rel_by_key(
+            run_dir_ref
+        )
         repaired_output_refs = {
             key: str(specgraph_dir / rel)
             for key, rel in repaired_output_rel_by_key.items()
         }
         for key, variable in PRODUCT_REPAIR_RERUN_REPAIRED_MAKE_VARIABLES.items():
-            rel = repaired_output_rel_by_key.get(key)
-            if rel:
-                target_variables[variable] = rel
+            target_variables[variable] = repaired_output_rel_by_key[key]
         target_variables[
             "REPAIRED_CANDIDATE_PROMOTION_HANDOFF_MATERIALIZATION_OUTPUT_DIR"
         ] = f"{run_dir_ref}/repaired_materialized_candidate_specs"
@@ -5406,36 +5456,14 @@ def product_repair_rerun_plan(args: argparse.Namespace) -> int:
     deployment_profile_path = Path(args.deployment_profile)
     specgraph_dir = Path(args.specgraph_dir).resolve()
     preflight_diagnostics: list[Diagnostic] = []
-    run_dir_ref: str | None = None
-    run_dir_path: Path | None = None
-    if getattr(args, "run_dir", None):
-        raw_run_dir = Path(args.run_dir)
-        run_dir_path = (
-            raw_run_dir.resolve()
-            if raw_run_dir.is_absolute()
-            else (specgraph_dir / raw_run_dir).resolve()
-        )
-        try:
-            run_dir_ref = run_dir_path.relative_to(specgraph_dir).as_posix()
-        except ValueError:
-            run_dir_ref = str(raw_run_dir)
-            preflight_diagnostics.append(
-                Diagnostic(
-                    level="ERROR",
-                    code="product_repair_rerun_run_dir_outside_specgraph",
-                    subject="run_dir",
-                    message="run-dir must resolve inside the SpecGraph checkout",
-                )
-            )
-        if run_dir_ref in {"", "."}:
-            preflight_diagnostics.append(
-                Diagnostic(
-                    level="ERROR",
-                    code="product_repair_rerun_run_dir_invalid",
-                    subject="run_dir",
-                    message="run-dir must name a dedicated child directory",
-                )
-            )
+    run_dir_resolution = resolve_run_dir(
+        specgraph_dir=specgraph_dir,
+        raw=getattr(args, "run_dir", None),
+        code_prefix="product_repair_rerun",
+    )
+    run_dir_ref = run_dir_resolution.ref
+    run_dir_path = run_dir_resolution.path if run_dir_ref is not None else None
+    preflight_diagnostics.extend(run_dir_resolution.diagnostics)
     input_base_dir = run_dir_path if run_dir_path is not None else specgraph_dir
     request_state_path = path_arg_or_default(
         args.rerun_request,
@@ -5579,33 +5607,14 @@ def product_repair_draft_import_preview(args: argparse.Namespace) -> int:
         code_prefix="product_repair_draft_import",
         subject="specgraph_dir",
     )
-    raw_run_dir = Path(args.run_dir)
-    run_dir = (
-        raw_run_dir.resolve()
-        if raw_run_dir.is_absolute()
-        else (specgraph_dir / raw_run_dir).resolve()
+    run_dir_resolution = resolve_run_dir(
+        specgraph_dir=specgraph_dir,
+        raw=args.run_dir,
+        code_prefix="product_repair_draft_import",
     )
-    try:
-        run_dir_ref = run_dir.relative_to(specgraph_dir).as_posix()
-    except ValueError:
-        run_dir_ref = str(raw_run_dir)
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="product_repair_draft_import_run_dir_outside_specgraph",
-                subject="run_dir",
-                message="run-dir must resolve inside the SpecGraph checkout",
-            )
-        )
-    if run_dir_ref in {"", "."}:
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="product_repair_draft_import_run_dir_invalid",
-                subject="run_dir",
-                message="run-dir must name a dedicated child directory",
-            )
-        )
+    run_dir = run_dir_resolution.path
+    run_dir_ref = run_dir_resolution.ref or str(Path(args.run_dir))
+    diagnostics.extend(run_dir_resolution.diagnostics)
 
     draft_source = input_path_arg_or_existing(args.draft_state, base_dir=specgraph_dir)
     repair_session_path = input_path_arg_or_existing(
@@ -5666,31 +5675,20 @@ def product_repair_draft_import_preview(args: argparse.Namespace) -> int:
         diagnostics.extend(
             graph_repository_repair_session_diagnostics(
                 repair_session,
-                expected_source_refs=repair_session_source_refs(repair_session),
+                expected_source_refs=repair_session_expected_source_refs_for_run_dir(
+                    path_ref_for_make(repair_session_path.parent, base_dir=specgraph_dir)
+                ),
                 subject="repair_session",
             )
         )
 
-    try:
-        repair_session_ref = repair_session_path.resolve().relative_to(
-            specgraph_dir
-        ).as_posix()
-    except ValueError:
-        repair_session_ref = str(repair_session_path)
-    try:
-        clarification_requests_ref = clarification_requests_path.resolve().relative_to(
-            specgraph_dir
-        ).as_posix()
-    except ValueError:
-        clarification_requests_ref = str(clarification_requests_path)
-    try:
-        output_ref = output_path.resolve().relative_to(specgraph_dir).as_posix()
-    except ValueError:
-        output_ref = str(output_path)
-    try:
-        draft_state_source_ref = draft_source.resolve().relative_to(specgraph_dir).as_posix()
-    except ValueError:
-        draft_state_source_ref = str(draft_source)
+    repair_session_ref = path_ref_for_make(repair_session_path, base_dir=specgraph_dir)
+    clarification_requests_ref = path_ref_for_make(
+        clarification_requests_path,
+        base_dir=specgraph_dir,
+    )
+    output_ref = path_ref_for_make(output_path, base_dir=specgraph_dir)
+    draft_state_source_ref = path_ref_for_make(draft_source, base_dir=specgraph_dir)
 
     draft_handoff = run_dir / "idea_to_spec_repair_drafts.json"
     draft_state_copied_to_run_dir = False
@@ -5925,46 +5923,21 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
             )
         )
 
-    def _ref(path: Path) -> str:
-        try:
-            return path.resolve().relative_to(specgraph_dir).as_posix()
-        except ValueError:
-            return str(path)
-
-    request_state_ref = _ref(request_state_path)
-    import_preview_ref = _ref(import_preview_path)
-    repair_session_ref = _ref(repair_session_path)
-    output_ref = _ref(output_path)
+    request_state_ref = path_ref_for_make(request_state_path, base_dir=specgraph_dir)
+    import_preview_ref = path_ref_for_make(import_preview_path, base_dir=specgraph_dir)
+    repair_session_ref = path_ref_for_make(repair_session_path, base_dir=specgraph_dir)
+    output_ref = path_ref_for_make(output_path, base_dir=specgraph_dir)
 
     request_state_copied_to_run_dir = False
     if args.run_dir:
-        raw_run_dir = Path(args.run_dir)
-        run_dir = (
-            raw_run_dir.resolve()
-            if raw_run_dir.is_absolute()
-            else (specgraph_dir / raw_run_dir).resolve()
+        run_dir_resolution = resolve_run_dir(
+            specgraph_dir=specgraph_dir,
+            raw=args.run_dir,
+            code_prefix="product_repair_rerun_request_gate",
         )
-        try:
-            run_dir_ref = run_dir.relative_to(specgraph_dir).as_posix()
-        except ValueError:
-            run_dir_ref = str(raw_run_dir)
-            diagnostics.append(
-                Diagnostic(
-                    level="ERROR",
-                    code="product_repair_rerun_request_gate_run_dir_outside_specgraph",
-                    subject="run_dir",
-                    message="run-dir must resolve inside the SpecGraph checkout",
-                )
-            )
-        if run_dir_ref in {"", "."}:
-            diagnostics.append(
-                Diagnostic(
-                    level="ERROR",
-                    code="product_repair_rerun_request_gate_run_dir_invalid",
-                    subject="run_dir",
-                    message="run-dir must name a dedicated child directory",
-                )
-            )
+        run_dir = run_dir_resolution.path
+        run_dir_ref = run_dir_resolution.ref or str(Path(args.run_dir))
+        diagnostics.extend(run_dir_resolution.diagnostics)
         request_state_path = run_dir / "idea_to_spec_repair_rerun_requests.json"
         request_state_ref = f"{run_dir_ref}/idea_to_spec_repair_rerun_requests.json"
         if not diagnostics and not args.dry_run:
@@ -6028,7 +6001,8 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
             "dry_run": True,
         }
 
-    output_record = product_repair_output_record(output_path)
+    output_record = product_repair_output_record(output_path, include_payload=True)
+    output_payload = output_record.pop("payload", {})
     if not diagnostics and not args.dry_run:
         if output_record.get("present") is not True:
             diagnostics.append(
@@ -6049,8 +6023,11 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
                 )
             )
         else:
-            gate_payload = load_json_mapping(output_path, label="request gate output")
-            diagnostics.extend(product_repair_request_gate_diagnostics(gate_payload))
+            diagnostics.extend(
+                product_repair_request_gate_diagnostics(
+                    output_payload if isinstance(output_payload, dict) else {}
+                )
+            )
 
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0 and (args.dry_run or command_result is not None)
@@ -6079,7 +6056,10 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
         "generated_at": utc_now_iso(),
         "started_at": started_at,
         "specgraph_dir": str(specgraph_dir),
-        "request_state_source_ref": _ref(request_state_source_path),
+        "request_state_source_ref": path_ref_for_make(
+            request_state_source_path,
+            base_dir=specgraph_dir,
+        ),
         "request_state_handoff_ref": request_state_ref,
         "request_state_copied_to_run_dir": request_state_copied_to_run_dir,
         "rerun_request_ref": request_state_ref,
@@ -6376,7 +6356,11 @@ def product_repair_rerun_request_gate_handoff_state(
     return state
 
 
-def product_repair_output_record(path: Path) -> dict[str, Any]:
+def product_repair_output_record(
+    path: Path,
+    *,
+    include_payload: bool = False,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if path.is_file():
         try:
@@ -6385,7 +6369,7 @@ def product_repair_output_record(path: Path) -> dict[str, Any]:
                 payload = parsed
         except json.JSONDecodeError:
             payload = {}
-    return {
+    record = {
         "path": str(path),
         "present": path.is_file(),
         "artifact_kind": payload.get("artifact_kind"),
@@ -6400,6 +6384,9 @@ def product_repair_output_record(path: Path) -> dict[str, Any]:
         "authority_boundary": nested_mapping(payload, "authority_boundary"),
         "sha256": file_sha256(path),
     }
+    if include_payload:
+        record["payload"] = payload
+    return record
 
 
 def product_repair_draft_import_handoff_state(
@@ -6976,6 +6963,13 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
             evidence=["make publish-bundle"],
         )
     )
+    rerun_report_record = nested_mapping(output_records, "rerun_report")
+    rerun_report_ready = rerun_report_record.get("ready") is True
+    rerun_report_accepted_as_intermediate = (
+        bool(args.build_repaired_handoff)
+        and rerun_report_record.get("present") is True
+        and rerun_report_ready is not True
+    )
     report = {
         "schema_version": 1,
         "artifact_kind": PRODUCT_REPAIR_RERUN_EXECUTION_REPORT_KIND,
@@ -7014,9 +7008,11 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
             "repaired_handoff_built": (
                 bool(args.build_repaired_handoff and ok and not args.dry_run)
             ),
-            "rerun_report_digest": nested_mapping(output_records, "rerun_report").get(
-                "sha256"
+            "rerun_report_ready": rerun_report_ready,
+            "rerun_report_accepted_as_intermediate_evidence": (
+                rerun_report_accepted_as_intermediate
             ),
+            "rerun_report_digest": rerun_report_record.get("sha256"),
             "repair_session_digest": nested_mapping(
                 output_records,
                 "repair_session",
@@ -7063,33 +7059,14 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         code_prefix="real_idea_answer_continuation",
         subject="specgraph_dir",
     )
-    raw_run_dir = Path(args.run_dir)
-    run_dir = (
-        raw_run_dir.resolve()
-        if raw_run_dir.is_absolute()
-        else (specgraph_dir / raw_run_dir).resolve()
+    run_dir_resolution = resolve_run_dir(
+        specgraph_dir=specgraph_dir,
+        raw=args.run_dir,
+        code_prefix="real_idea_answer_continuation",
     )
-    try:
-        run_dir_ref = run_dir.relative_to(specgraph_dir).as_posix()
-    except ValueError:
-        run_dir_ref = str(raw_run_dir)
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="real_idea_answer_continuation_run_dir_outside_specgraph",
-                subject="run_dir",
-                message="run-dir must resolve inside the SpecGraph checkout",
-            )
-        )
-    if run_dir_ref in {"", "."}:
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="real_idea_answer_continuation_run_dir_invalid",
-                subject="run_dir",
-                message="run-dir must name a dedicated child directory",
-            )
-        )
+    run_dir = run_dir_resolution.path
+    run_dir_ref = run_dir_resolution.ref or str(Path(args.run_dir))
+    diagnostics.extend(run_dir_resolution.diagnostics)
     answer_handoff = run_dir / "idea_to_spec_intake_clarification_answers.json"
     answer_state_explicit = bool(args.answer_state)
     answer_source = (
@@ -7097,6 +7074,8 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         if answer_state_explicit
         else answer_handoff
     )
+    answer_source_resolved = answer_source.resolve()
+    answer_handoff_resolved = answer_handoff.resolve()
     if not args.dry_run and not answer_source.is_file():
         diagnostics.append(
             Diagnostic(
@@ -7109,7 +7088,7 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
     if (
         not diagnostics
         and answer_state_explicit
-        and answer_source.resolve() != answer_handoff.resolve()
+        and answer_source_resolved != answer_handoff_resolved
         and answer_handoff.exists()
         and not args.overwrite_answer_state
     ):
@@ -7126,14 +7105,12 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         )
     answer_state_copied_to_run_dir = False
     try:
-        answer_state_source_ref = answer_source.resolve().relative_to(
-            specgraph_dir
-        ).as_posix()
+        answer_state_source_ref = answer_source_resolved.relative_to(specgraph_dir).as_posix()
     except ValueError:
         answer_state_source_ref = str(answer_source)
     if (
         not diagnostics
-        and answer_source.resolve() != answer_handoff.resolve()
+        and answer_source_resolved != answer_handoff_resolved
         and not args.dry_run
     ):
         run_dir.mkdir(parents=True, exist_ok=True)

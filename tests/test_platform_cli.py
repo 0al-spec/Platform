@@ -4862,6 +4862,63 @@ workspaces:
             "runs/idea-alpha/idea_to_spec_clarification_requests.json",
         )
 
+    def test_product_repair_rerun_plan_rejects_stale_selected_run_dir_repair_session_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            runs_dir = specgraph_dir / "runs"
+            selected_run_dir = runs_dir / "idea-alpha"
+            selected_run_dir.mkdir()
+            for filename in (
+                "idea_to_spec_repair_rerun_requests.json",
+                "specspace_repair_draft_import_preview.json",
+                "specspace_repair_rerun_request_gate.json",
+                "idea_to_spec_repair_session.json",
+            ):
+                shutil.copyfile(runs_dir / filename, selected_run_dir / filename)
+            repair_session_path = selected_run_dir / "idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+            repair_session["source_artifacts"]["rerun_preview"][
+                "source_ref"
+            ] = "runs/idea-alpha/stale_rerun_preview.json"
+            repair_session_path.write_text(
+                json.dumps(repair_session),
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--rerun-request",
+                str(selected_run_dir / "idea_to_spec_repair_rerun_requests.json"),
+                "--import-preview",
+                str(selected_run_dir / "specspace_repair_draft_import_preview.json"),
+                "--repair-session",
+                str(repair_session_path),
+                "--request-gate",
+                str(selected_run_dir / "specspace_repair_rerun_request_gate.json"),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_repair_session_source_ref_stale", codes)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["ready_to_execute"])
+
     def test_product_repair_rerun_execute_runs_specgraph_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             specgraph_dir = Path(tmp_dir) / "SpecGraph"
@@ -4954,6 +5011,10 @@ workspaces:
             )
             self.assertTrue(payload["summary"]["repaired_handoff_requested"])
             self.assertTrue(payload["summary"]["repaired_handoff_built"])
+            self.assertTrue(payload["summary"]["rerun_report_ready"])
+            self.assertFalse(
+                payload["summary"]["rerun_report_accepted_as_intermediate_evidence"]
+            )
             self.assertIsInstance(
                 payload["summary"]["repaired_handoff_digest"],
                 str,
@@ -4988,6 +5049,64 @@ workspaces:
                 ).is_file()
             )
 
+    def test_product_repair_rerun_execute_surfaces_intermediate_rerun_report(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            makefile = (specgraph_dir / "Makefile").read_text(encoding="utf-8")
+            makefile = makefile.replace(
+                '"readiness":{"ready":true,"review_state":"repair_draft_rerun_ready"}',
+                '"readiness":{"ready":false,"review_state":"repair_draft_rerun_review_required"}',
+            )
+            makefile = makefile.replace(
+                '"summary":{"status":"ready"}}',
+                '"summary":{"status":"repair_draft_rerun_review_required"}}',
+            )
+            (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            execution_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_execution.json"
+            )
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--output",
+                str(execution_report_path),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["summary"]["rerun_report_ready"])
+        self.assertTrue(
+            payload["summary"]["rerun_report_accepted_as_intermediate_evidence"]
+        )
+        self.assertEqual(
+            payload["output_artifacts"]["rerun_report"]["status"],
+            "repair_draft_rerun_review_required",
+        )
+
     def test_product_repair_rerun_execute_builds_repaired_handoff_in_run_dir(
         self,
     ) -> None:
@@ -5008,6 +5127,15 @@ workspaces:
                     specgraph_dir / "runs" / filename,
                     selected_run_dir / filename,
                 )
+            repair_session_path = selected_run_dir / "idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+            repair_session_path.write_text(
+                json.dumps(repair_session),
+                encoding="utf-8",
+            )
             plan_path = selected_run_dir / "product_repair_rerun_plan.json"
             execution_report_path = selected_run_dir / "product_repair_rerun_execution.json"
             plan_result = self.run_cli(
