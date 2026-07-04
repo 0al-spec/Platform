@@ -542,6 +542,10 @@ Expected result:
 - `artifact_kind: platform_product_workspace_initialization_plan`;
 - `summary.ready_for_platform_initialization: true`;
 - `pending_catalog_entry.project_id` matches the selected workspace id;
+- `workspace_binding.platform_default_run_dir_ref` names
+  `runs/<workspace-id>`;
+- `workspace_binding.product_artifact_base_url` is present when
+  `--artifact-base-url` or `--product-artifact-base-url` was provided;
 - `summary.catalog_written: false`;
 - `summary.workspace_files_created: false`;
 - `authority_boundary.updates_workspace_catalog: false`.
@@ -568,6 +572,8 @@ Expected result:
 - `summary.specgraph_executed: true`;
 - `summary.workspace_files_created: true`;
 - `summary.catalog_written: true`;
+- `workspace_binding` repeats the product run-dir, SpecSpace state namespace,
+  and artifact-base refs used by downstream handoffs;
 - no Git commits, pull requests, read-model publication, Ontology writes, or
   canonical spec mutations.
 

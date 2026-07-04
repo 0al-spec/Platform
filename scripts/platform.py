@@ -15148,6 +15148,8 @@ def build_product_workspace_initialization_report(
     workspace_root: Path,
     org_root: Path | None,
     governance_profile: str,
+    artifact_base_url: str | None,
+    product_artifact_base_url: str | None,
     output_path: Path | None,
     dry_run: bool,
     diagnostics: list[Diagnostic],
@@ -15177,6 +15179,8 @@ def build_product_workspace_initialization_report(
         route=request.get("route") if isinstance(request, dict) else None,
         workspace_root=workspace_root,
         governance_profile=governance_profile,
+        artifact_base_url=artifact_base_url,
+        product_artifact_base_url=product_artifact_base_url,
     )
     return {
         "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_REPORT_KIND,
@@ -15268,6 +15272,8 @@ def workspace_initialize_from_creation_request(args: argparse.Namespace) -> int:
         workspace_root=workspace_root,
         org_root=org_root,
         governance_profile=args.governance_profile,
+        artifact_base_url=args.artifact_base_url,
+        product_artifact_base_url=args.product_artifact_base_url,
         output_path=output_path,
         dry_run=args.dry_run,
         diagnostics=diagnostics,
@@ -15418,6 +15424,8 @@ def build_product_workspace_initialization_execution_report(
     workspace_root: Path,
     execution_report_path: Path | None,
     specgraph_report_path: Path | None,
+    artifact_base_url: str | None,
+    product_artifact_base_url: str | None,
     catalog_written: bool,
     specgraph_executed: bool,
     dry_run: bool,
@@ -15429,6 +15437,8 @@ def build_product_workspace_initialization_execution_report(
         route=f"/{workspace.get('workspace_id') or ''}",
         workspace_root=workspace_root,
         governance_profile=workspace.get("governance_profile") or "product_workspace",
+        artifact_base_url=artifact_base_url,
+        product_artifact_base_url=product_artifact_base_url,
     )
     return {
         "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_KIND,
@@ -15633,6 +15643,12 @@ def workspace_execute_initialization_plan(args: argparse.Namespace) -> int:
         specgraph_report_path=specgraph_report_path
         if specgraph_report_path.exists()
         else None,
+        artifact_base_url=optional_text(args.artifact_base_url)
+        or optional_text(nested_mapping(plan, "workspace_binding").get("root_artifact_base_url")),
+        product_artifact_base_url=optional_text(args.product_artifact_base_url)
+        or optional_text(
+            nested_mapping(plan, "workspace_binding").get("product_artifact_base_url")
+        ),
         catalog_written=catalog_written,
         specgraph_executed=specgraph_executed,
         dry_run=args.dry_run,
@@ -15782,10 +15798,28 @@ def product_workspace_initialization_binding(
     route: str | None,
     workspace_root: Path,
     governance_profile: str,
+    artifact_base_url: str | None = None,
+    product_artifact_base_url: str | None = None,
 ) -> dict[str, Any]:
     workspace_id_value = workspace_id if isinstance(workspace_id, str) else None
     workspace_bundle_ref = (
         f"workspaces/{workspace_id_value}" if workspace_id_value else None
+    )
+    root_artifact_base_url = (
+        artifact_base_url.strip().rstrip("/")
+        if isinstance(artifact_base_url, str) and artifact_base_url.strip()
+        else None
+    )
+    selected_product_artifact_base_url = (
+        product_artifact_base_url.strip().rstrip("/")
+        if isinstance(product_artifact_base_url, str)
+        and product_artifact_base_url.strip()
+        else default_product_workspace_artifact_base_url(
+            root_artifact_base_url,
+            workspace_id_value,
+        )
+        if root_artifact_base_url is not None and workspace_id_value is not None
+        else None
     )
     return {
         "workspace_id": workspace_id_value,
@@ -15806,6 +15840,13 @@ def product_workspace_initialization_binding(
         "product_artifact_manifest_ref": (
             f"{workspace_bundle_ref}/artifact_manifest.json"
             if workspace_bundle_ref
+            else None
+        ),
+        "root_artifact_base_url": root_artifact_base_url,
+        "product_artifact_base_url": selected_product_artifact_base_url,
+        "product_artifact_manifest_url": (
+            f"{selected_product_artifact_base_url}/artifact_manifest.json"
+            if selected_product_artifact_base_url is not None
             else None
         ),
         "binding_authority": {
@@ -16351,6 +16392,12 @@ def positive_int_string(value: str, *, label: str) -> str:
     if parsed < 1:
         raise PlatformError(f"{label} must be a positive integer, got {value!r}")
     return str(parsed)
+
+
+def optional_text(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
 
 
 def timeweb_hyperprompt_runtime_from_args(args: argparse.Namespace) -> TimewebHyperpromptRuntime:
@@ -17113,6 +17160,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     initialize_from_request_parser.add_argument(
+        "--artifact-base-url",
+        help=(
+            "Optional root static artifact base URL. When set, the plan records "
+            "the default product artifact base as <root>/workspaces/<workspace-id>."
+        ),
+    )
+    initialize_from_request_parser.add_argument(
+        "--product-artifact-base-url",
+        help=(
+            "Optional explicit static artifact base URL for the selected product "
+            "workspace. Report-only metadata; does not publish artifacts."
+        ),
+    )
+    initialize_from_request_parser.add_argument(
         "--output",
         help=(
             "Optional path where the initialization plan report JSON should be "
@@ -17151,6 +17212,21 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Catalog to update. Defaults to the plan catalog_ref, then normal "
             "workspace catalog discovery."
+        ),
+    )
+    execute_initialization_parser.add_argument(
+        "--artifact-base-url",
+        help=(
+            "Optional root static artifact base URL. When set, the execution "
+            "report records the default product artifact base as "
+            "<root>/workspaces/<workspace-id>."
+        ),
+    )
+    execute_initialization_parser.add_argument(
+        "--product-artifact-base-url",
+        help=(
+            "Optional explicit static artifact base URL for the selected product "
+            "workspace. Report-only metadata; does not publish artifacts."
         ),
     )
     execute_initialization_parser.add_argument(

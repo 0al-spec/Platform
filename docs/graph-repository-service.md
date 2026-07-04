@@ -92,9 +92,10 @@ initialized or promotion-capable.
 The Platform initialization plan/execution report carries this as report-only
 `workspace_binding` metadata. It names the product workspace, the default
 product run-dir ref used by later idea-to-spec handoffs, the SpecSpace state
-namespace ref, and the relative workspace bundle/manifest refs. These fields are
-coordination evidence only; they do not grant SpecSpace authority to initialize
-the workspace, write catalog entries, run SpecGraph, or publish read models.
+namespace ref, the relative workspace bundle/manifest refs, and optional static
+artifact-base URLs. These fields are coordination evidence only; they do not
+grant SpecSpace authority to initialize the workspace, write catalog entries,
+run SpecGraph, publish artifacts, or publish read models.
 
 ## Git Service Responsibilities
 
