@@ -206,6 +206,21 @@ class PlatformInitTests(unittest.TestCase):
             self.assertEqual(payload["workspace"]["route"], "/pantry-rotation")
             self.assertEqual(payload["workspace"]["workspace_root"], str(workspace.resolve()))
             self.assertEqual(payload["workspace"]["repository_role"], "product_spec_workspace")
+            self.assertEqual(
+                payload["workspace_binding"]["platform_default_run_dir_ref"],
+                "runs/pantry-rotation",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["specspace_state_namespace_ref"],
+                "specspace-state://workspace/pantry-rotation",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["product_artifact_bundle_ref"],
+                "workspaces/pantry-rotation",
+            )
+            self.assertFalse(
+                payload["workspace_binding"]["binding_authority"]["may_execute_platform"]
+            )
             self.assertTrue(payload["authority_boundary"]["executes_specgraph"])
             self.assertTrue(payload["authority_boundary"]["updates_workspace_catalog"])
             self.assertFalse(payload["authority_boundary"]["creates_git_commits"])

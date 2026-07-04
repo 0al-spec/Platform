@@ -116,6 +116,21 @@ class PlatformCliTests(unittest.TestCase):
             )
             self.assertEqual(payload["workspace"]["workspace_id"], "pantry-rotation")
             self.assertEqual(
+                payload["workspace_binding"]["platform_default_run_dir_ref"],
+                "runs/pantry-rotation",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["specspace_state_namespace_ref"],
+                "specspace-state://workspace/pantry-rotation",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["product_artifact_manifest_ref"],
+                "workspaces/pantry-rotation/artifact_manifest.json",
+            )
+            self.assertFalse(
+                payload["workspace_binding"]["binding_authority"]["may_write_catalog"]
+            )
+            self.assertEqual(
                 payload["pending_catalog_entry"]["project_id"],
                 "pantry-rotation",
             )

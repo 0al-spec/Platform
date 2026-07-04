@@ -472,11 +472,14 @@ now records backend-backed product workspace creation intent as SpecSpace-owned
 state. Platform can validate that request into a report-only initialization
 plan and execute the ready plan by delegating workspace file creation to the
 SpecGraph-owned initializer before appending the Platform catalog entry. The
-remaining gap is service integration: artifact base allocation, run-dir binding,
-hosted execution, and read-model publication must move through a Platform/Git
-Service boundary rather than browser-side mutation. The local CLI executor is
-an MVP adapter; production should expose the same operations through a Git
-Service rather than relying on an arbitrary local checkout.
+initialization plan and execution report now expose a report-only
+`workspace_binding` surface with the selected workspace id, product run-dir ref,
+SpecSpace state namespace ref, and workspace bundle/manifest refs. The
+remaining gap is service integration: hosted execution, durable artifact-base
+allocation, and read-model publication must move through a Platform/Git Service
+boundary rather than browser-side mutation. The local CLI executor is an MVP
+adapter; production should expose the same operations through a Git Service
+rather than relying on an arbitrary local checkout.
 
 Define a repository service over Git instead of letting SpecSpace mutate a local
 checkout directly. The service should own:
