@@ -53,6 +53,42 @@ worktrees and `make publish-bundle`. Hosted production can later replace the
 storage backend with a managed Git provider or queue-backed worker without
 changing the UI authority model.
 
+## SpecSpace Authority Transition Strategy
+
+SpecSpace currently acts as an inspect/request surface. That remains the safe
+default: the browser may display artifacts and store operator-owned local state,
+but it must not mutate SpecGraph, Git repositories, Ontology packages, or public
+read models directly.
+
+The transition from read-only Product Workspace UX to managed operations should
+be staged:
+
+1. **Inspect-only lifecycle**: SpecSpace reads published artifacts, mutable
+   state hygiene, Idea Maturity, candidate overview, approval, and promotion
+   reports.
+2. **Operator-owned intent**: SpecSpace stores bounded local state such as raw
+   idea entries, clarification answers, repair drafts, ontology decisions,
+   rerun requests, approval intents, and future workspace creation intents.
+3. **Typed handoff artifacts**: SpecGraph or Platform imports that state through
+   validators and emits preview/gate reports before any execution-capable step.
+4. **Platform-owned execution**: the UI may request execution only through a
+   backend operation that calls allowlisted Platform commands and returns
+   durable reports. The browser does not choose arbitrary command lines, paths,
+   make targets, repositories, or Git refs.
+5. **Git Service authority**: repository writes, branch creation, commits, PRs,
+   review status, and read-model publication stay behind Git Service operation
+   contracts and deployment profiles.
+6. **Audited management surface**: execution-capable UI actions become
+   available only when the selected gate report is ready, source refs are fresh,
+   the operation is idempotent, and the authority boundary is explicit.
+
+The same rule applies to creating new product workspaces. A route such as
+`/cash-flow-control` is only navigation. A real workspace creation flow must
+produce a backend-owned record or Platform workspace initialization report with
+workspace id, display name, artifact base, SpecSpace state namespace, run-dir
+binding, and diagnostics. SpecSpace should not treat a route-only workspace as
+initialized or promotion-capable.
+
 ## Git Service Responsibilities
 
 The Git Service is the durable versioning and review subsystem for graph
