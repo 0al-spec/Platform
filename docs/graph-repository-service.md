@@ -120,6 +120,39 @@ When adding a new SpecSpace-managed action, update that registry and this
 Platform runbook together so UI state, backend endpoint, Platform wrapper, and
 durable report evidence stay aligned.
 
+## Agent Surface Relationship
+
+Agent Surface is the intended future protocol vocabulary for exposing managed
+Product Workspace operations to agents and external runtimes. Platform should
+align with it, but should not claim Agent Surface conformance yet.
+
+Current state:
+
+- Platform owns the controlled execution wrappers that SpecSpace may request
+  through backend-managed operations.
+- Platform writes durable execution, gate, promotion, review, and publication
+  reports that can later be normalized as Agent Surface receipt evidence.
+- Platform is not an Agent Surface runtime, grant issuer, or grant verifier. It
+  does not accept arbitrary external agent action requests, publish an
+  application manifest, or implement Agent Grant revocation.
+- The only current authority source is the existing deployment profile,
+  allowlisted command family, validated input artifacts, idempotency policy,
+  and Git Service contract.
+
+Near-term alignment should stay report-only:
+
+- map SpecSpace `operation_id` values to candidate Agent Surface action ids;
+- keep Platform wrapper names and report refs as executor/receipt evidence;
+- record idempotency scope, risk/side-effect notes, authority flags, and output
+  refs in existing reports where useful;
+- avoid `/.well-known/agent-surface.json`, Agent Grants, external runtime
+  pairing, or runtime action endpoints until the Agent Surface draft and local
+  managed-operation registry are versioned together.
+
+This preserves the current execution boundary: SpecSpace may request
+allowlisted Platform operations, but Platform/Git Service remain responsible for
+validation, execution, repository effects, and audit reports.
+
 ## Git Service Responsibilities
 
 The Git Service is the durable versioning and review subsystem for graph
