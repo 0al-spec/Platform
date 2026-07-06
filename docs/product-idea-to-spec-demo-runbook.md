@@ -224,6 +224,7 @@ Start SpecSpace with execution explicitly enabled:
 SPECGRAPH_DIR="${SPECGRAPH_DIR:-../SpecGraph}"
 PLATFORM_DIR="${PLATFORM_DIR:-../Platform}"
 SPECSPACE_STATE_DIR="${SPECSPACE_STATE_DIR:-../SpecGraph/runs}"
+DIALOG_DIR="${DIALOG_DIR:-../ChatGPTDialogs/canonical_json}"
 
 uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt \
   python viewer/server.py \
@@ -273,8 +274,12 @@ Use this diagnosis order when a UI action fails:
 4. Check whether the report exists in the same `--runs-dir` or workspace bundle
    that SpecSpace reads. If Platform succeeded but SpecSpace still shows an old
    stage, the issue is likely artifact publication or provider routing.
-5. For timeouts, retry only after inspecting whether the previous report was a
-   dry-run, request-only, or non-dry-run Git operation.
+5. For timeouts, inspect the request/intent state before retrying. Several
+   managed operations consume the request before starting the Platform
+   subprocess; if the state is already `consumed` or `superseded`, recreate the
+   request/intent from the UI instead of resubmitting the same execute call.
+   Dry-run promotion inspection is the main operation that is safely
+   re-callable as-is.
 
 Safe local reset rules:
 
