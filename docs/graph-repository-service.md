@@ -112,6 +112,14 @@ checks the pinned plan digest and workspace identity, then delegates to the
 fixed initialization operation. This keeps the execution authority in Platform
 while giving SpecSpace a durable request surface to display.
 
+The full Product Workspace managed-operation inventory is maintained in
+`../SpecSpace/docs/MANAGED_OPERATIONS_CONTRACT.md`. Platform's matching demo
+operator procedure is in
+`docs/product-idea-to-spec-demo-runbook.md#2a-backend-managed-operation-mode`.
+When adding a new SpecSpace-managed action, update that registry and this
+Platform runbook together so UI state, backend endpoint, Platform wrapper, and
+durable report evidence stay aligned.
+
 ## Git Service Responsibilities
 
 The Git Service is the durable versioning and review subsystem for graph
