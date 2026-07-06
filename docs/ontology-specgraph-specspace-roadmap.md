@@ -511,6 +511,35 @@ SpecSpace sends intent, SpecGraph supplies gated candidate artifacts, and the
 service alone performs repository writes under policy. A local `.git` directory
 may be an implementation detail of the MVP, but not the product contract.
 
+### 11. Feature Passport Evidence Authority Decision
+
+Status: deferred until SpecGraph completes the Feature Passport RFC `0.2.0`
+producer schema slice.
+
+FeaturePassport PR `#3` tightened `FP-RFC-0001` around receipt hash coverage,
+chain scope, successful observations, skipped levels, aggregate claim
+evaluation, and passport lifecycle/version pinning. The current cross-repo
+sequence should be:
+
+1. SpecGraph proposal `0203`: adopt `FP-RFC-0001` `0.2.0` as the current
+   external authority.
+2. SpecGraph follow-up: define safe producer schemas for
+   `feature_passport_index`, `feature_evidence_index`, receipt projections, and
+   claim-evaluation results.
+3. SpecSpace follow-up: implement the Feature Evidence viewer contract only from
+   those derived artifacts, including skipped/inapplicable levels,
+   failure-observation display, aggregate-pending states, and passport-version
+   explanation.
+4. Platform follow-up: decide whether Platform remains a report producer,
+   becomes a receipt normalizer, or becomes a Feature Passport receipt issuer and
+   hash-chain authority.
+
+Until that decision is made, Platform must not claim Feature Passport receipt
+issuance, evidence-ingestor signing, receipt hash-chain authority, or production
+Feature Evidence conformance. Existing durable Platform reports remain
+coordination evidence and possible future inputs, not canonical Feature Passport
+receipts.
+
 ## Preferred Immediate Slice
 
 The previous immediate stack has landed:

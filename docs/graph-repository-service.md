@@ -149,6 +149,13 @@ Near-term alignment should stay report-only:
   pairing, or runtime action endpoints until the Agent Surface draft and local
   managed-operation registry are versioned together.
 
+Feature Passport evidence remains a separate future decision. Platform reports
+may eventually feed Feature Passport-compatible evidence, but Platform is not
+currently a Feature Passport receipt issuer, receipt normalizer, or hash-chain
+authority. That choice should wait until SpecGraph defines producer schemas for
+Feature Passport indexes, receipt projections, and claim-evaluation results
+aligned with `FP-RFC-0001` `0.2.0`.
+
 This preserves the current execution boundary: SpecSpace may request
 allowlisted Platform operations, but Platform/Git Service remain responsible for
 validation, execution, repository effects, and audit reports.
