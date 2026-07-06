@@ -211,6 +211,91 @@ Expected UI checkpoints:
 - if repaired handoff is not approval-ready, the UI should not offer a fake
   Git promotion path.
 
+## 2A. Backend-Managed Operation Mode
+
+The Product Workspace can also run selected Platform wrappers through the
+SpecSpace backend. This mode is still not browser-side shell authority: the
+browser calls a SpecSpace API endpoint, the backend validates workspace/request
+state, and only then calls an allowlisted Platform command.
+
+Start SpecSpace with execution explicitly enabled:
+
+```bash
+SPECGRAPH_DIR="${SPECGRAPH_DIR:-../SpecGraph}"
+PLATFORM_DIR="${PLATFORM_DIR:-../Platform}"
+SPECSPACE_STATE_DIR="${SPECSPACE_STATE_DIR:-../SpecGraph/runs}"
+
+uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt \
+  python viewer/server.py \
+    --host 127.0.0.1 \
+    --port 8001 \
+    --dialog-dir "$DIALOG_DIR" \
+    --spec-dir "$SPECGRAPH_DIR/specs/nodes" \
+    --specgraph-dir "$SPECGRAPH_DIR" \
+    --runs-dir "$SPECGRAPH_DIR/runs" \
+    --specspace-state-dir "$SPECSPACE_STATE_DIR" \
+    --artifact-base-url http://127.0.0.1:9009 \
+    --product-workspace-artifact-base-url team-decision-log=http://127.0.0.1:9009/workspaces/team-decision-log \
+    --platform-dir "$PLATFORM_DIR" \
+    --enable-platform-execution \
+    --agent
+```
+
+The corresponding SpecSpace contract is
+`SpecSpace/docs/MANAGED_OPERATIONS_CONTRACT.md`. Platform wrappers used by that
+contract are:
+
+| SpecSpace operation id | Platform wrapper | Primary Platform report |
+| --- | --- | --- |
+| `workspace_initialization_execute` | `workspace execute-requested-initialization` | `runs/platform_product_workspace_initialization_execution_report.json` |
+| `real_idea_intake_execute` | `product-real-idea-intake execute-requested` | `runs/platform_real_idea_entry_intake_execution_report.json` |
+| `real_idea_answer_continuation_execute` | `product-real-idea-continuation execute-requested` | `runs/platform_real_idea_answer_continuation_execution_report.json` |
+| `repair_rerun_request_gate_execute` | `product-repair-rerun request-gate` | `runs/platform_product_repair_rerun_request_gate_execution_report.json` |
+| `repair_rerun_execute` | `product-repair-rerun plan` then `product-repair-rerun execute` | `runs/platform_product_repair_rerun_execution_report.json` |
+| `repair_rerun_publish` | `product-repair-rerun publish` | `runs/platform_product_repair_rerun_publication_report.json` |
+| `candidate_approval_execute` | `product-candidate-approval approve` | `runs/platform_candidate_approval_execution_report.json` |
+| `promotion_request_execute` | `product-candidate-promotion request` | `runs/graph_repository_promotion_request.json` |
+| `promotion_execute_dry_run` | `product-candidate-promotion execute --dry-run --open-review-dry-run` | `runs/product_candidate_promotion_execution_report.json` |
+| `promotion_review_execute` | `product-candidate-promotion execute` | `runs/product_candidate_promotion_execution_report.json` |
+| `review_status_execute` | `product-candidate-promotion review-status` | `runs/product_candidate_promotion_review_status_report.json` |
+| `read_model_publication_execute` | `product-candidate-promotion publish-read-model` | `runs/product_candidate_promotion_read_model_publication_report.json` |
+
+Use this diagnosis order when a UI action fails:
+
+1. Check the SpecSpace managed response in the browser or API. If it reports
+   `platform_execution_unavailable`, the server was not started with
+   `--platform-dir` and `--enable-platform-execution`.
+2. Check `workspace_state_hygiene`. If it reports stale mutable state, the UI is
+   correctly blocking execution; recreate the request/intent for the current
+   workspace/session.
+3. Check the primary Platform report above. A failed report with Platform
+   diagnostics is a Platform/SpecGraph gate failure, not a UI bug.
+4. Check whether the report exists in the same `--runs-dir` or workspace bundle
+   that SpecSpace reads. If Platform succeeded but SpecSpace still shows an old
+   stage, the issue is likely artifact publication or provider routing.
+5. For timeouts, retry only after inspecting whether the previous report was a
+   dry-run, request-only, or non-dry-run Git operation.
+
+Safe local reset rules:
+
+- do not delete the whole `../SpecGraph/runs` directory during a shared demo;
+- archive or remove only the selected workspace's SpecSpace-owned state file
+  when hygiene says it is stale;
+- never delete `candidate_approval_decision.json`,
+  `graph_repository_promotion_request.json`, or Git Service reports just to make
+  the UI look earlier in the lifecycle;
+- prefer creating a new workspace id/run dir for destructive smoke iteration.
+
+The fastest distinction is:
+
+- **UI bug**: durable Platform/SpecGraph evidence is ready for the selected
+  workspace, the API payload contains it, but the visible Product Workspace
+  stage does not update.
+- **Provider/routing bug**: Platform wrote the correct report, but the
+  SpecSpace API reads a different runs directory or workspace artifact base.
+- **Platform/SpecGraph gate failure**: the primary Platform report exists and
+  contains policy, validation, stale-ref, timeout, or command diagnostics.
+
 ## 3. Run Platform Repair Smoke
 
 From `Platform`:
