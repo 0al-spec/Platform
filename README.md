@@ -352,6 +352,11 @@ Validate that posture with:
   --output runs/specspace_product_workspace_production_smoke_report.json
 ```
 
+The smoke checks both `/team-decision-log` and
+`/team-decision-log?view=demo`, verifies the workspace-specific artifact base,
+and requires production managed execution to stay disabled unless the deployment
+profile intentionally changes.
+
 The GitHub Actions workflow `Timeweb Publish` is the production Timeweb deploy
 publisher. SpecSpace CI produces the service image lock and triggers this
 workflow; Platform renders, validates, and publishes the `timeweb-deploy` branch

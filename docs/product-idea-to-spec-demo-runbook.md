@@ -315,6 +315,26 @@ Expected production posture is `status: "read_only"` with
 that reports `backend_managed_ready` should be treated as an intentional
 deployment-profile change and reviewed before use.
 
+The smoke checks both the operator route and the presentation route:
+
+```text
+https://specgraph.space/team-decision-log
+https://specgraph.space/team-decision-log?view=demo
+```
+
+Production demo mode is read-only and renders the published Team Decision Log
+workspace state. Locally generated demo candidates are covered by the SpecSpace
+Playwright harness:
+
+```bash
+make -C ../SpecSpace ui-e2e-product-demo
+make -C ../SpecSpace ui-e2e-product-demo-live
+```
+
+The live harness pauses on the final `?view=demo` presentation screen and writes
+screenshots, trace/video, and `product-demo-report.json` under
+`../SpecSpace/graphspace/test-results/product-demo/`.
+
 If the smoke fails during a deploy restart window with a transport error or HTTP
 `502` / `503` / `504`, rerun it once after the service reports the expected
 commit at `/api/v1/health`. Do not ignore repeated failures: artifact-base
