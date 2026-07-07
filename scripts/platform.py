@@ -17469,7 +17469,7 @@ def specspace_product_smoke_scan_write_authority(
         for key, child in value.items():
             child_path = f"{path}.{key}"
             if (
-                key in SPECSPACE_PRODUCT_SMOKE_WRITE_AUTHORITY_KEYS
+                (key in SPECSPACE_PRODUCT_SMOKE_WRITE_AUTHORITY_KEYS or key.startswith("may_"))
                 and child is not False
             ):
                 findings.append(
@@ -17519,6 +17519,19 @@ def specspace_product_smoke_enabled_operation_count(
             return enabled_count
 
     return None
+
+
+def specspace_product_smoke_expected_artifact_base_url(
+    value: str,
+    *,
+    workspace: str,
+) -> str:
+    if "=" not in value:
+        return value
+    bound_workspace, bound_url = value.split("=", 1)
+    if bound_workspace == workspace:
+        return bound_url
+    return value
 
 
 def specspace_product_workspace_smoke_report(
@@ -17761,10 +17774,14 @@ def specspace_product_workspace_smoke_report(
 
 
 def specspace_product_smoke(args: argparse.Namespace) -> int:
+    artifact_base_url = specspace_product_smoke_expected_artifact_base_url(
+        args.artifact_base_url,
+        workspace=args.workspace,
+    )
     report = specspace_product_workspace_smoke_report(
         base_url=args.base_url,
         workspace=args.workspace,
-        artifact_base_url=args.artifact_base_url,
+        artifact_base_url=artifact_base_url,
         expect_managed_mode=args.expect_managed_mode,
         timeout=args.timeout,
     )

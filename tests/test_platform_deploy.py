@@ -196,6 +196,29 @@ class PlatformDeployTests(unittest.TestCase):
         )
         self.assertEqual(payload["summary"]["workspace"], "team-decision-log")
 
+    def test_specspace_product_smoke_cli_parses_bound_artifact_base_env(self) -> None:
+        with _SmokeServer(_specspace_smoke_workspace_payload()) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--format",
+                "json",
+                env_overrides={
+                    "SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL": (
+                        "team-decision-log="
+                        "https://specgraph.tech/workspaces/team-decision-log"
+                    ),
+                },
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["summary"]["ok"])
+
     def test_specspace_product_smoke_cli_blocks_backend_managed_mode(self) -> None:
         workspace_payload = _specspace_smoke_workspace_payload(
             readiness_status="backend_managed_ready",
@@ -250,6 +273,32 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertFalse(payload["summary"]["ok"])
         self.assertIn(
             "specspace_managed_operations_disabled",
+            {diagnostic["code"] for diagnostic in payload["diagnostics"]},
+        )
+
+    def test_specspace_product_smoke_cli_blocks_unknown_may_authority(self) -> None:
+        workspace_payload = _specspace_smoke_workspace_payload()
+        operations = workspace_payload["managed_operations_observability"]["operations"]
+        operations[0]["authority_boundary"]["may_execute_prompt_agent"] = True
+        with _SmokeServer(workspace_payload) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["summary"]["ok"])
+        self.assertIn(
+            "specspace_product_smoke_write_authority_enabled",
             {diagnostic["code"] for diagnostic in payload["diagnostics"]},
         )
 
