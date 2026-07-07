@@ -15,6 +15,9 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any
 
 
@@ -37,6 +40,36 @@ DEFAULT_TIMEWEB_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS = "60"
 DEFAULT_TIMEWEB_HYPERPROMPT_MAX_INPUT_BYTES = "1048576"
 DEFAULT_TIMEWEB_HYPERPROMPT_MAX_OUTPUT_BYTES = "2097152"
 DEFAULT_TIMEWEB_HYPERPROMPT_BUNDLE_RETENTION_COUNT = "20"
+DEFAULT_PRODUCT_WORKSPACE_ID = "team-decision-log"
+DEFAULT_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL = (
+    "https://specgraph.tech/workspaces/team-decision-log"
+)
+SPECSPACE_PRODUCT_SMOKE_WRITE_AUTHORITY_KEYS = {
+    "may_accept_ontology_terms",
+    "may_apply_answers",
+    "may_apply_decisions",
+    "may_apply_state",
+    "may_create_branch_or_commit",
+    "may_execute_git_service",
+    "may_execute_git_service_operation",
+    "may_execute_platform",
+    "may_execute_specgraph",
+    "may_import_into_specgraph",
+    "may_merge_review",
+    "may_mutate_candidate_artifacts",
+    "may_mutate_candidate_source_artifacts",
+    "may_mutate_canonical_specs",
+    "may_open_pull_request",
+    "may_publish_read_model",
+    "may_run_make_target_from_request",
+    "may_write_ontology_lockfile",
+    "may_write_ontology_package",
+}
+SPECSPACE_PRODUCT_SMOKE_LEGACY_MARKERS = (
+    "ContextBuilder Viewer",
+    "ContextBuilder conversation",
+    "legacy ContextBuilder",
+)
 DIGEST_IMAGE_RE = re.compile(
     r"^[a-z0-9][a-z0-9._/-]*(?::[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$"
 )
@@ -17391,6 +17424,390 @@ def deploy_timeweb_validate(args: argparse.Namespace) -> int:
     return 1 if errors else 0
 
 
+def specspace_product_smoke_url(base_url: str, path: str) -> str:
+    base = base_url.rstrip("/")
+    return f"{base}{path}"
+
+
+def specspace_product_smoke_fetch(
+    url: str,
+    *,
+    expect_json: bool,
+    timeout: float,
+) -> tuple[int, Any]:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json" if expect_json else "text/html, */*",
+            "User-Agent": "0al-platform-specspace-product-smoke/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            status = int(response.status)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        return int(exc.code), body
+    except urllib.error.URLError as exc:
+        raise PlatformError(f"failed to fetch {url}: {exc}") from exc
+    if not expect_json:
+        return status, body
+    try:
+        return status, json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise PlatformError(f"{url} did not return valid JSON: {exc}") from exc
+
+
+def specspace_product_smoke_scan_write_authority(
+    value: Any,
+    *,
+    path: str = "$",
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if (
+                (key in SPECSPACE_PRODUCT_SMOKE_WRITE_AUTHORITY_KEYS or key.startswith("may_"))
+                and child is not False
+            ):
+                findings.append(
+                    {
+                        "code": "specspace_product_smoke_write_authority_enabled",
+                        "severity": "error",
+                        "subject": child_path,
+                        "message": (
+                            f"{child_path} must be literal false for production "
+                            "read-only product workspace smoke"
+                        ),
+                    }
+                )
+            findings.extend(
+                specspace_product_smoke_scan_write_authority(
+                    child,
+                    path=child_path,
+                )
+            )
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            findings.extend(
+                specspace_product_smoke_scan_write_authority(
+                    child,
+                    path=f"{path}[{index}]",
+                )
+            )
+    return findings
+
+
+def specspace_product_smoke_enabled_operation_count(
+    readiness: dict[str, Any],
+) -> int | None:
+    operations = readiness.get("operations")
+    if isinstance(operations, dict):
+        enabled_count = operations.get("enabled_count")
+        if isinstance(enabled_count, int) and not isinstance(enabled_count, bool):
+            return enabled_count
+
+    legacy_counts = readiness.get("operation_counts")
+    if isinstance(legacy_counts, dict):
+        enabled_count = legacy_counts.get("enabled")
+        if isinstance(enabled_count, int) and not isinstance(enabled_count, bool):
+            return enabled_count
+        enabled_count = legacy_counts.get("enabled_count")
+        if isinstance(enabled_count, int) and not isinstance(enabled_count, bool):
+            return enabled_count
+
+    return None
+
+
+def specspace_product_smoke_expected_artifact_base_url(
+    value: str,
+    *,
+    workspace: str,
+) -> str:
+    if "=" not in value:
+        return value
+    bound_workspace, bound_url = value.split("=", 1)
+    if bound_workspace == workspace:
+        return bound_url
+    return value
+
+
+def specspace_product_workspace_smoke_report(
+    *,
+    base_url: str,
+    workspace: str,
+    artifact_base_url: str,
+    expect_managed_mode: str,
+    timeout: float,
+) -> dict[str, Any]:
+    diagnostics: list[dict[str, Any]] = []
+    checks: list[dict[str, Any]] = []
+
+    def record_check(
+        check_id: str,
+        ok: bool,
+        message: str,
+        *,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
+        checks.append(
+            {
+                "id": check_id,
+                "status": "passed" if ok else "failed",
+                "message": message,
+                "evidence": evidence or {},
+            }
+        )
+        if not ok:
+            diagnostics.append(
+                {
+                    "code": check_id,
+                    "severity": "error",
+                    "message": message,
+                }
+            )
+
+    health_url = specspace_product_smoke_url(base_url, "/api/v1/health")
+    workspace_query = urllib.parse.urlencode({"workspace": workspace})
+    workspace_url = specspace_product_smoke_url(
+        base_url,
+        f"/api/v1/idea-to-spec-workspace?{workspace_query}",
+    )
+    route_path = "/" + urllib.parse.quote(workspace.strip("/"))
+    route_url = specspace_product_smoke_url(base_url, route_path)
+
+    health_status, health_payload = specspace_product_smoke_fetch(
+        health_url,
+        expect_json=True,
+        timeout=timeout,
+    )
+    workspace_status, workspace_payload = specspace_product_smoke_fetch(
+        workspace_url,
+        expect_json=True,
+        timeout=timeout,
+    )
+    route_status, route_html = specspace_product_smoke_fetch(
+        route_url,
+        expect_json=False,
+        timeout=timeout,
+    )
+
+    record_check(
+        "specspace_health_available",
+        health_status == 200 and isinstance(health_payload, dict),
+        f"health endpoint returned HTTP {health_status}",
+        evidence={"url": health_url, "status": health_status},
+    )
+    health_mapping = health_payload if isinstance(health_payload, dict) else {}
+    deployment = health_mapping.get("deployment")
+    deployment_mapping = deployment if isinstance(deployment, dict) else {}
+    record_check(
+        "specspace_deployment_metadata_present",
+        bool(deployment_mapping.get("commit")) or bool(deployment_mapping.get("version")),
+        "health deployment metadata must include commit or version",
+        evidence={"deployment": deployment_mapping},
+    )
+
+    record_check(
+        "specspace_product_workspace_api_available",
+        workspace_status == 200 and isinstance(workspace_payload, dict),
+        f"product workspace API returned HTTP {workspace_status}",
+        evidence={"url": workspace_url, "status": workspace_status},
+    )
+    workspace_mapping = workspace_payload if isinstance(workspace_payload, dict) else {}
+    workspace_meta = workspace_mapping.get("workspace")
+    workspace_meta = workspace_meta if isinstance(workspace_meta, dict) else {}
+    selected_workspace = workspace_meta.get("id") or workspace_mapping.get("workspace_id")
+    record_check(
+        "specspace_product_workspace_selected",
+        selected_workspace == workspace,
+        f"product workspace must select {workspace}",
+        evidence={"selected_workspace": selected_workspace},
+    )
+
+    source = workspace_mapping.get("source")
+    source = source if isinstance(source, dict) else {}
+    source_provider = source.get("provider")
+    record_check(
+        "specspace_product_workspace_http_provider",
+        source_provider == "http-product-workspace",
+        "product workspace must use http-product-workspace provider in production",
+        evidence={"provider": source_provider},
+    )
+    actual_artifact_base = source.get("artifact_base_url")
+    record_check(
+        "specspace_product_workspace_artifact_base",
+        actual_artifact_base == artifact_base_url,
+        "product workspace artifact base must match workspace-specific static bundle",
+        evidence={
+            "expected": artifact_base_url,
+            "actual": actual_artifact_base,
+        },
+    )
+    app_origin = urllib.parse.urlsplit(base_url).netloc
+    artifact_origin = urllib.parse.urlsplit(str(actual_artifact_base or "")).netloc
+    record_check(
+        "specspace_product_workspace_artifact_base_not_app_root",
+        bool(artifact_origin) and artifact_origin != app_origin,
+        "product workspace artifact base must not collapse to the SpecSpace app root",
+        evidence={"app_origin": app_origin, "artifact_origin": artifact_origin},
+    )
+
+    readiness = workspace_mapping.get("managed_mode_readiness")
+    readiness = readiness if isinstance(readiness, dict) else {}
+    readiness_status = readiness.get("status")
+    readiness_mode = readiness.get("mode")
+    record_check(
+        "specspace_managed_mode_status",
+        readiness_status == expect_managed_mode,
+        f"managed mode readiness status must be {expect_managed_mode}",
+        evidence={"actual": readiness_status},
+    )
+    record_check(
+        "specspace_managed_mode_mode",
+        readiness_mode == expect_managed_mode,
+        f"managed mode readiness mode must be {expect_managed_mode}",
+        evidence={"actual": readiness_mode},
+    )
+    executor = readiness.get("executor")
+    executor = executor if isinstance(executor, dict) else {}
+    if expect_managed_mode == "read_only":
+        record_check(
+            "specspace_managed_executor_disabled",
+            executor.get("enabled") is False and executor.get("configured") is False,
+            "production read-only smoke requires disabled managed executor",
+            evidence={
+                "enabled": executor.get("enabled"),
+                "configured": executor.get("configured"),
+            },
+        )
+        enabled_operation_count = specspace_product_smoke_enabled_operation_count(
+            readiness
+        )
+        record_check(
+            "specspace_managed_operations_disabled",
+            enabled_operation_count == 0,
+            "production read-only smoke requires zero enabled managed operations",
+            evidence={"enabled_operation_count": enabled_operation_count},
+        )
+
+    managed_operations = workspace_mapping.get("managed_operations_observability")
+    managed_operations = (
+        managed_operations if isinstance(managed_operations, dict) else {}
+    )
+    operations = managed_operations.get("operations")
+    record_check(
+        "specspace_managed_operations_observable",
+        isinstance(operations, list) and len(operations) > 0,
+        "product workspace must expose managed operations observability",
+        evidence={"operation_count": len(operations) if isinstance(operations, list) else 0},
+    )
+
+    authority_findings = specspace_product_smoke_scan_write_authority(
+        workspace_mapping
+    )
+    diagnostics.extend(authority_findings)
+    checks.append(
+        {
+            "id": "specspace_product_workspace_write_authority_closed",
+            "status": "passed" if not authority_findings else "failed",
+            "message": (
+                "production product workspace has no write-capable authority flags"
+                if not authority_findings
+                else "production product workspace exposed write-capable authority flags"
+            ),
+            "evidence": {"finding_count": len(authority_findings)},
+        }
+    )
+
+    route_text = route_html if isinstance(route_html, str) else ""
+    record_check(
+        "specspace_product_workspace_route_available",
+        route_status == 200 and "<html" in route_text.lower(),
+        f"product workspace route returned HTTP {route_status}",
+        evidence={"url": route_url, "status": route_status},
+    )
+    legacy_markers = [
+        marker for marker in SPECSPACE_PRODUCT_SMOKE_LEGACY_MARKERS if marker in route_text
+    ]
+    record_check(
+        "specspace_product_workspace_no_contextbuilder_legacy_shell",
+        not legacy_markers,
+        "product workspace route must not serve legacy ContextBuilder shell",
+        evidence={"legacy_markers": legacy_markers},
+    )
+
+    ok = not diagnostics
+    return {
+        "artifact_kind": "platform_specspace_product_workspace_production_smoke_report",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "ok": ok,
+            "base_url": base_url.rstrip("/"),
+            "workspace": workspace,
+            "artifact_base_url": artifact_base_url,
+            "expected_managed_mode": expect_managed_mode,
+            "check_count": len(checks),
+            "failed_check_count": sum(1 for check in checks if check["status"] != "passed"),
+            "diagnostic_count": len(diagnostics),
+        },
+        "authority_boundary": {
+            "may_execute_platform": False,
+            "may_execute_specgraph": False,
+            "may_execute_git_service": False,
+            "may_mutate_canonical_specs": False,
+            "may_write_ontology_package": False,
+            "may_create_branch_or_commit": False,
+            "may_open_pull_request": False,
+            "may_publish_read_model": False,
+        },
+        "source_refs": {
+            "health": health_url,
+            "workspace": workspace_url,
+            "route": route_url,
+        },
+        "checks": checks,
+        "diagnostics": diagnostics,
+    }
+
+
+def specspace_product_smoke(args: argparse.Namespace) -> int:
+    artifact_base_url = specspace_product_smoke_expected_artifact_base_url(
+        args.artifact_base_url,
+        workspace=args.workspace,
+    )
+    report = specspace_product_workspace_smoke_report(
+        base_url=args.base_url,
+        workspace=args.workspace,
+        artifact_base_url=artifact_base_url,
+        expect_managed_mode=args.expect_managed_mode,
+        timeout=args.timeout,
+    )
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        summary = report["summary"]
+        status = "OK" if summary["ok"] else "FAILED"
+        print(f"SpecSpace product workspace smoke: {status}")
+        print(f"workspace: {summary['workspace']}")
+        print(f"base URL: {summary['base_url']}")
+        print(f"artifact base URL: {summary['artifact_base_url']}")
+        print(
+            "checks: "
+            f"{summary['check_count'] - summary['failed_check_count']}/"
+            f"{summary['check_count']} passed"
+        )
+        for diagnostic in report["diagnostics"]:
+            print(f"- {diagnostic['code']}: {diagnostic['message']}")
+    return 0 if report["summary"]["ok"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="platform",
@@ -19687,6 +20104,63 @@ def build_parser() -> argparse.ArgumentParser:
     product_candidate_promotion_publish_parser.set_defaults(
         func=product_candidate_promotion_publish_read_model
     )
+
+    specspace_parser = subcommands.add_parser(
+        "specspace",
+        help="Inspect SpecSpace production and managed-operation surfaces.",
+    )
+    specspace_subcommands = specspace_parser.add_subparsers(
+        dest="specspace_command",
+        required=True,
+    )
+    product_smoke_parser = specspace_subcommands.add_parser(
+        "product-smoke",
+        help="Run a read-only product workspace production smoke against SpecSpace.",
+    )
+    product_smoke_parser.add_argument(
+        "--base-url",
+        default=os.environ.get("SPECSPACE_DEPLOY_URL", "https://specgraph.space"),
+        help="SpecSpace deployment base URL.",
+    )
+    product_smoke_parser.add_argument(
+        "--workspace",
+        default=os.environ.get(
+            "SPECSPACE_PRODUCT_WORKSPACE_ID",
+            DEFAULT_PRODUCT_WORKSPACE_ID,
+        ),
+        help="Product workspace route/workspace id to smoke.",
+    )
+    product_smoke_parser.add_argument(
+        "--artifact-base-url",
+        default=os.environ.get(
+            "SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL",
+            DEFAULT_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL,
+        ),
+        help="Expected product workspace static artifact base URL.",
+    )
+    product_smoke_parser.add_argument(
+        "--expect-managed-mode",
+        choices=["read_only", "backend_managed_ready", "backend_managed_misconfigured"],
+        default="read_only",
+        help="Expected SpecSpace managed mode readiness status/mode.",
+    )
+    product_smoke_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="HTTP request timeout in seconds.",
+    )
+    product_smoke_parser.add_argument(
+        "--output",
+        help="Optional path to write the JSON smoke report.",
+    )
+    product_smoke_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_smoke_parser.set_defaults(func=specspace_product_smoke)
 
     deploy_parser = subcommands.add_parser(
         "deploy",

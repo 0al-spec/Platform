@@ -4,6 +4,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import threading
 import unittest
 
 
@@ -17,6 +19,105 @@ UI_IMAGE = (
     "ghcr.io/0al-spec/specspace-ui@sha256:"
     "2222222222222222222222222222222222222222222222222222222222222222"
 )
+
+
+def _specspace_smoke_workspace_payload(
+    *,
+    readiness_status: str = "read_only",
+    readiness_mode: str = "read_only",
+    enabled_operation_count: int | None = None,
+) -> dict[str, object]:
+    effective_enabled_count = (
+        enabled_operation_count
+        if enabled_operation_count is not None
+        else (0 if readiness_status == "read_only" else 1)
+    )
+    return {
+        "workspace": {"id": "team-decision-log"},
+        "source": {
+            "provider": "http-product-workspace",
+            "artifact_base_url": "https://specgraph.tech/workspaces/team-decision-log",
+        },
+        "managed_mode_readiness": {
+            "status": readiness_status,
+            "mode": readiness_mode,
+            "executor": {
+                "enabled": readiness_status != "read_only",
+                "configured": readiness_status != "read_only",
+            },
+            "operations": {
+                "registered": 12,
+                "enabled_count": effective_enabled_count,
+                "disabled_count": 12 - effective_enabled_count,
+            },
+        },
+        "managed_operations_observability": {
+            "operations": [
+                {
+                    "operation_id": "product_workspace_initialization",
+                    "status": "disabled_missing_inputs",
+                    "authority_boundary": {
+                        "may_execute_platform": False,
+                        "may_create_branch_or_commit": False,
+                    },
+                }
+            ]
+        },
+    }
+
+
+class _SpecSpaceSmokeHandler(BaseHTTPRequestHandler):
+    health_payload: dict[str, object] = {
+        "api_version": "v1",
+        "deployment": {"commit": "abc123"},
+    }
+    workspace_payload: dict[str, object] = _specspace_smoke_workspace_payload()
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/api/v1/health":
+            self._write_json(self.health_payload)
+            return
+        if self.path.startswith("/api/v1/idea-to-spec-workspace?"):
+            self._write_json(self.workspace_payload)
+            return
+        if self.path == "/team-decision-log":
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"<html><body>SpecSpace</body></html>")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+    def _write_json(self, payload: dict[str, object]) -> None:
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+
+class _SmokeServer:
+    def __init__(self, workspace_payload: dict[str, object]) -> None:
+        handler = type(
+            "SpecSpaceSmokeHandler",
+            (_SpecSpaceSmokeHandler,),
+            {"workspace_payload": workspace_payload},
+        )
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self) -> str:
+        self.thread.start()
+        host, port = self.server.server_address
+        return f"http://{host}:{port}"
+
+    def __exit__(self, *_args: object) -> None:
+        self.server.shutdown()
+        self.thread.join(timeout=5)
+        self.server.server_close()
 
 
 class PlatformDeployTests(unittest.TestCase):
@@ -70,6 +171,136 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(payload["command"][-1], "config")
         self.assertIn("--env-file", payload["command"])
         self.assertEqual(payload["compose_files"], [str(compose)])
+
+    def test_specspace_product_smoke_cli_passes_read_only_workspace(self) -> None:
+        with _SmokeServer(_specspace_smoke_workspace_payload()) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["summary"]["ok"])
+        self.assertEqual(
+            payload["artifact_kind"],
+            "platform_specspace_product_workspace_production_smoke_report",
+        )
+        self.assertEqual(payload["summary"]["workspace"], "team-decision-log")
+
+    def test_specspace_product_smoke_cli_parses_bound_artifact_base_env(self) -> None:
+        with _SmokeServer(_specspace_smoke_workspace_payload()) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--format",
+                "json",
+                env_overrides={
+                    "SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL": (
+                        "team-decision-log="
+                        "https://specgraph.tech/workspaces/team-decision-log"
+                    ),
+                },
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["summary"]["ok"])
+
+    def test_specspace_product_smoke_cli_blocks_backend_managed_mode(self) -> None:
+        workspace_payload = _specspace_smoke_workspace_payload(
+            readiness_status="backend_managed_ready",
+            readiness_mode="backend_managed_ready",
+        )
+        with _SmokeServer(workspace_payload) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["summary"]["ok"])
+        self.assertIn(
+            "specspace_managed_mode_status",
+            {diagnostic["code"] for diagnostic in payload["diagnostics"]},
+        )
+
+    def test_specspace_product_smoke_cli_blocks_enabled_operations_in_read_only(
+        self,
+    ) -> None:
+        workspace_payload = _specspace_smoke_workspace_payload(
+            readiness_status="read_only",
+            readiness_mode="read_only",
+            enabled_operation_count=1,
+        )
+        with _SmokeServer(workspace_payload) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["summary"]["ok"])
+        self.assertIn(
+            "specspace_managed_operations_disabled",
+            {diagnostic["code"] for diagnostic in payload["diagnostics"]},
+        )
+
+    def test_specspace_product_smoke_cli_blocks_unknown_may_authority(self) -> None:
+        workspace_payload = _specspace_smoke_workspace_payload()
+        operations = workspace_payload["managed_operations_observability"]["operations"]
+        operations[0]["authority_boundary"]["may_execute_prompt_agent"] = True
+        with _SmokeServer(workspace_payload) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["summary"]["ok"])
+        self.assertIn(
+            "specspace_product_smoke_write_authority_enabled",
+            {diagnostic["code"] for diagnostic in payload["diagnostics"]},
+        )
 
     def test_deploy_status_invokes_docker_compose(self) -> None:
         with tempfile.TemporaryDirectory() as root:
