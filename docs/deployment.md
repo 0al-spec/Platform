@@ -81,6 +81,14 @@ provider and reads product `runs/*.json` surfaces such as
 `runs/candidate_spec_graph.json`. This keeps bootstrap/self-evolution artifacts
 from becoming the default data source for `/team-decision-log`.
 
+Production SpecSpace deployments should remain read-only unless a deployment
+profile explicitly opts into backend-managed Platform execution. Do not set
+`--enable-platform-execution` or its environment equivalent for the public
+Timeweb route by default. The Product Workspace API exposes
+`managed_mode_readiness`; production smoke should report `status: read_only`
+and `platform_execution_disabled` while still showing the managed operations
+registry as inspect-only telemetry.
+
 ## Local Compose Entry Point
 
 The working plan for this phase is maintained in

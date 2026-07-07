@@ -335,6 +335,13 @@ Decision Log demo base as
 `<SPECSPACE_ARTIFACT_BASE_URL>/workspaces/team-decision-log`. The older
 `--team-decision-log-artifact-base-url` flag remains as a compatibility alias
 for the first pilot.
+
+Managed SpecSpace operations are opt-in. Production deployments should leave
+backend Platform execution disabled unless the deployment profile explicitly
+allows it. In that default posture, SpecSpace should expose
+`managed_mode_readiness.status = read_only` and keep managed operation actions
+inspect/request-only while the Platform wrappers remain available for local or
+operator-controlled execution.
 The GitHub Actions workflow `Timeweb Publish` is the production Timeweb deploy
 publisher. SpecSpace CI produces the service image lock and triggers this
 workflow; Platform renders, validates, and publishes the `timeweb-deploy` branch
