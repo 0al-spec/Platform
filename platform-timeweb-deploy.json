@@ -13,10 +13,10 @@
     "team-decision-log": "https://specgraph.tech/workspaces/team-decision-log"
   },
   "readme": "README.md",
-  "release_commit": "0a4ff815a6045ed667a9bdec68f94ef46e1936af",
-  "release_created_at": "2026-07-07T06:06:56Z",
+  "release_commit": "f28a0cdac2da005fed3ea5672f75c69879618edc",
+  "release_created_at": "2026-07-07T11:15:33Z",
   "schema_version": 1,
   "specpm_registry_url": "https://specpm.dev",
-  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:ca2a522ea6b21f4cdd3d27dee8b02f45ad401fbd8c86185a667f387c21bbd39f",
-  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:f8ce13312bdba254db7b98949729266214973b4850d23ea4f257cbe4263238f9"
+  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:01ed240437bf241ad47257f02260d46ca6888016cc6b2e921c0d0dc9345c5897",
+  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:415fbb606be5c9f4073c465d8a1d60abdd3cb50542bc7f730c3b350d47bd0c95"
 }
