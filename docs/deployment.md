@@ -97,13 +97,17 @@ Use the Platform smoke wrapper to validate the public product route end to end:
   --workspace team-decision-log \
   --artifact-base-url https://specgraph.tech/workspaces/team-decision-log \
   --expect-managed-mode read_only \
+  --output runs/specspace_product_workspace_production_smoke_report.json \
   --format json
 ```
 
 The smoke is report-only. It checks `/api/v1/health`, the product workspace API,
 the route shell, workspace-specific artifact routing, managed-mode readiness,
 and write-authority flags. It does not execute Platform, SpecGraph, Git Service,
-or read-model publication operations.
+or read-model publication operations. The wrapper retries transient
+restart-window transport failures and HTTP `502` / `503` / `504` responses with
+a bounded attempt count; persistent failures remain blocking and are recorded in
+the durable smoke report.
 
 ## Local Compose Entry Point
 

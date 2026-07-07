@@ -348,7 +348,8 @@ Validate that posture with:
 .venv/bin/python scripts/platform.py specspace product-smoke \
   --base-url https://specgraph.space \
   --workspace team-decision-log \
-  --artifact-base-url https://specgraph.tech/workspaces/team-decision-log
+  --artifact-base-url https://specgraph.tech/workspaces/team-decision-log \
+  --output runs/specspace_product_workspace_production_smoke_report.json
 ```
 
 The GitHub Actions workflow `Timeweb Publish` is the production Timeweb deploy

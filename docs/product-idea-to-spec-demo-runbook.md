@@ -306,6 +306,7 @@ For production smoke, use the Platform wrapper:
   --workspace team-decision-log \
   --artifact-base-url https://specgraph.tech/workspaces/team-decision-log \
   --expect-managed-mode read_only \
+  --output ../SpecGraph/runs/specspace_product_workspace_production_smoke_report.json \
   --format json
 ```
 
@@ -313,6 +314,12 @@ Expected production posture is `status: "read_only"` with
 `platform_execution_disabled` in `disabled_reasons`. A production deployment
 that reports `backend_managed_ready` should be treated as an intentional
 deployment-profile change and reviewed before use.
+
+If the smoke fails during a deploy restart window with a transport error or HTTP
+`502` / `503` / `504`, rerun it once after the service reports the expected
+commit at `/api/v1/health`. Do not ignore repeated failures: artifact-base
+mismatch, enabled managed operations, missing read-only posture, or legacy shell
+markers indicate a deployment/configuration bug.
 
 Safe local reset rules:
 

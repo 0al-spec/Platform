@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -44,6 +45,10 @@ DEFAULT_PRODUCT_WORKSPACE_ID = "team-decision-log"
 DEFAULT_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL = (
     "https://specgraph.tech/workspaces/team-decision-log"
 )
+DEFAULT_SPECSPACE_PRODUCT_SMOKE_REPORT = (
+    REPO_ROOT / "runs" / "specspace_product_workspace_production_smoke_report.json"
+)
+SPECSPACE_PRODUCT_SMOKE_RETRYABLE_STATUSES = {502, 503, 504}
 SPECSPACE_PRODUCT_SMOKE_WRITE_AUTHORITY_KEYS = {
     "may_accept_ontology_terms",
     "may_apply_answers",
@@ -17459,6 +17464,40 @@ def specspace_product_smoke_fetch(
         raise PlatformError(f"{url} did not return valid JSON: {exc}") from exc
 
 
+def specspace_product_smoke_fetch_with_retry(
+    url: str,
+    *,
+    expect_json: bool,
+    timeout: float,
+    attempts: int,
+    retry_delay_seconds: float,
+) -> tuple[int, Any, int]:
+    last_error: PlatformError | None = None
+    effective_attempts = max(1, attempts)
+    for attempt in range(1, effective_attempts + 1):
+        try:
+            status, payload = specspace_product_smoke_fetch(
+                url,
+                expect_json=expect_json,
+                timeout=timeout,
+            )
+        except PlatformError as exc:
+            last_error = exc
+            if attempt < effective_attempts:
+                time.sleep(retry_delay_seconds)
+                continue
+            raise
+        if status not in SPECSPACE_PRODUCT_SMOKE_RETRYABLE_STATUSES:
+            return status, payload, attempt
+        if attempt < effective_attempts:
+            time.sleep(retry_delay_seconds)
+            continue
+        return status, payload, attempt
+    if last_error is not None:
+        raise last_error
+    raise PlatformError(f"failed to fetch {url}")
+
+
 def specspace_product_smoke_scan_write_authority(
     value: Any,
     *,
@@ -17541,6 +17580,8 @@ def specspace_product_workspace_smoke_report(
     artifact_base_url: str,
     expect_managed_mode: str,
     timeout: float,
+    attempts: int,
+    retry_delay_seconds: float,
 ) -> dict[str, Any]:
     diagnostics: list[dict[str, Any]] = []
     checks: list[dict[str, Any]] = []
@@ -17578,27 +17619,37 @@ def specspace_product_workspace_smoke_report(
     route_path = "/" + urllib.parse.quote(workspace.strip("/"))
     route_url = specspace_product_smoke_url(base_url, route_path)
 
-    health_status, health_payload = specspace_product_smoke_fetch(
+    health_status, health_payload, health_attempts = specspace_product_smoke_fetch_with_retry(
         health_url,
         expect_json=True,
         timeout=timeout,
+        attempts=attempts,
+        retry_delay_seconds=retry_delay_seconds,
     )
-    workspace_status, workspace_payload = specspace_product_smoke_fetch(
+    (
+        workspace_status,
+        workspace_payload,
+        workspace_attempts,
+    ) = specspace_product_smoke_fetch_with_retry(
         workspace_url,
         expect_json=True,
         timeout=timeout,
+        attempts=attempts,
+        retry_delay_seconds=retry_delay_seconds,
     )
-    route_status, route_html = specspace_product_smoke_fetch(
+    route_status, route_html, route_attempts = specspace_product_smoke_fetch_with_retry(
         route_url,
         expect_json=False,
         timeout=timeout,
+        attempts=attempts,
+        retry_delay_seconds=retry_delay_seconds,
     )
 
     record_check(
         "specspace_health_available",
         health_status == 200 and isinstance(health_payload, dict),
         f"health endpoint returned HTTP {health_status}",
-        evidence={"url": health_url, "status": health_status},
+        evidence={"url": health_url, "status": health_status, "attempts": health_attempts},
     )
     health_mapping = health_payload if isinstance(health_payload, dict) else {}
     deployment = health_mapping.get("deployment")
@@ -17614,7 +17665,11 @@ def specspace_product_workspace_smoke_report(
         "specspace_product_workspace_api_available",
         workspace_status == 200 and isinstance(workspace_payload, dict),
         f"product workspace API returned HTTP {workspace_status}",
-        evidence={"url": workspace_url, "status": workspace_status},
+        evidence={
+            "url": workspace_url,
+            "status": workspace_status,
+            "attempts": workspace_attempts,
+        },
     )
     workspace_mapping = workspace_payload if isinstance(workspace_payload, dict) else {}
     workspace_meta = workspace_mapping.get("workspace")
@@ -17727,7 +17782,7 @@ def specspace_product_workspace_smoke_report(
         "specspace_product_workspace_route_available",
         route_status == 200 and "<html" in route_text.lower(),
         f"product workspace route returned HTTP {route_status}",
-        evidence={"url": route_url, "status": route_status},
+        evidence={"url": route_url, "status": route_status, "attempts": route_attempts},
     )
     legacy_markers = [
         marker for marker in SPECSPACE_PRODUCT_SMOKE_LEGACY_MARKERS if marker in route_text
@@ -17749,6 +17804,13 @@ def specspace_product_workspace_smoke_report(
             "workspace": workspace,
             "artifact_base_url": artifact_base_url,
             "expected_managed_mode": expect_managed_mode,
+            "deployment_commit": deployment_mapping.get("commit"),
+            "deployment_version": deployment_mapping.get("version"),
+            "attempts": {
+                "health": health_attempts,
+                "workspace": workspace_attempts,
+                "route": route_attempts,
+            },
             "check_count": len(checks),
             "failed_check_count": sum(1 for check in checks if check["status"] != "passed"),
             "diagnostic_count": len(diagnostics),
@@ -17784,8 +17846,10 @@ def specspace_product_smoke(args: argparse.Namespace) -> int:
         artifact_base_url=artifact_base_url,
         expect_managed_mode=args.expect_managed_mode,
         timeout=args.timeout,
+        attempts=args.attempts,
+        retry_delay_seconds=args.retry_delay,
     )
-    if args.output:
+    if not args.no_write_report:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
@@ -20151,8 +20215,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="HTTP request timeout in seconds.",
     )
     product_smoke_parser.add_argument(
+        "--attempts",
+        type=int,
+        default=3,
+        help="Fetch attempts for transient restart-window failures.",
+    )
+    product_smoke_parser.add_argument(
+        "--retry-delay",
+        type=float,
+        default=2.0,
+        help="Delay in seconds between retryable product smoke fetch attempts.",
+    )
+    product_smoke_parser.add_argument(
         "--output",
-        help="Optional path to write the JSON smoke report.",
+        default=str(DEFAULT_SPECSPACE_PRODUCT_SMOKE_REPORT),
+        help=(
+            "Path to write the JSON smoke report. Defaults to "
+            f"{DEFAULT_SPECSPACE_PRODUCT_SMOKE_REPORT.relative_to(REPO_ROOT)}."
+        ),
+    )
+    product_smoke_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Do not persist the product smoke report.",
     )
     product_smoke_parser.add_argument(
         "--format",
