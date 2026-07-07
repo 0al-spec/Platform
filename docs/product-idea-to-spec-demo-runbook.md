@@ -218,6 +218,23 @@ SpecSpace backend. This mode is still not browser-side shell authority: the
 browser calls a SpecSpace API endpoint, the backend validates workspace/request
 state, and only then calls an allowlisted Platform command.
 
+Use three explicit profiles:
+
+- **Production read-only**: do not pass `--enable-platform-execution`.
+  SpecSpace still shows the managed operations registry and
+  `managed_mode_readiness`, but the UI must report execution unavailable and
+  keep write-capable actions disabled.
+- **Local backend-managed**: pass `--platform-dir`, `--specspace-state-dir`,
+  and `--enable-platform-execution`. This is the normal local demo/operator
+  mode for controlled initialization, intake, continuation, repair, approval,
+  promotion dry-run, review-status inspection, and read-model publication after
+  merge.
+- **Non-dry-run Git review**: use the same local backend-managed mode, but only
+  after explicit operator confirmation for the promotion review operation.
+  This can create a branch, commit, and review PR through Platform/Git Service;
+  it still must not auto-merge or publish a read model before merged review
+  evidence exists.
+
 Start SpecSpace with execution explicitly enabled:
 
 ```bash
@@ -280,6 +297,18 @@ Use this diagnosis order when a UI action fails:
    request/intent from the UI instead of resubmitting the same execute call.
    Dry-run promotion inspection is the main operation that is safely
    re-callable as-is.
+
+For production smoke, first check the Product Workspace API:
+
+```bash
+curl -s "https://specgraph.space/api/v1/idea-to-spec-workspace?workspace=team-decision-log" \
+  | jq '.managed_mode_readiness'
+```
+
+Expected production posture is `status: "read_only"` with
+`platform_execution_disabled` in `disabled_reasons`. A production deployment
+that reports `backend_managed_ready` should be treated as an intentional
+deployment-profile change and reviewed before use.
 
 Safe local reset rules:
 
