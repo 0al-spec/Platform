@@ -72,8 +72,17 @@ class _SpecSpaceSmokeHandler(BaseHTTPRequestHandler):
         "deployment": {"commit": "abc123"},
     }
     workspace_payload: dict[str, object] = _specspace_smoke_workspace_payload()
+    transient_failures: dict[str, int] = {}
 
     def do_GET(self) -> None:  # noqa: N802
+        remaining_failures = self.transient_failures.get(self.path, 0)
+        if remaining_failures > 0:
+            self.transient_failures[self.path] = remaining_failures - 1
+            self.send_response(502)
+            self.send_header("content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"restart window")
+            return
         if self.path == "/api/v1/health":
             self._write_json(self.health_payload)
             return
@@ -100,11 +109,19 @@ class _SpecSpaceSmokeHandler(BaseHTTPRequestHandler):
 
 
 class _SmokeServer:
-    def __init__(self, workspace_payload: dict[str, object]) -> None:
+    def __init__(
+        self,
+        workspace_payload: dict[str, object],
+        *,
+        transient_failures: dict[str, int] | None = None,
+    ) -> None:
         handler = type(
             "SpecSpaceSmokeHandler",
             (_SpecSpaceSmokeHandler,),
-            {"workspace_payload": workspace_payload},
+            {
+                "workspace_payload": workspace_payload,
+                "transient_failures": dict(transient_failures or {}),
+            },
         )
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -185,6 +202,7 @@ class PlatformDeployTests(unittest.TestCase):
                 "https://specgraph.tech/workspaces/team-decision-log",
                 "--format",
                 "json",
+                "--no-write-report",
             )
 
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -207,6 +225,7 @@ class PlatformDeployTests(unittest.TestCase):
                 "team-decision-log",
                 "--format",
                 "json",
+                "--no-write-report",
                 env_overrides={
                     "SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL": (
                         "team-decision-log="
@@ -236,6 +255,7 @@ class PlatformDeployTests(unittest.TestCase):
                 "https://specgraph.tech/workspaces/team-decision-log",
                 "--format",
                 "json",
+                "--no-write-report",
             )
 
         self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
@@ -266,6 +286,7 @@ class PlatformDeployTests(unittest.TestCase):
                 "https://specgraph.tech/workspaces/team-decision-log",
                 "--format",
                 "json",
+                "--no-write-report",
             )
 
         self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
@@ -292,6 +313,7 @@ class PlatformDeployTests(unittest.TestCase):
                 "https://specgraph.tech/workspaces/team-decision-log",
                 "--format",
                 "json",
+                "--no-write-report",
             )
 
         self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
@@ -301,6 +323,67 @@ class PlatformDeployTests(unittest.TestCase):
             "specspace_product_smoke_write_authority_enabled",
             {diagnostic["code"] for diagnostic in payload["diagnostics"]},
         )
+
+    def test_specspace_product_smoke_cli_retries_restart_window_502(self) -> None:
+        with _SmokeServer(
+            _specspace_smoke_workspace_payload(),
+            transient_failures={
+                "/api/v1/health": 1,
+                "/api/v1/idea-to-spec-workspace?workspace=team-decision-log": 1,
+                "/team-decision-log": 1,
+            },
+        ) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--attempts",
+                "2",
+                "--retry-delay",
+                "0",
+                "--format",
+                "json",
+                "--no-write-report",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["summary"]["attempts"]["health"], 2)
+        self.assertEqual(payload["summary"]["attempts"]["workspace"], 2)
+        self.assertEqual(payload["summary"]["attempts"]["route"], 2)
+
+    def test_specspace_product_smoke_cli_writes_durable_report(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / "runs" / "product-smoke.json"
+            with _SmokeServer(_specspace_smoke_workspace_payload()) as base_url:
+                result = self.run_cli(
+                    "specspace",
+                    "product-smoke",
+                    "--base-url",
+                    base_url,
+                    "--workspace",
+                    "team-decision-log",
+                    "--artifact-base-url",
+                    "https://specgraph.tech/workspaces/team-decision-log",
+                    "--output",
+                    str(output),
+                    "--format",
+                    "json",
+                )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertTrue(output.exists())
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["artifact_kind"],
+                "platform_specspace_product_workspace_production_smoke_report",
+            )
+            self.assertTrue(payload["summary"]["ok"])
 
     def test_deploy_status_invokes_docker_compose(self) -> None:
         with tempfile.TemporaryDirectory() as root:
