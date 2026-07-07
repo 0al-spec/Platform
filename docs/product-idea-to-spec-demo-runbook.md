@@ -298,11 +298,15 @@ Use this diagnosis order when a UI action fails:
    Dry-run promotion inspection is the main operation that is safely
    re-callable as-is.
 
-For production smoke, first check the Product Workspace API:
+For production smoke, use the Platform wrapper:
 
 ```bash
-curl -s "https://specgraph.space/api/v1/idea-to-spec-workspace?workspace=team-decision-log" \
-  | jq '.managed_mode_readiness'
+.venv/bin/python scripts/platform.py specspace product-smoke \
+  --base-url https://specgraph.space \
+  --workspace team-decision-log \
+  --artifact-base-url https://specgraph.tech/workspaces/team-decision-log \
+  --expect-managed-mode read_only \
+  --format json
 ```
 
 Expected production posture is `status: "read_only"` with
@@ -564,6 +568,17 @@ repaired_handoff.ready_for_candidate_approval: true
 resolved_ontology_gap_count: 11
 unresolved_ontology_gap_count: 0
 promotion_path_count: 6
+```
+
+The durable smoke command is:
+
+```bash
+.venv/bin/python scripts/platform.py specspace product-smoke \
+  --base-url https://specgraph.space \
+  --workspace team-decision-log \
+  --artifact-base-url https://specgraph.tech/workspaces/team-decision-log \
+  --expect-managed-mode read_only \
+  --format json
 ```
 
 The remaining production blocker is not static artifact routing. It is

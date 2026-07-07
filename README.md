@@ -342,6 +342,15 @@ allows it. In that default posture, SpecSpace should expose
 `managed_mode_readiness.status = read_only` and keep managed operation actions
 inspect/request-only while the Platform wrappers remain available for local or
 operator-controlled execution.
+Validate that posture with:
+
+```bash
+.venv/bin/python scripts/platform.py specspace product-smoke \
+  --base-url https://specgraph.space \
+  --workspace team-decision-log \
+  --artifact-base-url https://specgraph.tech/workspaces/team-decision-log
+```
+
 The GitHub Actions workflow `Timeweb Publish` is the production Timeweb deploy
 publisher. SpecSpace CI produces the service image lock and triggers this
 workflow; Platform renders, validates, and publishes the `timeweb-deploy` branch

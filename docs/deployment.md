@@ -89,6 +89,22 @@ Timeweb route by default. The Product Workspace API exposes
 and `platform_execution_disabled` while still showing the managed operations
 registry as inspect-only telemetry.
 
+Use the Platform smoke wrapper to validate the public product route end to end:
+
+```bash
+.venv/bin/python scripts/platform.py specspace product-smoke \
+  --base-url https://specgraph.space \
+  --workspace team-decision-log \
+  --artifact-base-url https://specgraph.tech/workspaces/team-decision-log \
+  --expect-managed-mode read_only \
+  --format json
+```
+
+The smoke is report-only. It checks `/api/v1/health`, the product workspace API,
+the route shell, workspace-specific artifact routing, managed-mode readiness,
+and write-authority flags. It does not execute Platform, SpecGraph, Git Service,
+or read-model publication operations.
+
 ## Local Compose Entry Point
 
 The working plan for this phase is maintained in
