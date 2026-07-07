@@ -25,7 +25,13 @@ def _specspace_smoke_workspace_payload(
     *,
     readiness_status: str = "read_only",
     readiness_mode: str = "read_only",
+    enabled_operation_count: int | None = None,
 ) -> dict[str, object]:
+    effective_enabled_count = (
+        enabled_operation_count
+        if enabled_operation_count is not None
+        else (0 if readiness_status == "read_only" else 1)
+    )
     return {
         "workspace": {"id": "team-decision-log"},
         "source": {
@@ -39,10 +45,10 @@ def _specspace_smoke_workspace_payload(
                 "enabled": readiness_status != "read_only",
                 "configured": readiness_status != "read_only",
             },
-            "operation_counts": {
+            "operations": {
                 "registered": 12,
-                "enabled": 0 if readiness_status == "read_only" else 1,
-                "disabled": 12 if readiness_status == "read_only" else 11,
+                "enabled_count": effective_enabled_count,
+                "disabled_count": 12 - effective_enabled_count,
             },
         },
         "managed_operations_observability": {
@@ -214,6 +220,36 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertFalse(payload["summary"]["ok"])
         self.assertIn(
             "specspace_managed_mode_status",
+            {diagnostic["code"] for diagnostic in payload["diagnostics"]},
+        )
+
+    def test_specspace_product_smoke_cli_blocks_enabled_operations_in_read_only(
+        self,
+    ) -> None:
+        workspace_payload = _specspace_smoke_workspace_payload(
+            readiness_status="read_only",
+            readiness_mode="read_only",
+            enabled_operation_count=1,
+        )
+        with _SmokeServer(workspace_payload) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["summary"]["ok"])
+        self.assertIn(
+            "specspace_managed_operations_disabled",
             {diagnostic["code"] for diagnostic in payload["diagnostics"]},
         )
 

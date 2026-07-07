@@ -17500,6 +17500,27 @@ def specspace_product_smoke_scan_write_authority(
     return findings
 
 
+def specspace_product_smoke_enabled_operation_count(
+    readiness: dict[str, Any],
+) -> int | None:
+    operations = readiness.get("operations")
+    if isinstance(operations, dict):
+        enabled_count = operations.get("enabled_count")
+        if isinstance(enabled_count, int) and not isinstance(enabled_count, bool):
+            return enabled_count
+
+    legacy_counts = readiness.get("operation_counts")
+    if isinstance(legacy_counts, dict):
+        enabled_count = legacy_counts.get("enabled")
+        if isinstance(enabled_count, int) and not isinstance(enabled_count, bool):
+            return enabled_count
+        enabled_count = legacy_counts.get("enabled_count")
+        if isinstance(enabled_count, int) and not isinstance(enabled_count, bool):
+            return enabled_count
+
+    return None
+
+
 def specspace_product_workspace_smoke_report(
     *,
     base_url: str,
@@ -17649,13 +17670,14 @@ def specspace_product_workspace_smoke_report(
                 "configured": executor.get("configured"),
             },
         )
-        counts = readiness.get("operation_counts")
-        counts = counts if isinstance(counts, dict) else {}
+        enabled_operation_count = specspace_product_smoke_enabled_operation_count(
+            readiness
+        )
         record_check(
             "specspace_managed_operations_disabled",
-            counts.get("enabled", 0) == 0,
+            enabled_operation_count == 0,
             "production read-only smoke requires zero enabled managed operations",
-            evidence={"operation_counts": counts},
+            evidence={"enabled_operation_count": enabled_operation_count},
         )
 
     managed_operations = workspace_mapping.get("managed_operations_observability")
