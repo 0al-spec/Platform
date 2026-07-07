@@ -102,9 +102,10 @@ Use the Platform smoke wrapper to validate the public product route end to end:
 ```
 
 The smoke is report-only. It checks `/api/v1/health`, the product workspace API,
-the route shell, workspace-specific artifact routing, managed-mode readiness,
-and write-authority flags. It does not execute Platform, SpecGraph, Git Service,
-or read-model publication operations. The wrapper retries transient
+the operator route shell, the presentation route shell at `?view=demo`,
+workspace-specific artifact routing, managed-mode readiness, and write-authority
+flags. It does not execute Platform, SpecGraph, Git Service, or read-model
+publication operations. The wrapper retries transient
 restart-window transport failures and HTTP `502` / `503` / `504` responses with
 a bounded attempt count; persistent failures remain blocking and are recorded in
 the durable smoke report.

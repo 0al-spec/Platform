@@ -95,6 +95,12 @@ class _SpecSpaceSmokeHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"<html><body>SpecSpace</body></html>")
             return
+        if self.path == "/team-decision-log?view=demo":
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"<html><body>SpecSpace demo view</body></html>")
+            return
         self.send_response(404)
         self.end_headers()
 
@@ -213,6 +219,11 @@ class PlatformDeployTests(unittest.TestCase):
             "platform_specspace_product_workspace_production_smoke_report",
         )
         self.assertEqual(payload["summary"]["workspace"], "team-decision-log")
+        self.assertIn("demo_view", payload["source_refs"])
+        self.assertIn(
+            "specspace_product_demo_view_route_available",
+            {check["id"] for check in payload["checks"]},
+        )
 
     def test_specspace_product_smoke_cli_parses_bound_artifact_base_env(self) -> None:
         with _SmokeServer(_specspace_smoke_workspace_payload()) as base_url:
@@ -331,6 +342,7 @@ class PlatformDeployTests(unittest.TestCase):
                 "/api/v1/health": 1,
                 "/api/v1/idea-to-spec-workspace?workspace=team-decision-log": 1,
                 "/team-decision-log": 1,
+                "/team-decision-log?view=demo": 1,
             },
         ) as base_url:
             result = self.run_cli(
@@ -356,6 +368,51 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["attempts"]["health"], 2)
         self.assertEqual(payload["summary"]["attempts"]["workspace"], 2)
         self.assertEqual(payload["summary"]["attempts"]["route"], 2)
+        self.assertEqual(payload["summary"]["attempts"]["demo_view"], 2)
+
+    def test_specspace_product_smoke_cli_blocks_legacy_demo_view_shell(self) -> None:
+        class LegacyDemoHandler(_SpecSpaceSmokeHandler):
+            workspace_payload = _specspace_smoke_workspace_payload()
+
+            def do_GET(self) -> None:  # noqa: N802
+                if self.path == "/team-decision-log?view=demo":
+                    self.send_response(200)
+                    self.send_header("content-type", "text/html; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(b"<html><body>legacy ContextBuilder</body></html>")
+                    return
+                super().do_GET()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), LegacyDemoHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address
+        base_url = f"http://{host}:{port}"
+        try:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--format",
+                "json",
+                "--no-write-report",
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertIn(
+            "specspace_product_demo_view_no_contextbuilder_legacy_shell",
+            {diagnostic["code"] for diagnostic in payload["diagnostics"]},
+        )
 
     def test_specspace_product_smoke_cli_writes_durable_report(self) -> None:
         with tempfile.TemporaryDirectory() as root:

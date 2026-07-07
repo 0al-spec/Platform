@@ -17618,6 +17618,10 @@ def specspace_product_workspace_smoke_report(
     )
     route_path = "/" + urllib.parse.quote(workspace.strip("/"))
     route_url = specspace_product_smoke_url(base_url, route_path)
+    demo_route_url = specspace_product_smoke_url(
+        base_url,
+        f"{route_path}?view=demo",
+    )
 
     health_status, health_payload, health_attempts = specspace_product_smoke_fetch_with_retry(
         health_url,
@@ -17639,6 +17643,17 @@ def specspace_product_workspace_smoke_report(
     )
     route_status, route_html, route_attempts = specspace_product_smoke_fetch_with_retry(
         route_url,
+        expect_json=False,
+        timeout=timeout,
+        attempts=attempts,
+        retry_delay_seconds=retry_delay_seconds,
+    )
+    (
+        demo_route_status,
+        demo_route_html,
+        demo_route_attempts,
+    ) = specspace_product_smoke_fetch_with_retry(
+        demo_route_url,
         expect_json=False,
         timeout=timeout,
         attempts=attempts,
@@ -17793,6 +17808,28 @@ def specspace_product_workspace_smoke_report(
         "product workspace route must not serve legacy ContextBuilder shell",
         evidence={"legacy_markers": legacy_markers},
     )
+    demo_route_text = demo_route_html if isinstance(demo_route_html, str) else ""
+    record_check(
+        "specspace_product_demo_view_route_available",
+        demo_route_status == 200 and "<html" in demo_route_text.lower(),
+        f"product demo view route returned HTTP {demo_route_status}",
+        evidence={
+            "url": demo_route_url,
+            "status": demo_route_status,
+            "attempts": demo_route_attempts,
+        },
+    )
+    demo_legacy_markers = [
+        marker
+        for marker in SPECSPACE_PRODUCT_SMOKE_LEGACY_MARKERS
+        if marker in demo_route_text
+    ]
+    record_check(
+        "specspace_product_demo_view_no_contextbuilder_legacy_shell",
+        not demo_legacy_markers,
+        "product demo view route must not serve legacy ContextBuilder shell",
+        evidence={"legacy_markers": demo_legacy_markers},
+    )
 
     ok = not diagnostics
     return {
@@ -17810,6 +17847,7 @@ def specspace_product_workspace_smoke_report(
                 "health": health_attempts,
                 "workspace": workspace_attempts,
                 "route": route_attempts,
+                "demo_view": demo_route_attempts,
             },
             "check_count": len(checks),
             "failed_check_count": sum(1 for check in checks if check["status"] != "passed"),
@@ -17829,6 +17867,7 @@ def specspace_product_workspace_smoke_report(
             "health": health_url,
             "workspace": workspace_url,
             "route": route_url,
+            "demo_view": demo_route_url,
         },
         "checks": checks,
         "diagnostics": diagnostics,
