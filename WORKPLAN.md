@@ -98,7 +98,13 @@ Exit criteria:
 - Add project switcher requirements.
 - Add per-workspace provider configuration.
 - Make product/core boundary visible in the UI.
+- Track the deferred Feature Passport evidence authority decision after
+  SpecGraph defines `FP-RFC-0001` `0.2.0` producer schemas. Platform must choose
+  explicitly between report producer, receipt normalizer, and receipt issuer
+  before adding any Feature Passport hash-chain or signing responsibility.
 
 Exit criteria:
 - SpecSpace can switch between known workspaces.
 - Operator sees whether a workspace is core, product, or private registry backed.
+- Platform does not claim Feature Passport receipt authority until a dedicated
+  follow-up defines the role, trust keys, chain scope, and verification contract.
