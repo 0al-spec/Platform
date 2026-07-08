@@ -1,5 +1,13 @@
 # Platform Agent Instructions
 
+## Code Review
+
+When reviewing workflow, artifact, CLI, or quality-gate changes, apply the
+[code review heuristics](docs/code-review.md). In particular, distinguish
+artifact presence from readiness, trace producer lifecycle semantics, verify
+authoritative artifact selection, and check that intermediate paths are scoped to
+the current run or task.
+
 ## Task Pull Requests
 
 For every task that changes tracked repository files, finish by creating or
