@@ -335,6 +335,20 @@ The live harness pauses on the final `?view=demo` presentation screen and writes
 screenshots, trace/video, and `product-demo-report.json` under
 `../SpecSpace/graphspace/test-results/product-demo/`.
 
+The local harness also runs SpecGraph's product demo depth baseline before it
+publishes artifacts to the temporary SpecSpace backend:
+
+```text
+make real-idea-smoke-depth-baseline REAL_IDEA_SMOKE_RUN_DIR=runs/<id>
+```
+
+The resulting `product_demo_depth_report.json` must report
+`depth_baseline_met`. The report blocks shallow demos with missing actors,
+domain events, policies, constraints, workflow topology, requirements,
+acceptance criteria, candidate overview, or Idea Maturity. This is a local demo
+quality diagnostic only; Platform promotion gates and Git lifecycle gates remain
+separate.
+
 If the smoke fails during a deploy restart window with a transport error or HTTP
 `502` / `503` / `504`, rerun it once after the service reports the expected
 commit at `/api/v1/health`. Do not ignore repeated failures: artifact-base
