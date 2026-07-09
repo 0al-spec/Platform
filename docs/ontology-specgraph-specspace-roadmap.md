@@ -260,11 +260,15 @@ The current execution order is:
    `answers_required`, `clarification_not_required`, or
    `clarification_blocked`; Platform can continue a trusted no-answer outcome
    through a fixed SpecGraph target without inventing an answer set.
-3. **Durable workspace binding.** Workspace creation and initialization should
-   produce a durable binding across workspace id, display name, artifact base,
-   SpecSpace state namespace, run directory, and repository/worktree identity.
-   Later managed operations should consume that binding instead of deriving
-   paths from a route slug or shared local defaults.
+3. **Durable workspace binding.** Implemented. Platform initialization now
+   emits a versioned digest-checked binding across workspace id, display name,
+   artifact base, SpecSpace state namespace, run directory, and
+   repository/worktree identity. SpecGraph emits producer-owned relative-layout
+   evidence, and SpecSpace consumes a public-safe binding projection. Repair,
+   approval, promotion, review-status, and publication reports preserve the
+   selected binding context. Execution-backed Playwright covers real Platform
+   initialization, browser reload, workspace-scoped runs, raw-idea privacy, and
+   rejection of foreign or mismatched binding inputs.
 4. **Hosted/queue-backed managed execution.** The local SpecSpace backend can
    now call allowlisted Platform wrappers and read durable reports. Production
    should preserve the same operation/report contracts while moving execution to
@@ -490,10 +494,12 @@ now records backend-backed product workspace creation intent as SpecSpace-owned
 state. Platform can validate that request into a report-only initialization
 plan and execute the ready plan by delegating workspace file creation to the
 SpecGraph-owned initializer before appending the Platform catalog entry. The
-initialization plan and execution report now expose a report-only
-`workspace_binding` surface with the selected workspace id, product run-dir ref,
-SpecSpace state namespace ref, workspace bundle/manifest refs, and optional
-static artifact-base URLs. The remaining gap is service integration: hosted
+initialization plan and execution report now expose the versioned
+`platform.product-workspace.binding.v1` contract with the selected workspace id,
+product run-dir ref, SpecSpace state namespace ref, workspace bundle/manifest
+refs, optional static artifact-base URLs, repository identity, and pinned
+initialization evidence. Downstream managed-operation reports preserve that
+binding context. The remaining gap is service integration: hosted
 execution, durable artifact publication, and read-model publication must move
 through a Platform/Git Service boundary rather than browser-side mutation. The
 local CLI executor is an MVP adapter; production should expose the same

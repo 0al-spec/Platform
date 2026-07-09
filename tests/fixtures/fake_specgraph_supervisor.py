@@ -13,6 +13,7 @@ Controlled via env vars:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -56,7 +57,8 @@ def main(argv: list[str]) -> int:
     (workspace_root / "runs").mkdir(exist_ok=True)
     (workspace_root / "specs").mkdir(exist_ok=True)
     (workspace_root / "docs" / "proposals").mkdir(parents=True, exist_ok=True)
-    (workspace_root / "specgraph.project.yaml").write_text(
+    project_config_path = workspace_root / "specgraph.project.yaml"
+    project_config_path.write_text(
         f"project: {args.project_id}\n",
         encoding="utf-8",
     )
@@ -80,6 +82,57 @@ def main(argv: list[str]) -> int:
         review_state = "ready_for_review"
         findings = []
 
+    binding_evidence = {
+        "contract_ref": "specgraph.product-workspace.binding-evidence.v0.1",
+        "proposal_id": "0211",
+        "status": "ready" if status == "initialized" else "blocked",
+        "identity": {
+            "workspace_id": args.project_id,
+            "display_name": args.display_name,
+            "governance_profile": "product_workspace",
+            "repository_role": "product_spec_workspace",
+        },
+        "layout": {
+            "root_reference": "workspace_relative",
+            "project_config_ref": "specgraph.project.yaml",
+            "specs_root_ref": "specs",
+            "proposals_root_ref": "docs/proposals",
+            "runs_root_ref": "runs",
+            "supervisor_state_root_ref": ".specgraph",
+        },
+        "project_config": {
+            "source_ref": "specgraph.project.yaml",
+            "source_sha256": hashlib.sha256(project_config_path.read_bytes()).hexdigest(),
+        },
+        "repository": {
+            "repository_role": "product_spec_workspace",
+            "workspace_identity": args.project_id,
+            "worktree_identity": f"product-workspace/{args.project_id}",
+            "creates_worktree": False,
+        },
+        "privacy_boundary": {
+            "workspace_relative_refs_only": True,
+            "local_input_path_persisted": False,
+            "raw_root_intent_published": False,
+        },
+        "authority_boundary": {
+            "report_only": True,
+            "may_execute_platform": False,
+            "may_mutate_canonical_specs": False,
+            "may_write_ontology_packages": False,
+            "may_accept_ontology_terms": False,
+            "may_create_git_commit": False,
+            "may_open_pull_request": False,
+        },
+    }
+    binding_evidence["evidence_sha256"] = hashlib.sha256(
+        json.dumps(
+            binding_evidence,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
     report = {
         "artifact_kind": "product_workspace_initialization",
         "project": {
@@ -98,6 +151,7 @@ def main(argv: list[str]) -> int:
             "content_sha256": None,
         },
         "validation_findings": findings,
+        "workspace_binding_evidence": binding_evidence,
         "review_state": review_state,
         "summary": {"status": status},
     }

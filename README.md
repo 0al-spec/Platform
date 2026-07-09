@@ -27,6 +27,7 @@ SpecGraph owns:
 
 - `specgraph.project.yaml` schema and validation semantics;
 - product workspace initialization safety rules;
+- the versioned durable product workspace binding contract;
 - initialization reports such as `runs/product_workspace_initialization.json`;
 - root-intent capture boundaries and no-core-mutation guarantees.
 
