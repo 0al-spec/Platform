@@ -349,6 +349,14 @@ acceptance criteria, candidate overview, or Idea Maturity. This is a local demo
 quality diagnostic only; Platform promotion gates and Git lifecycle gates remain
 separate.
 
+After depth-driven repair, SpecGraph proposal `0209` also publishes
+`structural_depth_delta` inside rerun preview/materialization artifacts. SpecSpace
+uses that report-only surface to show Depth impact: before/after counts, added
+event-storming refs, added workflow relations, and remaining shallow dimensions.
+Platform treats this as visibility telemetry only; it is not a smoke profile, a
+promotion gate, a Git Service precondition, or authority to mutate specs,
+Ontology packages, or read models.
+
 If the smoke fails during a deploy restart window with a transport error or HTTP
 `502` / `503` / `504`, rerun it once after the service reports the expected
 commit at `/api/v1/health`. Do not ignore repeated failures: artifact-base
