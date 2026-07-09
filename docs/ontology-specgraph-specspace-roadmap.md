@@ -20,7 +20,7 @@ repository that owns the behavior:
 
 ## Current Anchors
 
-As of 2026-06-29:
+As of 2026-07-09:
 
 - Ontology PR `#53` is merged: `ontologyc` adapter report artifact line.
 - Ontology PR `#54` is merged: Hypercode IR v2 ontology package import.
@@ -107,10 +107,14 @@ As of 2026-06-29:
     summaries, so operators can see the report schema, validation schema,
     validator id/version, and compatibility policy that made the telemetry
     trustworthy.
-- The next product direction is an autonomous idea-to-spec workflow: SpecSpace
-  should help a user clarify a product idea through an event-storming-like
-  intake, then let SpecGraph build a complete candidate specification graph
-  under pre-SIB/coherence metrics before any canonical write.
+- The idea-to-spec product direction now has a working local managed lifecycle:
+  SpecSpace can create a product workspace, collect raw idea and clarification
+  state, call backend-managed Platform wrappers, show repair/approval/promotion
+  progress, and display read-model publication after Git review. The next work
+  is quality and production hardening: deterministic next-action ranking,
+  fallback-free clarification templates, durable workspace bindings, and moving
+  the local managed executor pattern toward hosted/queue-backed service
+  execution.
 
 The product intent is to reduce hallucinated terms, misunderstood domain
 language, wrong aliases, wrong relation directions, and hidden missing concepts
@@ -245,23 +249,31 @@ This separates the read path from the write path:
 
 The current execution order is:
 
-1. **SpecSpace product workspace workflow lane.** Show a compact read-only
-   chain for intake, candidate graph, pre-SIB, repair session journal,
-   materialization, promotion gate, Platform promotion request, Git Service
-   execution, review status, and read-model publication. The surface should
-   answer "where are we and what is the next handoff?" without granting write
+1. **Quality-guided next action ranking.** SpecSpace now has many accurate
+   guided paths and managed operation rows. The next UI coordination slice is a
+   deterministic primary action plus secondary actions model that ranks stale
+   state, failed operations, blocking clarification/repair, structural-depth
+   improvement, approval, promotion, and publication without creating execution
    authority.
-2. **Git Service post-review and read-model orchestration.** Require the
-   `idea_to_spec_repair_session` journal as the durable readiness handoff before
-   branch preparation. The current local executor path now treats review status
-   and read-model publication as explicit service operations; the remaining
-   direction is hosted/queue-backed orchestration rather than separate operator
-   knowledge.
-3. **Real idea intake / event-storming entry point.** Add a user-facing intake
-   source where a raw idea becomes structured actors, events, commands,
-   policies, constraints, vocabulary questions, and context-completion
-   questions. The output remains candidate state until gates pass.
-4. **Ontology applicability in product review.** Continue compiler-backed
+2. **Fallback-free real idea clarification.** SpecGraph should emit
+   browser-answerable answer templates, or an explicit
+   `clarification_not_required` state, so the local product demo no longer
+   needs deterministic clarification fallback fixtures to become a useful
+   product proof.
+3. **Durable workspace binding.** Workspace creation and initialization should
+   produce a durable binding across workspace id, display name, artifact base,
+   SpecSpace state namespace, run directory, and repository/worktree identity.
+   Later managed operations should consume that binding instead of deriving
+   paths from a route slug or shared local defaults.
+4. **Hosted/queue-backed managed execution.** The local SpecSpace backend can
+   now call allowlisted Platform wrappers and read durable reports. Production
+   should preserve the same operation/report contracts while moving execution to
+   a hosted service or queue-backed worker boundary with idempotency and audit
+   records.
+5. **Human-friendly candidate aliases.** SpecGraph should keep stable machine
+   ids for refs and promotion paths, but expose readable aliases for candidate
+   overview, topology, PR artifacts, and operator-facing diagnostics.
+6. **Ontology applicability in product review.** Continue compiler-backed
    layers, `modelApplicability`, and change classification so product
    candidates can explain which ontology layer and applicability frame each
    claim depends on.
@@ -658,11 +670,13 @@ The next valuable implementation choices are:
      the repaired handoff reaches `ready_for_candidate_approval: true`. Team
      Decision Log is the default demo fixture/alias, not a product-specific
      system flow.
-   - **SpecSpace guided product flow.** Turn the Product Workspace from a
-     passive dashboard into a guided lifecycle layer: idea intake, repair
-     requests, ontology decisions, rerun request, approval intent, Platform
-     approval, promotion request, Git dry-run, review status, and read-model
-     publication.
+   - **SpecSpace guided product flow.** Done for the local managed lifecycle.
+     The Product Workspace now has guided paths for workspace initialization,
+     idea intake, clarification continuation, repair rerun, approval, promotion
+     request/execution, review status, read-model publication, managed
+     operations observability, and managed-mode readiness. The next UX
+     refinement is lifecycle-wide action ranking so those paths do not compete
+     for the top-level next safe action.
    - **Platform smoke profiles.** Done. `product-repair-rerun smoke` supports
      `strict`, `diagnostic-blocked`, and `happy-path-promotion-dry-run`
      expectation profiles so expected gate blocks are not confused with
@@ -697,9 +711,10 @@ The next valuable implementation choices are:
      draft/request/gate state with recommended safe operator actions; and
      consumed source state from the original repair session is treated as usable
      provenance once a repaired handoff records it.
-   - **Promotion readiness explainability polish.** Group blockers by owner
-     and next action: SpecSpace state, SpecGraph repair/ontology gaps,
-     Platform approval gates, and Git Service handoff.
+   - **Promotion readiness explainability polish.** Fold into quality-guided
+     next action ranking. Blockers should be grouped by owner and next action:
+     SpecSpace state, SpecGraph repair/ontology/depth gaps, Platform approval
+     gates, and Git Service handoff.
    - **Demo artifact publishing contract.** Done in Platform. The Timeweb
      deployment contract now derives the Team Decision Log demo artifact base
      as `<root artifact base>/workspaces/team-decision-log` unless an explicit
@@ -707,10 +722,11 @@ The next valuable implementation choices are:
      that the workspace manifest and approval-ready repaired handoff are served
      from `https://specgraph.tech/workspaces/team-decision-log` instead of the
      root SpecGraph showcase bundle.
-2. Platform: move Product Repair Rerun, candidate approval validation, and Git
-   Service execution from local adapter orchestration toward hosted or
-   queue-backed service implementation while preserving the same report
-   contracts.
+2. Platform: move Product Repair Rerun, candidate approval validation, Git
+   Service execution, review-status inspection, and read-model publication from
+   local adapter orchestration toward hosted or queue-backed service
+   implementation while preserving the same managed operation ids, report
+   contracts, idempotency semantics, and authority boundaries.
 3. SpecSpace/SpecGraph/Platform: continue hardening the real idea intake
    surface. The raw-entry and answer-continuation handoffs are now in place:
    SpecSpace can store an operator-owned raw idea entry request and later
@@ -722,9 +738,10 @@ The next valuable implementation choices are:
    mutation authority. Direct execute commands remain operator/debug surfaces
    beneath the request-first UI flow. Project-local ontology review and the
    candidate overview narrative panel are now also connected to Idea Maturity
-   and Product Workspace surfaces. Remaining work is product UX polish,
-   human-friendly candidate aliases, richer visual topology, and a Platform
-   promotion dry-run handoff for custom run directories.
+   and Product Workspace surfaces. Remaining work is product UX polish through
+   action ranking, fallback-free clarification templates, human-friendly
+   candidate aliases, durable workspace binding, and custom run-dir handoff
+   reconciliation against the existing managed-operation promotion dry-run path.
 4. Ontology/SpecGraph: continue compiler-backed applicability profile import
    when ONT-040 emits stronger applicability data.
 

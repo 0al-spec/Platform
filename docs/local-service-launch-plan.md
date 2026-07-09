@@ -88,6 +88,10 @@ Status: planned.
 - Move startup dependency installation into owned images.
 - Pin image tags and make runtime containers start quickly.
 - Preserve separate logs and health checks per service.
+- Preserve the managed-operation boundary while hardening images: a future
+  hosted or queue-backed executor image may run allowlisted Platform wrappers,
+  but SpecSpace UI/API images must remain separate and must not gain direct
+  shell or Git/Ontology mutation authority.
 
 ### Slice 6: Timeweb Manifest Ownership
 
