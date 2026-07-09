@@ -860,10 +860,17 @@ scripts/platform.py product-real-idea-continuation execute-requested \
   --format json
 ```
 
-The request points to the SpecSpace-owned answer state and the prior intake
-execution evidence. Platform validates the request-only authority boundary,
-workspace identity, workspace initialization, and successful non-dry-run intake
-execution before invoking SpecGraph.
+The request points to the prior intake execution evidence, current answer
+template, and normally the SpecSpace-owned answer state. Platform validates the
+request-only authority boundary, workspace identity, workspace initialization,
+and successful non-dry-run intake execution before invoking SpecGraph.
+
+If the trusted template uses contract v0.2 and declares
+`clarification_not_required`, Platform does not require an answer-state file or
+invent an empty answer set. It runs the fixed
+`real-idea-intake-continue-without-answers` target and verifies the candidate
+source report and active candidate. A foreign, unready, blocked, or malformed
+template stops execution.
 
 For low-level debugging, Platform can still execute directly against an answer
 state. If the selected `--run-dir` already contains
@@ -877,7 +884,7 @@ scripts/platform.py product-real-idea-continuation execute \
   --format json
 ```
 
-The command runs the fixed SpecGraph target:
+For `answers_required`, the command runs the fixed SpecGraph target:
 
 ```text
 real-idea-intake-continue-from-specspace-answers

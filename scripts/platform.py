@@ -274,6 +274,9 @@ REAL_IDEA_ANSWER_CONTINUATION_EXECUTION_REQUEST_KIND = (
 REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET = (
     "real-idea-intake-continue-from-specspace-answers"
 )
+REAL_IDEA_NO_CLARIFICATION_CONTINUATION_MAKE_TARGET = (
+    "real-idea-intake-continue-without-answers"
+)
 REAL_IDEA_ANSWER_CONTINUATION_OUTPUTS = {
     "import_preview": "specspace_real_idea_answer_import_preview.json",
     "continuation_report": "real_idea_answer_continuation_report.json",
@@ -289,6 +292,14 @@ REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS = {
     "answer_set": "idea_to_spec_clarification_answer_set",
     "validated_answers": "idea_to_spec_clarification_answers",
     "clarified_session": "user_idea_intake_session",
+    "candidate_source_report": "intake_session_candidate_source_report",
+    "active_candidate": "active_idea_to_spec_candidate",
+}
+REAL_IDEA_NO_CLARIFICATION_CONTINUATION_OUTPUTS = {
+    "candidate_source_report": "intake_session_candidate_source_report.json",
+    "active_candidate": "active_idea_to_spec_candidate.json",
+}
+REAL_IDEA_NO_CLARIFICATION_CONTINUATION_EXPECTED_KINDS = {
     "candidate_source_report": "intake_session_candidate_source_report",
     "active_candidate": "active_idea_to_spec_candidate",
 }
@@ -6306,6 +6317,201 @@ def real_idea_answer_continuation_make_command(
     return command
 
 
+def real_idea_no_clarification_continuation_make_command(
+    *,
+    run_dir_ref: str,
+    workspace_id: str | None,
+    python: str | None = None,
+) -> list[str]:
+    command = [
+        "make",
+        REAL_IDEA_NO_CLARIFICATION_CONTINUATION_MAKE_TARGET,
+        f"REAL_IDEA_SMOKE_RUN_DIR={run_dir_ref}",
+    ]
+    if workspace_id:
+        command.append(f"REAL_IDEA_ANSWER_CONTINUATION_WORKSPACE_ID={workspace_id}")
+    if python:
+        command.append(f"PYTHON={python}")
+    return command
+
+
+def real_idea_clarification_source_digest(payload: dict[str, Any]) -> str:
+    stable = {key: value for key, value in payload.items() if key != "generated_at"}
+    encoded = json.dumps(stable, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def real_idea_clarification_continuation_mode(
+    *,
+    run_dir: Path,
+    run_dir_ref: str,
+    workspace_id: str | None,
+) -> tuple[str, list[Diagnostic]]:
+    template_path = run_dir / "real_idea_answer_template.json"
+    if not template_path.is_file():
+        return "answers_required", []
+    try:
+        template = load_json_mapping(template_path, label="real idea answer template")
+    except PlatformError as exc:
+        return "blocked", [
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_template_unreadable",
+                subject="real_idea_answer_template",
+                message=str(exc),
+            )
+        ]
+    outcome = template.get("clarification_outcome")
+    if not isinstance(outcome, str) or not outcome:
+        return "answers_required", []
+    diagnostics: list[Diagnostic] = []
+    if template.get("artifact_kind") != "real_idea_answer_template":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_template_kind_mismatch",
+                subject="real_idea_answer_template.artifact_kind",
+                message="Expected real_idea_answer_template",
+            )
+        )
+    if template.get("contract_ref") != (
+        "specgraph.idea-to-spec.real-idea-answer-template.v0.2"
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_template_contract_unsupported",
+                subject="real_idea_answer_template.contract_ref",
+                message="Fallback-free clarification outcomes require template contract v0.2",
+            )
+        )
+    template_workspace = template.get("workspace_id")
+    if workspace_id and template_workspace != workspace_id:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_template_workspace_mismatch",
+                subject="real_idea_answer_template.workspace_id",
+                message="Answer template workspace does not match requested continuation workspace",
+            )
+        )
+    if outcome == "clarification_blocked":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_clarification_blocked",
+                subject="real_idea_answer_template.clarification_outcome",
+                message="SpecGraph marked real idea clarification as blocked",
+            )
+        )
+        return "blocked", diagnostics
+    if outcome not in {"answers_required", "clarification_not_required"}:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_clarification_outcome_unsupported",
+                subject="real_idea_answer_template.clarification_outcome",
+                message=f"Unsupported clarification outcome: {outcome}",
+            )
+        )
+        return "blocked", diagnostics
+    if nested_mapping(template, "readiness").get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_template_not_ready",
+                subject="real_idea_answer_template.readiness.ready",
+                message="Selected answer template must be ready",
+            )
+        )
+    if outcome == "clarification_not_required" and template.get("answer_targets"):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_no_clarification_targets_present",
+                subject="real_idea_answer_template.answer_targets",
+                message="clarification_not_required must not carry answer targets",
+            )
+        )
+    if outcome == "clarification_not_required":
+        requests_path = run_dir / "idea_intake_clarification_requests.json"
+        source_artifacts = nested_mapping(template, "source_artifacts")
+        request_source = nested_mapping(source_artifacts, "clarification_requests")
+        if not requests_path.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_no_clarification_requests_missing",
+                    subject="idea_intake_clarification_requests",
+                    message="clarification_not_required requires its source request artifact",
+                )
+            )
+        else:
+            try:
+                requests = load_json_mapping(
+                    requests_path,
+                    label="real idea clarification requests",
+                )
+            except PlatformError as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="real_idea_no_clarification_requests_unreadable",
+                        subject="idea_intake_clarification_requests",
+                        message=str(exc),
+                    )
+                )
+            else:
+                expected_ref = (
+                    f"{run_dir_ref}/idea_intake_clarification_requests.json"
+                )
+                source_ref = request_source.get("source_ref")
+                if source_ref != expected_ref:
+                    diagnostics.append(
+                        Diagnostic(
+                            level="ERROR",
+                            code="real_idea_no_clarification_source_ref_mismatch",
+                            subject="real_idea_answer_template.source_artifacts.clarification_requests.source_ref",
+                            message="Answer template does not reference the selected run request artifact",
+                        )
+                    )
+                if request_source.get("source_digest") != (
+                    real_idea_clarification_source_digest(requests)
+                ):
+                    diagnostics.append(
+                        Diagnostic(
+                            level="ERROR",
+                            code="real_idea_no_clarification_source_digest_mismatch",
+                            subject="real_idea_answer_template.source_artifacts.clarification_requests.source_digest",
+                            message="Answer template source digest is stale or missing",
+                        )
+                    )
+                if requests.get("clarification_outcome") != (
+                    "clarification_not_required"
+                ) or requests.get("clarification_requests"):
+                    diagnostics.append(
+                        Diagnostic(
+                            level="ERROR",
+                            code="real_idea_no_clarification_requests_not_clear",
+                            subject="idea_intake_clarification_requests.clarification_outcome",
+                            message="Source request artifact does not confirm clarification_not_required",
+                        )
+                    )
+                request_workspace = requests.get("workspace_id")
+                if template_workspace != request_workspace:
+                    diagnostics.append(
+                        Diagnostic(
+                            level="ERROR",
+                            code="real_idea_no_clarification_request_workspace_mismatch",
+                            subject="idea_intake_clarification_requests.workspace_id",
+                            message="Source request workspace does not match the answer template",
+                        )
+                    )
+    return outcome, diagnostics
+
+
 def real_idea_entry_intake_make_command(
     *,
     run_dir_ref: str,
@@ -6817,7 +7023,6 @@ def real_idea_answer_continuation_execution_request_selection(
             )
         )
     for ref_field in (
-        "answer_state_ref",
         "intake_execution_ref",
         "workspace_initialization_ref",
     ):
@@ -7155,6 +7360,16 @@ def real_idea_answer_continuation_output_records(
     }
 
 
+def real_idea_no_clarification_continuation_output_records(
+    *,
+    run_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    return {
+        key: product_repair_output_record(run_dir / rel_path)
+        for key, rel_path in REAL_IDEA_NO_CLARIFICATION_CONTINUATION_OUTPUTS.items()
+    }
+
+
 def real_idea_answer_continuation_handoff_state(
     *,
     source: Path,
@@ -7251,6 +7466,66 @@ def real_idea_answer_continuation_output_diagnostics(
                         message=(
                             f"SpecGraph continuation output {key} must not expand authority"
                         ),
+                    )
+                )
+    return diagnostics
+
+
+def real_idea_no_clarification_continuation_output_diagnostics(
+    output_records: dict[str, dict[str, Any]],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for key, expected_kind in REAL_IDEA_NO_CLARIFICATION_CONTINUATION_EXPECTED_KINDS.items():
+        record = output_records.get(key, {})
+        if record.get("present") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_no_clarification_output_missing",
+                    subject=f"outputs.{key}",
+                    message=f"SpecGraph no-clarification continuation must produce {key}",
+                )
+            )
+            continue
+        if record.get("artifact_kind") != expected_kind:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_no_clarification_output_kind_mismatch",
+                    subject=f"outputs.{key}.artifact_kind",
+                    message=f"expected {expected_kind}",
+                )
+            )
+        if key == "candidate_source_report" and record.get("ready") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="real_idea_no_clarification_output_not_ready",
+                    subject=f"outputs.{key}.readiness.ready",
+                    message=f"SpecGraph no-clarification output {key} must be ready",
+                )
+            )
+        for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
+            if record.get(field) is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="real_idea_no_clarification_output_authority_expanded",
+                        subject=f"outputs.{key}.{field}",
+                        message=(
+                            f"SpecGraph no-clarification output {key} must not "
+                            f"set {field}=true"
+                        ),
+                    )
+                )
+        for field, value in sorted(nested_mapping(record, "authority_boundary").items()):
+            if value is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="real_idea_no_clarification_output_authority_expanded",
+                        subject=f"outputs.{key}.authority_boundary.{field}",
+                        message=f"SpecGraph no-clarification output {key} must not expand authority",
                     )
                 )
     return diagnostics
@@ -7741,6 +8016,14 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
     run_dir = run_dir_resolution.path
     run_dir_ref = run_dir_resolution.ref or str(Path(args.run_dir))
     diagnostics.extend(run_dir_resolution.diagnostics)
+    workspace_id = getattr(args, "workspace_id", None)
+    continuation_mode, mode_diagnostics = real_idea_clarification_continuation_mode(
+        run_dir=run_dir,
+        run_dir_ref=run_dir_ref,
+        workspace_id=workspace_id,
+    )
+    diagnostics.extend(mode_diagnostics)
+    answer_state_required = continuation_mode != "clarification_not_required"
     answer_handoff = run_dir / "idea_to_spec_intake_clarification_answers.json"
     answer_state_explicit = bool(args.answer_state)
     answer_source = (
@@ -7750,7 +8033,7 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
     )
     answer_source_resolved = answer_source.resolve()
     answer_handoff_resolved = answer_handoff.resolve()
-    if not args.dry_run and not answer_source.is_file():
+    if answer_state_required and not args.dry_run and not answer_source.is_file():
         diagnostics.append(
             Diagnostic(
                 level="ERROR",
@@ -7761,6 +8044,7 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         )
     if (
         not diagnostics
+        and answer_state_required
         and answer_state_explicit
         and answer_source_resolved != answer_handoff_resolved
         and answer_handoff.exists()
@@ -7778,12 +8062,17 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
             )
         )
     answer_state_copied_to_run_dir = False
-    try:
-        answer_state_source_ref = answer_source_resolved.relative_to(specgraph_dir).as_posix()
-    except ValueError:
-        answer_state_source_ref = str(answer_source)
+    answer_state_source_ref = None
+    if answer_state_required:
+        try:
+            answer_state_source_ref = answer_source_resolved.relative_to(
+                specgraph_dir
+            ).as_posix()
+        except ValueError:
+            answer_state_source_ref = str(answer_source)
     if (
         not diagnostics
+        and answer_state_required
         and answer_source_resolved != answer_handoff_resolved
         and not args.dry_run
     ):
@@ -7802,11 +8091,19 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         if args.output
         else specgraph_dir / "runs" / "platform_real_idea_answer_continuation_execution_report.json"
     )
+    make_target = REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET
     command = real_idea_answer_continuation_make_command(
         run_dir_ref=run_dir_ref,
         answer_state_ref=f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json",
         python=args.python,
     )
+    if continuation_mode == "clarification_not_required":
+        make_target = REAL_IDEA_NO_CLARIFICATION_CONTINUATION_MAKE_TARGET
+        command = real_idea_no_clarification_continuation_make_command(
+            run_dir_ref=run_dir_ref,
+            workspace_id=workspace_id,
+            python=args.python,
+        )
     command_result: dict[str, Any] | None = None
     started_at = utc_now_iso()
     if not diagnostics and not args.dry_run:
@@ -7830,7 +8127,7 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
                 Diagnostic(
                     level="ERROR",
                     code="real_idea_answer_continuation_make_failed",
-                    subject=REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET,
+                    subject=make_target,
                     message=(
                         "SpecGraph real-idea answer continuation target failed "
                         f"with exit code {completed.returncode}"
@@ -7853,14 +8150,18 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
     may_inspect_run_dir = not any(
         diagnostic.code in run_dir_diagnostic_codes for diagnostic in diagnostics
     )
-    output_records = (
-        real_idea_answer_continuation_output_records(run_dir=run_dir)
-        if may_inspect_run_dir
-        else {}
-    )
+    output_records = {}
+    if may_inspect_run_dir:
+        output_records = (
+            real_idea_no_clarification_continuation_output_records(run_dir=run_dir)
+            if continuation_mode == "clarification_not_required"
+            else real_idea_answer_continuation_output_records(run_dir=run_dir)
+        )
     if not diagnostics and not args.dry_run:
         diagnostics.extend(
-            real_idea_answer_continuation_output_diagnostics(output_records)
+            real_idea_no_clarification_continuation_output_diagnostics(output_records)
+            if continuation_mode == "clarification_not_required"
+            else real_idea_answer_continuation_output_diagnostics(output_records)
         )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0 and (args.dry_run or command_result is not None)
@@ -7874,13 +8175,13 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         operation_reason = "execution_not_started"
     elif command_result.get("returncode") == 0:
         operation_status = "succeeded"
-        operation_reason = "SpecGraph real-idea answer continuation target executed"
+        operation_reason = "SpecGraph real-idea continuation target executed"
     operations = [
         {
             "name": "execute_specgraph_real_idea_answer_continuation",
             "status": operation_status,
             "reason": operation_reason,
-            "evidence": [REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET],
+            "evidence": [make_target],
         }
     ]
     report = {
@@ -7890,14 +8191,19 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         "started_at": started_at,
         "specgraph_dir": str(specgraph_dir),
         "run_dir": run_dir_ref,
+        "continuation_mode": continuation_mode,
         "execution_request_ref": getattr(args, "execution_request", None),
         "intake_execution_ref": getattr(args, "intake_execution", None),
         "answer_state_source_ref": answer_state_source_ref,
-        "answer_state_handoff_ref": f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json",
+        "answer_state_handoff_ref": (
+            f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json"
+            if answer_state_required
+            else None
+        ),
         "answer_state_explicit": answer_state_explicit,
         "answer_state_copied_to_run_dir": answer_state_copied_to_run_dir,
         "answer_state_source_digest": file_sha256(answer_source)
-        if answer_source.is_file()
+        if answer_state_required and answer_source.is_file()
         else None,
         "ok": ok,
         "dry_run": args.dry_run,
@@ -7914,12 +8220,23 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
             "publishes_private_artifacts": False,
         },
         "target_make": {
-            "target": REAL_IDEA_ANSWER_CONTINUATION_MAKE_TARGET,
+            "target": make_target,
             "cwd": str(specgraph_dir),
             "variables": {
                 "REAL_IDEA_SMOKE_RUN_DIR": run_dir_ref,
-                "SPECSPACE_REAL_IDEA_ANSWER_STATE": (
-                    f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json"
+                **(
+                    {
+                        "SPECSPACE_REAL_IDEA_ANSWER_STATE": (
+                            f"{run_dir_ref}/idea_to_spec_intake_clarification_answers.json"
+                        )
+                    }
+                    if answer_state_required
+                    else {}
+                ),
+                **(
+                    {"REAL_IDEA_ANSWER_CONTINUATION_WORKSPACE_ID": workspace_id}
+                    if workspace_id and not answer_state_required
+                    else {}
                 ),
             },
         },
@@ -7932,6 +8249,7 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
             "status": "completed" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
             "error_count": error_count,
             "output_artifact_count": len(output_records),
+            "continuation_mode": continuation_mode,
             "import_preview_digest": nested_mapping(
                 output_records,
                 "import_preview",
@@ -8157,6 +8475,7 @@ def real_idea_answer_continuation_execute_requested(args: argparse.Namespace) ->
     child_args = argparse.Namespace(
         specgraph_dir=str(specgraph_dir),
         run_dir=run_dir,
+        workspace_id=selected_workspace_id,
         answer_state=selected_answer_state,
         overwrite_answer_state=args.overwrite_answer_state,
         python=args.python,
@@ -19331,6 +19650,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "SpecGraph run directory containing the SpecSpace answer state and "
             "real-idea intake artifacts. Must resolve inside --specgraph-dir."
+        ),
+    )
+    real_idea_continuation_execute_parser.add_argument(
+        "--workspace-id",
+        help=(
+            "Optional workspace identity used to validate fallback-free "
+            "clarification templates."
         ),
     )
     real_idea_continuation_execute_parser.add_argument(

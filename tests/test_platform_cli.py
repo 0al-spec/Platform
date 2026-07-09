@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -2408,8 +2409,68 @@ real-idea-intake-continue-from-specspace-answers:
 \t@printf '%s\\n' '{"artifact_kind":"user_idea_intake_session","readiness":{"ready":true,"review_state":"ready_for_event_storming_intake"},"summary":{"status":"ready_for_event_storming_intake"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/clarified_user_idea_intake_session.json
 \t@printf '%s\\n' '{"artifact_kind":"intake_session_candidate_source_report","readiness":{"ready":true,"review_state":"candidate_source_ready"},"summary":{"status":"candidate_source_ready"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/intake_session_candidate_source_report.json
 \t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","readiness":{"ready":false,"review_state":"active_candidate_review_required"},"summary":{"status":"active_candidate_review_required","candidate_id":"idea-alpha"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json
+
+real-idea-intake-continue-without-answers:
+\t@mkdir -p $(REAL_IDEA_SMOKE_RUN_DIR)
+\t@printf '%s\\n' '{"artifact_kind":"intake_session_candidate_source_report","readiness":{"ready":true,"review_state":"candidate_source_ready"},"summary":{"status":"candidate_source_ready"},"authority_boundary":{"may_mutate_canonical_specs":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/intake_session_candidate_source_report.json
+\t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","readiness":{"ready":false,"review_state":"active_candidate_review_required"},"summary":{"status":"active_candidate_review_required","candidate_id":"idea-alpha"},"authority_boundary":{"may_mutate_canonical_specs":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
+
+    def write_no_clarification_template(
+        self,
+        run_dir: Path,
+        *,
+        workspace_id: str,
+    ) -> None:
+        requests = {
+            "artifact_kind": "idea_to_spec_clarification_requests",
+            "contract_ref": "specgraph.idea-to-spec.clarification-requests.v0.1",
+            "workspace_id": workspace_id,
+            "candidate_id": workspace_id,
+            "workspace": {"workspace_id": workspace_id, "candidate_id": workspace_id},
+            "clarification_outcome": "clarification_not_required",
+            "clarification_requests": [],
+            "readiness": {"ready": True, "review_state": "clarification_clear"},
+        }
+        encoded = json.dumps(
+            requests,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+        (run_dir / "idea_intake_clarification_requests.json").write_text(
+            json.dumps(requests),
+            encoding="utf-8",
+        )
+        (run_dir / "real_idea_answer_template.json").write_text(
+            json.dumps(
+                {
+                    "artifact_kind": "real_idea_answer_template",
+                    "contract_ref": (
+                        "specgraph.idea-to-spec.real-idea-answer-template.v0.2"
+                    ),
+                    "workspace_id": workspace_id,
+                    "candidate_id": workspace_id,
+                    "clarification_outcome": "clarification_not_required",
+                    "answer_targets": [],
+                    "source_artifacts": {
+                        "clarification_requests": {
+                            "source_ref": (
+                                f"runs/{run_dir.name}/"
+                                "idea_intake_clarification_requests.json"
+                            ),
+                            "source_digest": digest,
+                        }
+                    },
+                    "readiness": {
+                        "ready": True,
+                        "review_state": "clarification_not_required",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def write_real_idea_entry_intake_makefile(self, specgraph_dir: Path) -> None:
         makefile = """\
@@ -2566,7 +2627,8 @@ real-idea-intake-from-entry-request:
         path: Path,
         *,
         workspace_id: str = "pantry-rotation",
-        answer_state_ref: str = "specspace-state://idea_to_spec_intake_clarification_answers.json",
+        answer_state_ref: str | None = "specspace-state://idea_to_spec_intake_clarification_answers.json",
+        answer_template_ref: str = "runs/real_idea_smoke/real_idea_answer_template.json",
         workspace_initialization_ref: str = "runs/pantry-rotation/platform_product_workspace_initialization_execution_report.json",
         authority_expanded: bool = False,
     ) -> None:
@@ -2603,8 +2665,12 @@ real-idea-intake-from-entry-request:
                         {
                             "request_id": "real-idea-answer-continuation-execute.pantry-rotation.20260704.abcd12",
                             "workspace_id": workspace_id,
-                            "answer_state_ref": answer_state_ref,
-                            "answer_template_ref": "runs/real_idea_smoke/real_idea_answer_template.json",
+                            **(
+                                {"answer_state_ref": answer_state_ref}
+                                if answer_state_ref is not None
+                                else {}
+                            ),
+                            "answer_template_ref": answer_template_ref,
                             "intake_execution_ref": "runs/platform_real_idea_entry_intake_execution_report.json",
                             "workspace_initialization_ref": workspace_initialization_ref,
                             "status": "requested",
@@ -5382,6 +5448,275 @@ workspaces:
             )
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_real_idea_continuation_executes_no_clarification_target(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            run_dir = specgraph_dir / "runs" / "idea-alpha"
+            run_dir.mkdir(parents=True)
+            self.write_no_clarification_template(
+                run_dir,
+                workspace_id="idea-alpha",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--workspace-id",
+                "idea-alpha",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(
+                payload["continuation_mode"], "clarification_not_required"
+            )
+            self.assertEqual(
+                payload["target_make"]["target"],
+                "real-idea-intake-continue-without-answers",
+            )
+            self.assertNotIn(
+                "SPECSPACE_REAL_IDEA_ANSWER_STATE",
+                payload["target_make"]["variables"],
+            )
+            self.assertIsNone(payload["answer_state_handoff_ref"])
+            self.assertIsNone(payload["answer_state_source_ref"])
+            self.assertFalse(payload["output_artifacts"]["active_candidate"]["ready"])
+            self.assertEqual(
+                payload["summary"]["active_candidate_status"],
+                "active_candidate_review_required",
+            )
+
+    def test_product_real_idea_continuation_execute_requested_without_answer_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            run_dir = specgraph_dir / "runs" / "pantry-rotation"
+            run_dir.mkdir(parents=True)
+            self.write_no_clarification_template(
+                run_dir,
+                workspace_id="pantry-rotation",
+            )
+            initialization = (
+                root / "platform_product_workspace_initialization_execution_report.json"
+            )
+            self.write_workspace_initialization_execution_report(initialization)
+            self.write_real_idea_entry_intake_execution_report(
+                specgraph_dir
+                / "runs"
+                / "platform_real_idea_entry_intake_execution_report.json"
+            )
+            execution_request = (
+                root
+                / "specspace-state"
+                / "real_idea_answer_continuation_execution_requests.json"
+            )
+            self.write_real_idea_answer_continuation_execution_request_state(
+                execution_request,
+                answer_state_ref=None,
+                answer_template_ref=(
+                    "runs/pantry-rotation/real_idea_answer_template.json"
+                ),
+                workspace_initialization_ref=str(initialization),
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute-requested",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--execution-request",
+                str(execution_request),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(
+                payload["continuation_mode"],
+                "clarification_not_required",
+            )
+            self.assertIsNone(payload["answer_state_source_ref"])
+            self.assertIsNone(payload["answer_state_handoff_ref"])
+
+    def test_product_real_idea_continuation_blocks_foreign_no_clarification_template(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            run_dir = specgraph_dir / "runs" / "idea-alpha"
+            run_dir.mkdir(parents=True)
+            self.write_no_clarification_template(
+                run_dir,
+                workspace_id="foreign-idea",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--workspace-id",
+                "idea-alpha",
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertIn(
+                "real_idea_answer_template_workspace_mismatch",
+                {item["code"] for item in payload["diagnostics"]},
+            )
+
+    def test_product_real_idea_continuation_blocks_stale_no_clarification_source(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            run_dir = specgraph_dir / "runs" / "idea-alpha"
+            run_dir.mkdir(parents=True)
+            self.write_no_clarification_template(
+                run_dir,
+                workspace_id="idea-alpha",
+            )
+            requests_path = run_dir / "idea_intake_clarification_requests.json"
+            requests = json.loads(requests_path.read_text(encoding="utf-8"))
+            requests["clarification_outcome"] = "answers_required"
+            requests_path.write_text(json.dumps(requests), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--workspace-id",
+                "idea-alpha",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            codes = {item["code"] for item in payload["diagnostics"]}
+            self.assertIn(
+                "real_idea_no_clarification_source_digest_mismatch",
+                codes,
+            )
+            self.assertIn(
+                "real_idea_no_clarification_requests_not_clear",
+                codes,
+            )
+
+    def test_product_real_idea_continuation_blocks_foreign_no_clarification_source_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            run_dir = specgraph_dir / "runs" / "idea-alpha"
+            run_dir.mkdir(parents=True)
+            self.write_no_clarification_template(
+                run_dir,
+                workspace_id="idea-alpha",
+            )
+            template_path = run_dir / "real_idea_answer_template.json"
+            template = json.loads(template_path.read_text(encoding="utf-8"))
+            template["source_artifacts"]["clarification_requests"][
+                "source_ref"
+            ] = "runs/oldidea-alpha/idea_intake_clarification_requests.json"
+            template_path.write_text(json.dumps(template), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--workspace-id",
+                "idea-alpha",
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertIn(
+                "real_idea_no_clarification_source_ref_mismatch",
+                {item["code"] for item in payload["diagnostics"]},
+            )
+
+    def test_product_real_idea_continuation_rejects_no_clarification_top_level_authority(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_answer_continuation_makefile(specgraph_dir)
+            makefile_path = specgraph_dir / "Makefile"
+            makefile = makefile_path.read_text(encoding="utf-8")
+            makefile = makefile.replace(
+                '"summary":{"status":"candidate_source_ready"},"authority_boundary"',
+                '"summary":{"status":"candidate_source_ready"},'
+                '"canonical_mutations_allowed":true,"authority_boundary"',
+                1,
+            )
+            makefile_path.write_text(makefile, encoding="utf-8")
+            run_dir = specgraph_dir / "runs" / "idea-alpha"
+            run_dir.mkdir(parents=True)
+            self.write_no_clarification_template(
+                run_dir,
+                workspace_id="idea-alpha",
+            )
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--run-dir",
+                "runs/idea-alpha",
+                "--workspace-id",
+                "idea-alpha",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertIn(
+                "real_idea_no_clarification_output_authority_expanded",
+                {item["code"] for item in payload["diagnostics"]},
+            )
 
     def test_product_real_idea_continuation_execute_requested_uses_specspace_request(
         self,

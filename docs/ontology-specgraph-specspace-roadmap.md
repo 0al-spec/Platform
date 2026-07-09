@@ -255,11 +255,11 @@ The current execution order is:
    state, failed operations, blocking clarification/repair, structural-depth
    improvement, approval, promotion, and publication without creating execution
    authority.
-2. **Fallback-free real idea clarification.** SpecGraph should emit
-   browser-answerable answer templates, or an explicit
-   `clarification_not_required` state, so the local product demo no longer
-   needs deterministic clarification fallback fixtures to become a useful
-   product proof.
+2. **Fallback-free real idea clarification.** Implemented across SpecGraph,
+   SpecSpace, and Platform. Workspace-bound templates now expose
+   `answers_required`, `clarification_not_required`, or
+   `clarification_blocked`; Platform can continue a trusted no-answer outcome
+   through a fixed SpecGraph target without inventing an answer set.
 3. **Durable workspace binding.** Workspace creation and initialization should
    produce a durable binding across workspace id, display name, artifact base,
    SpecSpace state namespace, run directory, and repository/worktree identity.
