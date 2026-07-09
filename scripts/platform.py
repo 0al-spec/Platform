@@ -5585,6 +5585,40 @@ def product_repair_rerun_plan(args: argparse.Namespace) -> int:
         expected_kind=PRODUCT_REPAIR_RERUN_GATE_KIND,
     )
     source_artifacts.append(gate_status)
+    workspace_binding_context = None
+    binding_diagnostics: list[Diagnostic] = []
+    if getattr(args, "workspace_initialization", None):
+        initialization_path = input_path_arg_or_existing(
+            args.workspace_initialization,
+            base_dir=specgraph_dir,
+        )
+        expected_workspace_id = nested_mapping(
+            request_gate or {}, "summary"
+        ).get("workspace_id")
+        workspace_binding_context, binding_diagnostics = (
+            managed_product_workspace_binding_context(
+                report_path=initialization_path,
+                specgraph_dir=specgraph_dir,
+                expected_workspace_id=(
+                    expected_workspace_id
+                    if isinstance(expected_workspace_id, str)
+                    else None
+                ),
+            )
+        )
+        if (
+            workspace_binding_context is not None
+            and run_dir_ref
+            != workspace_binding_context.get("platform_default_run_dir_ref")
+        ):
+            binding_diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_workspace_binding_run_dir_mismatch",
+                    subject="run_dir",
+                    message="repair rerun run-dir must match the durable workspace binding",
+                )
+            )
     plan, diagnostics = build_product_repair_rerun_execution_plan(
         deployment_profile_path=deployment_profile_path,
         deployment_profile=deployment_profile,
@@ -5600,6 +5634,7 @@ def product_repair_rerun_plan(args: argparse.Namespace) -> int:
         request_gate=request_gate,
         source_artifacts=source_artifacts,
     )
+    plan["workspace_binding"] = workspace_binding_context
     diagnostics = [
         *preflight_diagnostics,
         *diagnostics,
@@ -5607,6 +5642,7 @@ def product_repair_rerun_plan(args: argparse.Namespace) -> int:
         *import_diagnostics,
         *repair_diagnostics,
         *gate_diagnostics,
+        *binding_diagnostics,
     ]
     if diagnostics:
         plan["diagnostics"] = [asdict(diagnostic) for diagnostic in diagnostics]
@@ -5924,6 +5960,20 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
         code_prefix="product_repair_rerun_request_gate",
         subject="specgraph_dir",
     )
+    workspace_binding_context = None
+    if getattr(args, "workspace_initialization", None):
+        initialization_path = input_path_arg_or_existing(
+            args.workspace_initialization,
+            base_dir=specgraph_dir,
+        )
+        workspace_binding_context, binding_diagnostics = (
+            managed_product_workspace_binding_context(
+                report_path=initialization_path,
+                specgraph_dir=specgraph_dir,
+                expected_workspace_id=args.workspace_id,
+            )
+        )
+        diagnostics.extend(binding_diagnostics)
     request_state_path = input_path_arg_or_existing(
         args.rerun_request,
         base_dir=specgraph_dir,
@@ -5984,15 +6034,36 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
     output_ref = path_ref_for_make(output_path, base_dir=specgraph_dir)
 
     request_state_copied_to_run_dir = False
-    if args.run_dir:
+    selected_run_dir = args.run_dir or (
+        workspace_binding_context.get("platform_default_run_dir_ref")
+        if isinstance(workspace_binding_context, dict)
+        else None
+    )
+    if selected_run_dir:
         run_dir_resolution = resolve_run_dir(
             specgraph_dir=specgraph_dir,
-            raw=args.run_dir,
+            raw=selected_run_dir,
             code_prefix="product_repair_rerun_request_gate",
         )
         run_dir = run_dir_resolution.path
-        run_dir_ref = run_dir_resolution.ref or str(Path(args.run_dir))
+        run_dir_ref = run_dir_resolution.ref or str(Path(selected_run_dir))
         diagnostics.extend(run_dir_resolution.diagnostics)
+        if (
+            workspace_binding_context is not None
+            and run_dir_ref
+            != workspace_binding_context.get("platform_default_run_dir_ref")
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code=(
+                        "product_repair_rerun_request_gate_workspace_binding_"
+                        "run_dir_mismatch"
+                    ),
+                    subject="run_dir",
+                    message="repair request gate run directory must match the durable workspace binding",
+                )
+            )
         request_state_path = run_dir / "idea_to_spec_repair_rerun_requests.json"
         request_state_ref = f"{run_dir_ref}/idea_to_spec_repair_rerun_requests.json"
         if not diagnostics and not args.dry_run:
@@ -6120,6 +6191,7 @@ def product_repair_rerun_request_gate(args: argparse.Namespace) -> int:
         "rerun_request_ref": request_state_ref,
         "import_preview_ref": import_preview_ref,
         "repair_session_ref": repair_session_ref,
+        "workspace_binding": workspace_binding_context,
         "ok": ok,
         "dry_run": args.dry_run,
         "canonical_mutations_allowed": False,
@@ -6260,6 +6332,17 @@ def product_repair_plan_diagnostics(plan: dict[str, Any]) -> list[Diagnostic]:
                     message=f"{field} must remain false",
                 )
             )
+    binding_context = nested_mapping(plan, "workspace_binding")
+    if binding_context:
+        diagnostics.extend(
+            managed_product_workspace_binding_context_diagnostics(
+                binding_context,
+                expected_workspace_id=nested_mapping(plan, "summary").get(
+                    "workspace_id"
+                ),
+                subject_prefix="plan.workspace_binding",
+            )
+        )
     return diagnostics
 
 
@@ -6627,24 +6710,174 @@ def real_idea_entry_intake_workspace_initialization_binding(
                     message="workspace initialization must not claim downstream Git/Ontology/spec authority",
                 )
             )
-    workspace_root_value = workspace.get("workspace_root")
-    if not isinstance(workspace_root_value, str):
-        workspace_root_value = report.get("workspace_root")
-        if not isinstance(workspace_root_value, str):
-            workspace_root_value = None
+    durable_binding = nested_mapping(report, "workspace_binding")
+    diagnostics.extend(
+        product_workspace_binding_diagnostics(
+            durable_binding,
+            expected_workspace_id=(
+                workspace_id if isinstance(workspace_id, str) else None
+            ),
+            require_ready=True,
+            subject_prefix="workspace_initialization.workspace_binding",
+        )
+    )
     binding = {
+        **durable_binding,
         "source_ref": str(report_path),
         "source_digest": file_sha256(report_path) if report_path.is_file() else None,
         "workspace_id": workspace_id if isinstance(workspace_id, str) else None,
-        "display_name": workspace.get("display_name") if isinstance(workspace.get("display_name"), str) else None,
-        "route": workspace.get("route") if isinstance(workspace.get("route"), str) else None,
-        "workspace_root": workspace_root_value,
+        "display_name": (
+            workspace.get("display_name")
+            if isinstance(workspace.get("display_name"), str)
+            else None
+        ),
+        "route": (
+            workspace.get("route")
+            if isinstance(workspace.get("route"), str)
+            else None
+        ),
+        "workspace_root": nested_mapping(durable_binding, "execution").get(
+            "workspace_root"
+        ),
         "catalog_ref": report.get("catalog_ref") if isinstance(report.get("catalog_ref"), str) else None,
-        "specgraph_initialization_report_ref": report.get("specgraph_initialization_report_ref")
-        if isinstance(report.get("specgraph_initialization_report_ref"), str)
-        else None,
     }
     return binding, diagnostics
+
+
+def managed_product_workspace_binding_context(
+    *,
+    report_path: Path | None,
+    specgraph_dir: Path,
+    expected_workspace_id: str | None,
+) -> tuple[dict[str, Any] | None, list[Diagnostic]]:
+    binding, diagnostics = real_idea_entry_intake_workspace_initialization_binding(
+        report_path=report_path,
+        selected_workspace_id=expected_workspace_id,
+    )
+    if binding is None:
+        return None, diagnostics
+    source_ref: str | None = None
+    if report_path is not None:
+        try:
+            source_ref = report_path.resolve().relative_to(specgraph_dir).as_posix()
+        except ValueError:
+            source_ref = None
+    identity = nested_mapping(binding, "identity")
+    routing = nested_mapping(binding, "routing")
+    execution = nested_mapping(binding, "execution")
+    repository = nested_mapping(binding, "repository")
+    provenance = nested_mapping(binding, "provenance")
+    return {
+        "contract_ref": binding.get("contract_ref"),
+        "binding_id": binding.get("binding_id"),
+        "binding_revision_sha256": binding.get("binding_revision_sha256"),
+        "status": binding.get("status"),
+        "source_ref": source_ref,
+        "source_sha256": binding.get("source_digest"),
+        "workspace_id": identity.get("workspace_id"),
+        "display_name": identity.get("display_name"),
+        "route": identity.get("route"),
+        "repository_role": identity.get("repository_role"),
+        "specspace_state_namespace_ref": routing.get(
+            "specspace_state_namespace_ref"
+        ),
+        "platform_default_run_dir_ref": execution.get(
+            "platform_default_run_dir_ref"
+        ),
+        "product_artifact_bundle_ref": routing.get(
+            "product_artifact_bundle_ref"
+        ),
+        "product_artifact_manifest_ref": routing.get(
+            "product_artifact_manifest_ref"
+        ),
+        "repository": {
+            "workspace_identity": repository.get("workspace_identity"),
+            "worktree_identity": repository.get("worktree_identity"),
+            "creates_worktree": repository.get("creates_worktree") is True,
+        },
+        "provenance": {
+            "plan_sha256": provenance.get("plan_sha256"),
+            "specgraph_initialization_report_sha256": provenance.get(
+                "specgraph_initialization_report_sha256"
+            ),
+        },
+        "authority_boundary": {
+            "report_only": True,
+            "may_execute_platform": False,
+            "may_execute_specgraph": False,
+            "may_create_git_commit": False,
+            "may_open_pull_request": False,
+            "may_publish_read_model": False,
+        },
+    }, diagnostics
+
+
+def managed_product_workspace_binding_context_diagnostics(
+    context: dict[str, Any],
+    *,
+    expected_workspace_id: str | None,
+    subject_prefix: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+
+    def error(code: str, subject: str, message: str) -> None:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=code,
+                subject=f"{subject_prefix}.{subject}",
+                message=message,
+            )
+        )
+
+    if context.get("contract_ref") != PRODUCT_WORKSPACE_BINDING_CONTRACT_REF:
+        error(
+            "managed_workspace_binding_contract_mismatch",
+            "contract_ref",
+            "managed operation binding context must use the supported contract",
+        )
+    workspace_id = context.get("workspace_id")
+    if (
+        not isinstance(workspace_id, str)
+        or workspace_id != expected_workspace_id
+    ):
+        error(
+            "managed_workspace_binding_workspace_mismatch",
+            "workspace_id",
+            "managed operation binding context must match the selected workspace",
+        )
+    if context.get("binding_id") != (
+        f"product-workspace-binding://{workspace_id}"
+        if isinstance(workspace_id, str)
+        else None
+    ):
+        error(
+            "managed_workspace_binding_id_mismatch",
+            "binding_id",
+            "managed operation binding id must match workspace identity",
+        )
+    if context.get("status") != "ready":
+        error(
+            "managed_workspace_binding_not_ready",
+            "status",
+            "managed operation binding context must be ready",
+        )
+    if not isinstance(context.get("source_sha256"), str) or not re.fullmatch(
+        r"[0-9a-f]{64}", str(context.get("source_sha256") or "")
+    ):
+        error(
+            "managed_workspace_binding_source_digest_invalid",
+            "source_sha256",
+            "managed operation binding context must pin its initialization report",
+        )
+    for key, value in nested_mapping(context, "authority_boundary").items():
+        if key.startswith("may_") and value is not False:
+            error(
+                "managed_workspace_binding_authority_expanded",
+                f"authority_boundary.{key}",
+                "managed operation binding context must remain report-only",
+            )
+    return diagnostics
 
 
 REAL_IDEA_INTAKE_EXECUTION_REQUEST_FALSE_FIELDS: frozenset[str] = frozenset(
@@ -7926,6 +8159,7 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
         "started_at": execution_started_at,
         "plan_ref": str(plan_path),
         "specgraph_dir": str(specgraph_dir),
+        "workspace_binding": plan.get("workspace_binding"),
         "ok": ok,
         "dry_run": args.dry_run,
         "canonical_mutations_allowed": False,
@@ -8509,16 +8743,39 @@ def real_idea_entry_intake_execute(args: argparse.Namespace) -> int:
     )
     diagnostics.extend(workspace_binding_diagnostics)
     effective_workspace_id = args.workspace_id or (
-        workspace_binding.get("workspace_id")
+        nested_mapping(workspace_binding, "identity").get("workspace_id")
         if isinstance(workspace_binding, dict)
-        and isinstance(workspace_binding.get("workspace_id"), str)
+        and isinstance(
+            nested_mapping(workspace_binding, "identity").get("workspace_id"),
+            str,
+        )
+        else None
+    )
+    bound_run_dir_ref = (
+        nested_mapping(workspace_binding, "execution").get(
+            "platform_default_run_dir_ref"
+        )
+        if isinstance(workspace_binding, dict)
         else None
     )
     raw_run_dir_value = args.run_dir or (
-        f"runs/{effective_workspace_id}"
-        if effective_workspace_id and workspace_initialization_path is not None
+        bound_run_dir_ref
+        if isinstance(bound_run_dir_ref, str) and bound_run_dir_ref
         else "runs/real_idea_smoke"
     )
+    if (
+        args.run_dir
+        and isinstance(bound_run_dir_ref, str)
+        and Path(args.run_dir).as_posix() != Path(bound_run_dir_ref).as_posix()
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_entry_intake_run_dir_binding_mismatch",
+                subject="run_dir",
+                message="explicit run-dir must match the durable workspace binding",
+            )
+        )
     raw_run_dir = Path(raw_run_dir_value)
     run_dir = (
         raw_run_dir.resolve()
@@ -10356,6 +10613,25 @@ def product_candidate_approval_gate_report_from_args(
         if intent_state is not None
         else None
     )
+    workspace_binding_context = None
+    binding_diagnostics: list[Diagnostic] = []
+    if getattr(args, "workspace_initialization", None):
+        initialization_path = input_path_arg_or_existing(
+            args.workspace_initialization,
+            base_dir=specgraph_dir,
+        )
+        expected_workspace_id = (selected_intent or {}).get("workspace_id")
+        workspace_binding_context, binding_diagnostics = (
+            managed_product_workspace_binding_context(
+                report_path=initialization_path,
+                specgraph_dir=specgraph_dir,
+                expected_workspace_id=(
+                    expected_workspace_id
+                    if isinstance(expected_workspace_id, str)
+                    else args.workspace_id
+                ),
+            )
+        )
     report, diagnostics = build_product_candidate_approval_gate_report(
         deployment_profile_path=deployment_profile_path,
         deployment_profile=deployment_profile,
@@ -10400,8 +10676,10 @@ def product_candidate_approval_gate_report_from_args(
             *repaired_handoff_diagnostics,
             *execution_diagnostics,
             *publication_diagnostics,
+            *binding_diagnostics,
         ],
     )
+    report["workspace_binding"] = workspace_binding_context
     return report, diagnostics, output_path, specgraph_dir
 
 
@@ -10479,6 +10757,17 @@ def product_candidate_approval_gate_report_diagnostics(
             code="product_candidate_approval_gate_authority_expanded",
         )
     )
+    binding_context = nested_mapping(report, "workspace_binding")
+    if binding_context:
+        diagnostics.extend(
+            managed_product_workspace_binding_context_diagnostics(
+                binding_context,
+                expected_workspace_id=nested_mapping(report, "summary").get(
+                    "workspace_id"
+                ),
+                subject_prefix="gate_report.workspace_binding",
+            )
+        )
     authority = nested_mapping(report, "authority_boundary")
     for key, value in sorted(authority.items()):
         if value is not False:
@@ -10552,6 +10841,7 @@ def build_candidate_approval_decision(
         "canonical_mutations_allowed": False,
         "ontology_writes_allowed": False,
         "tracked_artifacts_written": False,
+        "workspace_binding": gate_report.get("workspace_binding"),
         "workspace": {
             "workspace_id": workspace_id,
             "mode": "product_idea_to_spec",
@@ -12044,6 +12334,15 @@ def product_candidate_promotion_decision_diagnostics(
                 message="candidate approval must include approved promotion paths",
             )
         )
+    binding_context = nested_mapping(approval_decision, "workspace_binding")
+    if binding_context:
+        diagnostics.extend(
+            managed_product_workspace_binding_context_diagnostics(
+                binding_context,
+                expected_workspace_id=str(workspace.get("workspace_id") or ""),
+                subject_prefix="approval_decision.workspace_binding",
+            )
+        )
     return diagnostics
 
 
@@ -12129,6 +12428,15 @@ def product_candidate_promotion_request_execution_diagnostics(
                     message=f"{field} must be exactly false before execution",
                 )
             )
+    binding_context = nested_mapping(promotion_request, "workspace_binding")
+    if binding_context:
+        diagnostics.extend(
+            managed_product_workspace_binding_context_diagnostics(
+                binding_context,
+                expected_workspace_id=str(promotion_request.get("workspace_id") or ""),
+                subject_prefix="promotion_request.workspace_binding",
+            )
+        )
     return diagnostics
 
 
@@ -12249,6 +12557,7 @@ def build_graph_repository_promotion_request_payload(
     plan_path: Path,
     plan: dict[str, Any],
     contract: dict[str, Any],
+    workspace_id: str,
     candidate_id: str,
     paths: list[str],
     title: str,
@@ -12280,6 +12589,7 @@ def build_graph_repository_promotion_request_payload(
         "deployment_profile_id": deployment_profile_id,
         "target_repository_role": target_repository_role,
         "authority_profile": authority_profile,
+        "workspace_id": workspace_id,
         "candidate_id": candidate_id,
         "candidate_branch": branch_name,
         "commit_paths": paths if error_count == 0 else [],
@@ -12340,6 +12650,7 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
     decision = nested_mapping(approval_decision, "decision")
     promotion_request = nested_mapping(approval_decision, "promotion_request")
     candidate_id = str(candidate.get("candidate_id") or "")
+    workspace_id = str(workspace.get("workspace_id") or "")
     paths = string_list(promotion_request.get("paths"))
     branch_name = graph_repository_candidate_branch(contract, candidate_id)
     display_name = str(candidate.get("display_name") or candidate_id).strip()
@@ -12362,6 +12673,47 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
     )
     deployment_profile_id = args.deployment_profile_id
     authority_profile = args.authority_profile
+    decision_binding_context = nested_mapping(
+        approval_decision, "workspace_binding"
+    )
+    workspace_binding_context = decision_binding_context or None
+    binding_diagnostics: list[Diagnostic] = []
+    if getattr(args, "workspace_initialization", None):
+        initialization_path = Path(args.workspace_initialization).resolve()
+        specgraph_dir = plan_path.resolve().parent
+        for parent in plan_path.resolve().parents:
+            if parent.name == "runs":
+                specgraph_dir = parent.parent
+                break
+        loaded_context, binding_diagnostics = (
+            managed_product_workspace_binding_context(
+                report_path=initialization_path,
+                specgraph_dir=specgraph_dir,
+                expected_workspace_id=workspace_id,
+            )
+        )
+        if (
+            decision_binding_context
+            and loaded_context is not None
+            and decision_binding_context != loaded_context
+        ):
+            binding_diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_workspace_binding_mismatch",
+                    subject="workspace_binding",
+                    message="approval decision binding must match the selected initialization report",
+                )
+            )
+        workspace_binding_context = loaded_context
+    if workspace_binding_context:
+        binding_diagnostics.extend(
+            managed_product_workspace_binding_context_diagnostics(
+                workspace_binding_context,
+                expected_workspace_id=workspace_id,
+                subject_prefix="workspace_binding",
+            )
+        )
     diagnostics = [
         *product_candidate_promotion_decision_diagnostics(approval_decision),
         *product_candidate_promotion_plan_source_diagnostics(
@@ -12378,11 +12730,13 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
             title=title,
             body=body,
         ),
+        *binding_diagnostics,
     ]
     provisional_request = build_graph_repository_promotion_request_payload(
         plan_path=plan_path,
         plan=plan,
         contract=contract,
+        workspace_id=workspace_id,
         candidate_id=candidate_id,
         paths=paths,
         title=title,
@@ -12411,6 +12765,7 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
         plan_path=plan_path,
         plan=plan,
         contract=contract,
+        workspace_id=workspace_id,
         candidate_id=candidate_id,
         paths=paths,
         title=title,
@@ -12424,6 +12779,7 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         diagnostics=diagnostics,
     )
+    request["workspace_binding"] = workspace_binding_context
     error_count = request["summary"]["error_count"]
     if error_count == 0 and not args.dry_run:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -12782,6 +13138,8 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
         "dry_run": args.dry_run,
         "open_review_dry_run": args.open_review_dry_run,
         "workflow_lane": promotion_request.get("workflow_lane"),
+        "workspace_binding": promotion_request.get("workspace_binding"),
+        "workspace_id": promotion_request.get("workspace_id"),
         "candidate_id": candidate_id,
         "candidate_branch": promotion_request.get("candidate_branch"),
         "repository_dir": str(repository_dir),
@@ -13030,6 +13388,19 @@ def product_candidate_promotion_execution_report_diagnostics(
                     message=f"{field} must be exactly false before review status",
                 )
             )
+    binding_context = nested_mapping(execution_report, "workspace_binding")
+    if binding_context:
+        diagnostics.extend(
+            managed_product_workspace_binding_context_diagnostics(
+                binding_context,
+                expected_workspace_id=str(
+                    execution_report.get("workspace_id")
+                    or execution_report.get("candidate_id")
+                    or ""
+                ),
+                subject_prefix="execution_report.workspace_binding",
+            )
+        )
     return diagnostics
 
 
@@ -13123,6 +13494,19 @@ def product_candidate_promotion_review_status_report_diagnostics(
                     message=f"{field} must be exactly false before read-model publish",
                 )
             )
+    binding_context = nested_mapping(review_status_report, "workspace_binding")
+    if binding_context:
+        diagnostics.extend(
+            managed_product_workspace_binding_context_diagnostics(
+                binding_context,
+                expected_workspace_id=str(
+                    review_status_report.get("workspace_id")
+                    or review_status_report.get("candidate_id")
+                    or ""
+                ),
+                subject_prefix="review_status_report.workspace_binding",
+            )
+        )
     return diagnostics
 
 
@@ -13245,6 +13629,8 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         else str(graph_repository_report_path),
         "ok": ok,
         "workflow_lane": execution_report.get("workflow_lane"),
+        "workspace_binding": execution_report.get("workspace_binding"),
+        "workspace_id": execution_report.get("workspace_id"),
         "candidate_id": execution_report.get("candidate_id"),
         "candidate_branch": execution_report.get("candidate_branch"),
         "workspace_dir": str(workspace_dir),
@@ -13443,6 +13829,8 @@ def product_candidate_promotion_publish_read_model(
         "ok": ok,
         "dry_run": args.dry_run,
         "workflow_lane": review_status_report.get("workflow_lane"),
+        "workspace_binding": review_status_report.get("workspace_binding"),
+        "workspace_id": review_status_report.get("workspace_id"),
         "candidate_id": review_status_report.get("candidate_id"),
         "candidate_branch": review_status_report.get("candidate_branch"),
         "review_state": review_status_report.get("review_state"),
@@ -15236,6 +15624,8 @@ PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_REQUEST_KIND = (
 PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_KIND = (
     "platform_product_workspace_initialization_execution_report"
 )
+PRODUCT_WORKSPACE_BINDING_KIND = "platform_product_workspace_binding"
+PRODUCT_WORKSPACE_BINDING_CONTRACT_REF = "platform.product-workspace.binding.v1"
 
 
 def product_workspace_creation_boundary() -> dict[str, Any]:
@@ -15555,6 +15945,7 @@ def build_product_workspace_initialization_report(
         )
     workspace_binding = product_workspace_initialization_binding(
         workspace_id=workspace_id,
+        display_name=display_name,
         route=request.get("route") if isinstance(request, dict) else None,
         workspace_root=workspace_root,
         governance_profile=governance_profile,
@@ -15732,6 +16123,16 @@ def product_workspace_plan_diagnostics(
                     message="initialization plan must be report-only before execution",
                 )
             )
+    workspace_id = nested_mapping(plan, "workspace").get("workspace_id")
+    diagnostics.extend(
+        product_workspace_binding_diagnostics(
+            nested_mapping(plan, "workspace_binding"),
+            expected_workspace_id=(
+                workspace_id if isinstance(workspace_id, str) else None
+            ),
+            subject_prefix="plan.workspace_binding",
+        )
+    )
     return diagnostics
 
 
@@ -15985,6 +16386,27 @@ def product_workspace_initialization_execution_request_diagnostics(
                 message="execution request workspace must match the selected plan workspace",
             )
         )
+    request_binding = nested_mapping(request, "workspace_binding")
+    diagnostics.extend(
+        product_workspace_binding_diagnostics(
+            request_binding,
+            expected_workspace_id=(
+                request_workspace_id
+                if isinstance(request_workspace_id, str)
+                else None
+            ),
+            subject_prefix="execution_request.workspace_binding",
+        )
+    )
+    if request_binding != nested_mapping(plan, "workspace_binding"):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_workspace_initialization_execution_request_binding_mismatch",
+                subject="execution_request.workspace_binding",
+                message="execution request workspace binding must match the pinned plan binding",
+            )
+        )
     return diagnostics
 
 
@@ -16153,13 +16575,39 @@ def build_product_workspace_initialization_execution_report(
     diagnostics: list[Diagnostic],
 ) -> dict[str, Any]:
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
+    binding_status = (
+        "ready"
+        if error_count == 0 and specgraph_executed and catalog_written and not dry_run
+        else "dry_run"
+        if error_count == 0 and dry_run
+        else "blocked"
+    )
+    resolved_plan_ref = (
+        None
+        if plan_ref == ""
+        else plan_ref
+        if plan_ref is not None
+        else str(plan_path)
+    )
     workspace_binding = product_workspace_initialization_binding(
         workspace_id=workspace.get("workspace_id"),
+        display_name=workspace.get("display_name"),
         route=f"/{workspace.get('workspace_id') or ''}",
         workspace_root=workspace_root,
         governance_profile=workspace.get("governance_profile") or "product_workspace",
         artifact_base_url=artifact_base_url,
         product_artifact_base_url=product_artifact_base_url,
+        status=binding_status,
+        plan_ref=resolved_plan_ref,
+        plan_sha256=file_sha256(plan_path) if plan_path.is_file() else None,
+        specgraph_initialization_report_ref=(
+            str(specgraph_report_path) if specgraph_report_path is not None else None
+        ),
+        specgraph_initialization_report_sha256=(
+            file_sha256(specgraph_report_path)
+            if specgraph_report_path is not None and specgraph_report_path.is_file()
+            else None
+        ),
     )
     return {
         "artifact_kind": PRODUCT_WORKSPACE_INITIALIZATION_EXECUTION_KIND,
@@ -16167,11 +16615,7 @@ def build_product_workspace_initialization_execution_report(
         "generated_at": utc_now_iso(),
         "ok": error_count == 0,
         "dry_run": dry_run,
-        "plan_ref": None
-        if plan_ref == ""
-        else plan_ref
-        if plan_ref is not None
-        else str(plan_path),
+        "plan_ref": resolved_plan_ref,
         "execution_request_ref": (
             str(execution_request_path)
             if execution_request_path is not None
@@ -16346,6 +16790,12 @@ def workspace_execute_initialization_plan(args: argparse.Namespace) -> int:
                                 message="SpecGraph initialization report is not ready",
                             )
                         )
+                    diagnostics.extend(
+                        specgraph_workspace_binding_evidence_diagnostics(
+                            specgraph_report,
+                            expected_workspace_id=workspace["workspace_id"],
+                        )
+                    )
         if (
             sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR") == 0
             and entry is not None
@@ -16501,6 +16951,156 @@ def report_findings_to_diagnostics(report: dict[str, Any]) -> list[Diagnostic]:
     return diagnostics
 
 
+def specgraph_workspace_binding_evidence_diagnostics(
+    report: dict[str, Any],
+    *,
+    expected_workspace_id: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    evidence = nested_mapping(report, "workspace_binding_evidence")
+
+    def error(code: str, subject: str, message: str) -> None:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=code,
+                subject=f"specgraph_report.workspace_binding_evidence.{subject}",
+                message=message,
+            )
+        )
+
+    if evidence.get("contract_ref") != (
+        "specgraph.product-workspace.binding-evidence.v0.1"
+    ):
+        error(
+            "product_workspace_binding_specgraph_contract_mismatch",
+            "contract_ref",
+            "SpecGraph initialization must provide supported workspace binding evidence",
+        )
+        return diagnostics
+    if evidence.get("status") != "ready":
+        error(
+            "product_workspace_binding_specgraph_evidence_not_ready",
+            "status",
+            "SpecGraph workspace binding evidence must be ready",
+        )
+    identity = nested_mapping(evidence, "identity")
+    if identity.get("workspace_id") != expected_workspace_id:
+        error(
+            "product_workspace_binding_specgraph_workspace_mismatch",
+            "identity.workspace_id",
+            "SpecGraph binding evidence workspace must match the initialization plan",
+        )
+    if identity.get("repository_role") != "product_spec_workspace":
+        error(
+            "product_workspace_binding_specgraph_repository_role_mismatch",
+            "identity.repository_role",
+            "SpecGraph binding evidence must describe a product_spec_workspace",
+        )
+    layout = nested_mapping(evidence, "layout")
+    expected_layout = {
+        "root_reference": "workspace_relative",
+        "project_config_ref": "specgraph.project.yaml",
+        "specs_root_ref": "specs",
+        "proposals_root_ref": "docs/proposals",
+        "runs_root_ref": "runs",
+        "supervisor_state_root_ref": ".specgraph",
+    }
+    for field, expected in expected_layout.items():
+        if layout.get(field) != expected:
+            error(
+                "product_workspace_binding_specgraph_layout_mismatch",
+                f"layout.{field}",
+                f"SpecGraph binding evidence {field} must be {expected!r}",
+            )
+    project_config = nested_mapping(evidence, "project_config")
+    if project_config.get("source_ref") != "specgraph.project.yaml":
+        error(
+            "product_workspace_binding_specgraph_config_ref_mismatch",
+            "project_config.source_ref",
+            "SpecGraph binding evidence must use the workspace-relative project config ref",
+        )
+    config_digest = project_config.get("source_sha256")
+    if not isinstance(config_digest, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", config_digest
+    ):
+        error(
+            "product_workspace_binding_specgraph_config_digest_invalid",
+            "project_config.source_sha256",
+            "SpecGraph binding evidence must pin the project config digest",
+        )
+    repository = nested_mapping(evidence, "repository")
+    if (
+        repository.get("repository_role") != "product_spec_workspace"
+        or repository.get("workspace_identity") != expected_workspace_id
+        or repository.get("worktree_identity")
+        != f"product-workspace/{expected_workspace_id}"
+        or repository.get("creates_worktree") is not False
+    ):
+        error(
+            "product_workspace_binding_specgraph_repository_identity_mismatch",
+            "repository",
+            "SpecGraph repository identity hints must match the initialized workspace",
+        )
+    privacy = nested_mapping(evidence, "privacy_boundary")
+    for field, expected in (
+        ("workspace_relative_refs_only", True),
+        ("local_input_path_persisted", False),
+        ("raw_root_intent_published", False),
+    ):
+        if privacy.get(field) is not expected:
+            error(
+                "product_workspace_binding_specgraph_privacy_invalid",
+                f"privacy_boundary.{field}",
+                "SpecGraph binding evidence must keep local paths and raw intent private",
+            )
+    authority = nested_mapping(evidence, "authority_boundary")
+    if authority.get("report_only") is not True:
+        error(
+            "product_workspace_binding_specgraph_authority_expanded",
+            "authority_boundary.report_only",
+            "SpecGraph binding evidence must be report-only",
+        )
+    for field in (
+        "may_execute_platform",
+        "may_mutate_canonical_specs",
+        "may_write_ontology_packages",
+        "may_accept_ontology_terms",
+        "may_create_git_commit",
+        "may_open_pull_request",
+    ):
+        if authority.get(field) is not False:
+            error(
+                "product_workspace_binding_specgraph_authority_expanded",
+                f"authority_boundary.{field}",
+                "SpecGraph binding evidence must not grant mutation authority",
+            )
+    for key, value in authority.items():
+        if key.startswith("may_") and value is not False:
+            error(
+                "product_workspace_binding_specgraph_authority_expanded",
+                f"authority_boundary.{key}",
+                "SpecGraph binding evidence must not grant mutation authority",
+            )
+    actual_digest = evidence.get("evidence_sha256")
+    digest_payload = dict(evidence)
+    digest_payload.pop("evidence_sha256", None)
+    expected_digest = hashlib.sha256(
+        json.dumps(
+            digest_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if actual_digest != expected_digest:
+        error(
+            "product_workspace_binding_specgraph_evidence_digest_mismatch",
+            "evidence_sha256",
+            "SpecGraph workspace binding evidence digest does not match its content",
+        )
+    return diagnostics
+
+
 def build_catalog_entry(
     *,
     project_id: str,
@@ -16530,11 +17130,17 @@ def build_catalog_entry(
 def product_workspace_initialization_binding(
     *,
     workspace_id: str | None,
+    display_name: str | None = None,
     route: str | None,
     workspace_root: Path,
     governance_profile: str,
     artifact_base_url: str | None = None,
     product_artifact_base_url: str | None = None,
+    status: str = "planned",
+    plan_ref: str | None = None,
+    plan_sha256: str | None = None,
+    specgraph_initialization_report_ref: str | None = None,
+    specgraph_initialization_report_sha256: str | None = None,
 ) -> dict[str, Any]:
     workspace_id_value = workspace_id if isinstance(workspace_id, str) else None
     workspace_bundle_ref = (
@@ -16556,9 +17162,124 @@ def product_workspace_initialization_binding(
         if root_artifact_base_url is not None and workspace_id_value is not None
         else None
     )
-    return {
+    route_value = route if isinstance(route, str) else None
+    display_name_value = (
+        display_name.strip()
+        if isinstance(display_name, str) and display_name.strip()
+        else workspace_id_value
+    )
+    logical_binding = {
         "workspace_id": workspace_id_value,
-        "route": route if isinstance(route, str) else None,
+        "display_name": display_name_value,
+        "route": route_value,
+        "repository_role": "product_spec_workspace",
+        "governance_profile": governance_profile,
+        "specspace_state_namespace_ref": (
+            f"specspace-state://workspace/{workspace_id_value}"
+            if workspace_id_value
+            else None
+        ),
+        "platform_default_run_dir_ref": (
+            f"runs/{workspace_id_value}" if workspace_id_value else None
+        ),
+        "product_artifact_bundle_ref": workspace_bundle_ref,
+        "product_artifact_manifest_ref": (
+            f"{workspace_bundle_ref}/artifact_manifest.json"
+            if workspace_bundle_ref
+            else None
+        ),
+        "root_artifact_base_url": root_artifact_base_url,
+        "product_artifact_base_url": selected_product_artifact_base_url,
+    }
+    revision_payload = json.dumps(
+        logical_binding,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    binding_revision_sha256 = hashlib.sha256(
+        revision_payload.encode("utf-8")
+    ).hexdigest()
+    binding_id = (
+        f"product-workspace-binding://{workspace_id_value}"
+        if workspace_id_value
+        else None
+    )
+    binding = {
+        "artifact_kind": PRODUCT_WORKSPACE_BINDING_KIND,
+        "schema_version": 1,
+        "contract_ref": PRODUCT_WORKSPACE_BINDING_CONTRACT_REF,
+        "binding_id": binding_id,
+        "binding_revision_sha256": binding_revision_sha256,
+        "status": status,
+        "identity": {
+            "workspace_id": workspace_id_value,
+            "display_name": display_name_value,
+            "route": route_value,
+            "governance_profile": governance_profile,
+            "repository_role": "product_spec_workspace",
+        },
+        "routing": {
+            "specspace_state_namespace_ref": logical_binding[
+                "specspace_state_namespace_ref"
+            ],
+            "product_artifact_bundle_ref": workspace_bundle_ref,
+            "product_artifact_manifest_ref": logical_binding[
+                "product_artifact_manifest_ref"
+            ],
+            "root_artifact_base_url": root_artifact_base_url,
+            "product_artifact_base_url": selected_product_artifact_base_url,
+            "product_artifact_manifest_url": (
+                f"{selected_product_artifact_base_url}/artifact_manifest.json"
+                if selected_product_artifact_base_url is not None
+                else None
+            ),
+        },
+        "execution": {
+            "workspace_root": str(workspace_root),
+            "workspace_runs_root": str(workspace_root / "runs"),
+            "platform_default_run_dir_ref": logical_binding[
+                "platform_default_run_dir_ref"
+            ],
+            "local_only": True,
+        },
+        "repository": {
+            "repository_role": "product_spec_workspace",
+            "workspace_identity": workspace_id_value,
+            "worktree_identity": (
+                f"product-workspace/{workspace_id_value}"
+                if workspace_id_value
+                else None
+            ),
+            "creates_worktree": False,
+        },
+        "provenance": {
+            "plan_ref": plan_ref,
+            "plan_sha256": plan_sha256,
+            "specgraph_initialization_report_ref": (
+                specgraph_initialization_report_ref
+            ),
+            "specgraph_initialization_report_sha256": (
+                specgraph_initialization_report_sha256
+            ),
+        },
+        "privacy_boundary": {
+            "public_safe_projection_available": True,
+            "local_execution_paths_public": False,
+            "raw_idea_public": False,
+        },
+        "binding_authority": {
+            "report_only": True,
+            "may_execute_platform": False,
+            "may_execute_specgraph": False,
+            "may_mutate_specspace_state": False,
+            "may_write_catalog": False,
+            "may_create_git_commit": False,
+        },
+        # Compatibility aliases for pre-contract consumers. New consumers must
+        # use the typed sections above and validate binding_revision_sha256.
+        "workspace_id": workspace_id_value,
+        "display_name": display_name_value,
+        "route": route_value,
         "repository_role": "product_spec_workspace",
         "governance_profile": governance_profile,
         "workspace_root": str(workspace_root),
@@ -16584,15 +17305,268 @@ def product_workspace_initialization_binding(
             if selected_product_artifact_base_url is not None
             else None
         ),
-        "binding_authority": {
-            "report_only": True,
-            "may_execute_platform": False,
-            "may_execute_specgraph": False,
-            "may_mutate_specspace_state": False,
-            "may_write_catalog": False,
-            "may_create_git_commit": False,
-        },
     }
+    return binding
+
+
+def product_workspace_binding_diagnostics(
+    binding: dict[str, Any],
+    *,
+    expected_workspace_id: str | None = None,
+    require_ready: bool = False,
+    subject_prefix: str = "workspace_binding",
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+
+    def error(code: str, subject: str, message: str) -> None:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code=code,
+                subject=f"{subject_prefix}.{subject}",
+                message=message,
+            )
+        )
+
+    if binding.get("artifact_kind") != PRODUCT_WORKSPACE_BINDING_KIND:
+        error(
+            "product_workspace_binding_kind_mismatch",
+            "artifact_kind",
+            "workspace binding must use the Platform product workspace binding kind",
+        )
+    if binding.get("schema_version") != 1:
+        error(
+            "product_workspace_binding_schema_unsupported",
+            "schema_version",
+            "workspace binding schema_version must be 1",
+        )
+    if binding.get("contract_ref") != PRODUCT_WORKSPACE_BINDING_CONTRACT_REF:
+        error(
+            "product_workspace_binding_contract_mismatch",
+            "contract_ref",
+            "workspace binding contract_ref is not supported",
+        )
+    identity = nested_mapping(binding, "identity")
+    workspace_id = identity.get("workspace_id")
+    if not isinstance(workspace_id, str) or not PRODUCT_WORKSPACE_ID_RE.fullmatch(
+        workspace_id
+    ):
+        error(
+            "product_workspace_binding_workspace_invalid",
+            "identity.workspace_id",
+            "workspace binding must contain a safe workspace_id",
+        )
+    elif expected_workspace_id is not None and workspace_id != expected_workspace_id:
+        error(
+            "product_workspace_binding_workspace_mismatch",
+            "identity.workspace_id",
+            "workspace binding workspace_id must match the selected workspace",
+        )
+    if identity.get("route") != (f"/{workspace_id}" if isinstance(workspace_id, str) else None):
+        error(
+            "product_workspace_binding_route_mismatch",
+            "identity.route",
+            "workspace binding route must match workspace_id",
+        )
+    if identity.get("repository_role") != "product_spec_workspace":
+        error(
+            "product_workspace_binding_repository_role_mismatch",
+            "identity.repository_role",
+            "workspace binding repository role must be product_spec_workspace",
+        )
+    expected_binding_id = (
+        f"product-workspace-binding://{workspace_id}"
+        if isinstance(workspace_id, str)
+        else None
+    )
+    if binding.get("binding_id") != expected_binding_id:
+        error(
+            "product_workspace_binding_id_mismatch",
+            "binding_id",
+            "workspace binding id must be derived from workspace identity",
+        )
+    routing = nested_mapping(binding, "routing")
+    expected_namespace = (
+        f"specspace-state://workspace/{workspace_id}"
+        if isinstance(workspace_id, str)
+        else None
+    )
+    if routing.get("specspace_state_namespace_ref") != expected_namespace:
+        error(
+            "product_workspace_binding_state_namespace_mismatch",
+            "routing.specspace_state_namespace_ref",
+            "SpecSpace state namespace must be bound to workspace_id",
+        )
+    expected_bundle_ref = (
+        f"workspaces/{workspace_id}" if isinstance(workspace_id, str) else None
+    )
+    if routing.get("product_artifact_bundle_ref") != expected_bundle_ref:
+        error(
+            "product_workspace_binding_artifact_bundle_mismatch",
+            "routing.product_artifact_bundle_ref",
+            "product artifact bundle must be bound to workspace_id",
+        )
+    if routing.get("product_artifact_manifest_ref") != (
+        f"{expected_bundle_ref}/artifact_manifest.json"
+        if expected_bundle_ref
+        else None
+    ):
+        error(
+            "product_workspace_binding_artifact_manifest_mismatch",
+            "routing.product_artifact_manifest_ref",
+            "product artifact manifest must be bound to the workspace bundle",
+        )
+    root_artifact_base_url = routing.get("root_artifact_base_url")
+    product_artifact_base_url = routing.get("product_artifact_base_url")
+    for field, value in (
+        ("root_artifact_base_url", root_artifact_base_url),
+        ("product_artifact_base_url", product_artifact_base_url),
+    ):
+        if value is None:
+            continue
+        parsed = urllib.parse.urlparse(value) if isinstance(value, str) else None
+        if (
+            parsed is None
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            error(
+                "product_workspace_binding_artifact_url_invalid",
+                f"routing.{field}",
+                "workspace artifact routing must use a public HTTP(S) base URL",
+            )
+    expected_manifest_url = (
+        f"{product_artifact_base_url.rstrip('/')}/artifact_manifest.json"
+        if isinstance(product_artifact_base_url, str)
+        and product_artifact_base_url.strip()
+        else None
+    )
+    if routing.get("product_artifact_manifest_url") != expected_manifest_url:
+        error(
+            "product_workspace_binding_artifact_manifest_url_mismatch",
+            "routing.product_artifact_manifest_url",
+            "product artifact manifest URL must derive from its workspace base URL",
+        )
+    execution = nested_mapping(binding, "execution")
+    expected_run_dir = (
+        f"runs/{workspace_id}" if isinstance(workspace_id, str) else None
+    )
+    if execution.get("platform_default_run_dir_ref") != expected_run_dir:
+        error(
+            "product_workspace_binding_run_dir_mismatch",
+            "execution.platform_default_run_dir_ref",
+            "Platform run directory must be bound to workspace_id",
+        )
+    if execution.get("local_only") is not True:
+        error(
+            "product_workspace_binding_local_resolution_not_private",
+            "execution.local_only",
+            "workspace execution resolution must be marked local-only",
+        )
+    repository = nested_mapping(binding, "repository")
+    if (
+        repository.get("repository_role") != "product_spec_workspace"
+        or repository.get("workspace_identity") != workspace_id
+        or repository.get("worktree_identity")
+        != (
+            f"product-workspace/{workspace_id}"
+            if isinstance(workspace_id, str)
+            else None
+        )
+        or repository.get("creates_worktree") is not False
+    ):
+        error(
+            "product_workspace_binding_repository_identity_mismatch",
+            "repository",
+            "repository/worktree identity must match the workspace without creating a worktree",
+        )
+    privacy = nested_mapping(binding, "privacy_boundary")
+    for field, expected in (
+        ("public_safe_projection_available", True),
+        ("local_execution_paths_public", False),
+        ("raw_idea_public", False),
+    ):
+        if privacy.get(field) is not expected:
+            error(
+                "product_workspace_binding_privacy_invalid",
+                f"privacy_boundary.{field}",
+                "workspace binding must keep local paths and raw idea content private",
+            )
+    logical_binding = {
+        "workspace_id": workspace_id,
+        "display_name": identity.get("display_name"),
+        "route": identity.get("route"),
+        "repository_role": identity.get("repository_role"),
+        "governance_profile": identity.get("governance_profile"),
+        "specspace_state_namespace_ref": routing.get(
+            "specspace_state_namespace_ref"
+        ),
+        "platform_default_run_dir_ref": execution.get(
+            "platform_default_run_dir_ref"
+        ),
+        "product_artifact_bundle_ref": routing.get("product_artifact_bundle_ref"),
+        "product_artifact_manifest_ref": routing.get(
+            "product_artifact_manifest_ref"
+        ),
+        "root_artifact_base_url": routing.get("root_artifact_base_url"),
+        "product_artifact_base_url": routing.get("product_artifact_base_url"),
+    }
+    expected_revision = hashlib.sha256(
+        json.dumps(
+            logical_binding,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if binding.get("binding_revision_sha256") != expected_revision:
+        error(
+            "product_workspace_binding_revision_mismatch",
+            "binding_revision_sha256",
+            "workspace binding revision digest must match its logical fields",
+        )
+    status = binding.get("status")
+    if status not in {"planned", "ready", "dry_run", "blocked"}:
+        error(
+            "product_workspace_binding_status_invalid",
+            "status",
+            "workspace binding status is not recognized",
+        )
+    if require_ready and status != "ready":
+        error(
+            "product_workspace_binding_not_ready",
+            "status",
+            "workspace binding must be ready for managed execution",
+        )
+    if require_ready:
+        provenance = nested_mapping(binding, "provenance")
+        for field in ("plan_sha256", "specgraph_initialization_report_sha256"):
+            value = provenance.get(field)
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                error(
+                    "product_workspace_binding_provenance_missing",
+                    f"provenance.{field}",
+                    "ready workspace binding must pin initialization evidence digests",
+                )
+    for section_name in ("binding_authority",):
+        section = nested_mapping(binding, section_name)
+        if section.get("report_only") is not True:
+            error(
+                "product_workspace_binding_authority_expanded",
+                f"{section_name}.report_only",
+                "workspace binding must be report-only",
+            )
+        for key, value in section.items():
+            if key.startswith("may_") and value is not False:
+                error(
+                    "product_workspace_binding_authority_expanded",
+                    f"{section_name}.{key}",
+                    "workspace binding must not grant execution or mutation authority",
+                )
+    return diagnostics
 
 
 def format_manual_yaml_entry(entry: dict[str, Any]) -> str:
@@ -19273,6 +20247,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     product_repair_request_gate_parser.add_argument(
+        "--workspace-initialization",
+        help=(
+            "Optional ready Platform workspace initialization execution report. "
+            "When supplied, the request gate pins its durable binding and run dir."
+        ),
+    )
+    product_repair_request_gate_parser.add_argument(
         "--rerun-request",
         default="runs/idea_to_spec_repair_rerun_requests.json",
         help="SpecSpace-owned repair rerun request state.",
@@ -19343,6 +20324,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Optional SpecGraph run directory used for default repair rerun "
             "inputs and outputs."
+        ),
+    )
+    product_repair_plan_parser.add_argument(
+        "--workspace-initialization",
+        help=(
+            "Optional ready Platform workspace initialization execution report. "
+            "When supplied, the repair plan pins and validates its durable binding."
         ),
     )
     product_repair_plan_parser.add_argument(
@@ -20047,6 +21035,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional workspace id used to select the active SpecSpace intent.",
     )
     product_candidate_approval_gate_parser.add_argument(
+        "--workspace-initialization",
+        help="Optional ready workspace initialization report whose durable binding must match the approval workspace.",
+    )
+    product_candidate_approval_gate_parser.add_argument(
         "--path",
         action="append",
         default=[],
@@ -20185,6 +21177,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional workspace id used to select the active SpecSpace intent.",
     )
     product_candidate_approval_approve_parser.add_argument(
+        "--workspace-initialization",
+        help="Optional ready workspace initialization report whose durable binding must match the approval workspace.",
+    )
+    product_candidate_approval_approve_parser.add_argument(
         "--path",
         action="append",
         default=[],
@@ -20263,6 +21259,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--approval-decision",
         required=True,
         help="Path to a candidate_approval_decision artifact.",
+    )
+    product_candidate_promotion_request_parser.add_argument(
+        "--workspace-initialization",
+        help="Optional ready workspace initialization report whose durable binding must match the approved candidate.",
     )
     product_candidate_promotion_request_parser.add_argument(
         "--deployment-profile-id",

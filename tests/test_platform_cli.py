@@ -121,6 +121,27 @@ class PlatformCliTests(unittest.TestCase):
             )
             self.assertEqual(payload["workspace"]["workspace_id"], "pantry-rotation")
             self.assertEqual(
+                payload["workspace_binding"]["artifact_kind"],
+                "platform_product_workspace_binding",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["contract_ref"],
+                "platform.product-workspace.binding.v1",
+            )
+            self.assertEqual(
+                payload["workspace_binding"]["binding_id"],
+                "product-workspace-binding://pantry-rotation",
+            )
+            self.assertRegex(
+                payload["workspace_binding"]["binding_revision_sha256"],
+                r"^[0-9a-f]{64}$",
+            )
+            self.assertEqual(payload["workspace_binding"]["status"], "planned")
+            self.assertEqual(
+                payload["workspace_binding"]["identity"]["display_name"],
+                "Pantry Rotation",
+            )
+            self.assertEqual(
                 payload["workspace_binding"]["platform_default_run_dir_ref"],
                 "runs/pantry-rotation",
             )
@@ -148,6 +169,88 @@ class PlatformCliTests(unittest.TestCase):
                 "pantry-rotation",
             )
             self.assertFalse(payload["summary"]["catalog_written"])
+            self.assertFalse(payload["summary"]["workspace_files_created"])
+            self.assertFalse(payload["authority_boundary"]["updates_workspace_catalog"])
+            self.assertTrue(output_path.is_file())
+
+    def test_workspace_execute_requested_initialization_blocks_tampered_binding(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog_path = root / "workspaces.yaml"
+            creation_path = root / "product_workspace_creation_requests.json"
+            plan_path = root / "runs" / "product_workspace_initialization_plan.json"
+            request_path = (
+                root / "runs" / "product_workspace_initialization_execution_request.json"
+            )
+            output_path = root / "runs" / "execution_report.json"
+            workspace_root = root / "PantryRotation"
+            catalog_path.write_text(
+                "schema_version: 1\n"
+                "artifact_kind: platform_workspace_catalog\n"
+                f"organization_root: {json.dumps(str(root))}\n"
+                "workspaces: []\n",
+                encoding="utf-8",
+            )
+            creation_path.write_text(
+                json.dumps(workspace_creation_request(), indent=2),
+                encoding="utf-8",
+            )
+            plan_result = self.run_cli(
+                "workspace",
+                "initialize-from-request",
+                "--creation-request",
+                str(creation_path),
+                "--catalog",
+                str(catalog_path),
+                "--path",
+                str(workspace_root),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+            request_result = self.run_cli(
+                "workspace",
+                "request-initialization-execution",
+                "--plan",
+                str(plan_path),
+                "--output",
+                str(request_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(request_result.returncode, 0, request_result.stderr)
+            request = json.loads(request_path.read_text(encoding="utf-8"))
+            request["workspace_binding"]["routing"][
+                "specspace_state_namespace_ref"
+            ] = "specspace-state://workspace/foreign"
+            request_path.write_text(json.dumps(request, indent=2), encoding="utf-8")
+
+            result = self.run_cli(
+                "workspace",
+                "execute-requested-initialization",
+                "--execution-request",
+                str(request_path),
+                "--catalog",
+                str(catalog_path),
+                "--output",
+                str(output_path),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            codes = {item["code"] for item in payload["diagnostics"]}
+            self.assertIn(
+                "product_workspace_binding_state_namespace_mismatch",
+                codes,
+            )
+            self.assertIn("product_workspace_binding_revision_mismatch", codes)
             self.assertFalse(payload["summary"]["workspace_files_created"])
             self.assertFalse(payload["authority_boundary"]["updates_workspace_catalog"])
             self.assertTrue(output_path.is_file())
@@ -399,6 +502,11 @@ class PlatformCliTests(unittest.TestCase):
             )
             self.assertFalse(payload["summary"]["specgraph_executed"])
             self.assertFalse(payload["summary"]["catalog_written"])
+            self.assertEqual(payload["workspace_binding"]["status"], "dry_run")
+            self.assertRegex(
+                payload["workspace_binding"]["provenance"]["plan_sha256"],
+                r"^[0-9a-f]{64}$",
+            )
 
     def test_workspace_execute_requested_initialization_blocks_digest_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2494,6 +2602,90 @@ real-idea-intake-from-entry-request:
         workspace_id: str = "pantry-rotation",
         display_name: str = "Pantry Rotation",
     ) -> None:
+        logical_binding = {
+            "workspace_id": workspace_id,
+            "display_name": display_name,
+            "route": f"/{workspace_id}",
+            "repository_role": "product_spec_workspace",
+            "governance_profile": "product_workspace",
+            "specspace_state_namespace_ref": (
+                f"specspace-state://workspace/{workspace_id}"
+            ),
+            "platform_default_run_dir_ref": f"runs/{workspace_id}",
+            "product_artifact_bundle_ref": f"workspaces/{workspace_id}",
+            "product_artifact_manifest_ref": (
+                f"workspaces/{workspace_id}/artifact_manifest.json"
+            ),
+            "root_artifact_base_url": None,
+            "product_artifact_base_url": None,
+        }
+        binding_revision = hashlib.sha256(
+            json.dumps(
+                logical_binding,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        workspace_binding = {
+            "artifact_kind": "platform_product_workspace_binding",
+            "schema_version": 1,
+            "contract_ref": "platform.product-workspace.binding.v1",
+            "binding_id": f"product-workspace-binding://{workspace_id}",
+            "binding_revision_sha256": binding_revision,
+            "status": "ready",
+            "identity": {
+                "workspace_id": workspace_id,
+                "display_name": display_name,
+                "route": f"/{workspace_id}",
+                "governance_profile": "product_workspace",
+                "repository_role": "product_spec_workspace",
+            },
+            "routing": {
+                "specspace_state_namespace_ref": (
+                    f"specspace-state://workspace/{workspace_id}"
+                ),
+                "product_artifact_bundle_ref": f"workspaces/{workspace_id}",
+                "product_artifact_manifest_ref": (
+                    f"workspaces/{workspace_id}/artifact_manifest.json"
+                ),
+                "root_artifact_base_url": None,
+                "product_artifact_base_url": None,
+                "product_artifact_manifest_url": None,
+            },
+            "execution": {
+                "workspace_root": f"/tmp/{workspace_id}",
+                "workspace_runs_root": f"/tmp/{workspace_id}/runs",
+                "platform_default_run_dir_ref": f"runs/{workspace_id}",
+                "local_only": True,
+            },
+            "repository": {
+                "repository_role": "product_spec_workspace",
+                "workspace_identity": workspace_id,
+                "worktree_identity": f"product-workspace/{workspace_id}",
+                "creates_worktree": False,
+            },
+            "provenance": {
+                "plan_ref": f"runs/{workspace_id}/product_workspace_initialization_plan.json",
+                "plan_sha256": "1" * 64,
+                "specgraph_initialization_report_ref": (
+                    f"runs/{workspace_id}/product_workspace_initialization.json"
+                ),
+                "specgraph_initialization_report_sha256": "2" * 64,
+            },
+            "privacy_boundary": {
+                "public_safe_projection_available": True,
+                "local_execution_paths_public": False,
+                "raw_idea_public": False,
+            },
+            "binding_authority": {
+                "report_only": True,
+                "may_execute_platform": False,
+                "may_execute_specgraph": False,
+                "may_mutate_specspace_state": False,
+                "may_write_catalog": False,
+                "may_create_git_commit": False,
+            },
+        }
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(
@@ -2511,6 +2703,7 @@ real-idea-intake-from-entry-request:
                         "repository_role": "product_spec_workspace",
                     },
                     "catalog_ref": "runs/product_workspaces_catalog.json",
+                    "workspace_binding": workspace_binding,
                     "specgraph_initialization_report_ref": (
                         f"runs/{workspace_id}/product_workspace_initialization.json"
                     ),
@@ -5279,7 +5472,17 @@ workspaces:
                 ),
                 encoding="utf-8",
             )
-            run_dir = runs_dir / "idea-alpha"
+            initialization_path = (
+                runs_dir
+                / "idea-alpha-workspace"
+                / "platform_product_workspace_initialization_execution_report.json"
+            )
+            self.write_workspace_initialization_execution_report(
+                initialization_path,
+                workspace_id="idea-alpha-workspace",
+                display_name="Idea Alpha Workspace",
+            )
+            run_dir = runs_dir / "idea-alpha-workspace"
             gate_path = run_dir / "specspace_repair_rerun_request_gate.json"
             report_path = (
                 runs_dir
@@ -5292,7 +5495,9 @@ workspaces:
                 "--specgraph-dir",
                 str(specgraph_dir),
                 "--run-dir",
-                "runs/idea-alpha",
+                "runs/idea-alpha-workspace",
+                "--workspace-initialization",
+                str(initialization_path),
                 "--rerun-request",
                 "runs/idea_to_spec_repair_rerun_requests.json",
                 "--import-preview",
@@ -5302,7 +5507,7 @@ workspaces:
                 "--workspace-id",
                 "idea-alpha-workspace",
                 "--output-gate",
-                "runs/idea-alpha/specspace_repair_rerun_request_gate.json",
+                "runs/idea-alpha-workspace/specspace_repair_rerun_request_gate.json",
                 "--output",
                 str(report_path),
                 "--format",
@@ -5331,6 +5536,10 @@ workspaces:
                 "runs/specspace_repair_draft_import_preview.json",
             )
             self.assertTrue(payload["request_state_copied_to_run_dir"])
+            self.assertEqual(
+                payload["workspace_binding"]["binding_id"],
+                "product-workspace-binding://idea-alpha-workspace",
+            )
             self.assertEqual(
                 payload["target_make"]["target"],
                 "specspace-repair-rerun-request-gate",
@@ -6267,6 +6476,44 @@ workspaces:
                     / "pantry-rotation"
                     / "real_idea_entry_requests.json"
                 ).is_file()
+            )
+
+    def test_product_real_idea_intake_rejects_run_dir_outside_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_real_idea_entry_intake_makefile(specgraph_dir)
+            entry_requests = root / "state" / "real_idea_entry_requests.json"
+            entry_requests.parent.mkdir()
+            entry_requests.write_text(
+                '{"artifact_kind":"specspace_real_idea_entry_request_state","requests":[]}',
+                encoding="utf-8",
+            )
+            initialization = root / "initialization.json"
+            self.write_workspace_initialization_execution_report(initialization)
+
+            result = self.run_cli(
+                "product-real-idea-intake",
+                "execute",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-initialization",
+                str(initialization),
+                "--run-dir",
+                "runs/foreign",
+                "--entry-requests",
+                str(entry_requests),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertIn(
+                "real_idea_entry_intake_run_dir_binding_mismatch",
+                {item["code"] for item in payload["diagnostics"]},
             )
 
     def test_product_real_idea_intake_execute_requested_uses_specspace_request(
