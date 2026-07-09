@@ -6346,6 +6346,7 @@ def real_idea_clarification_source_digest(payload: dict[str, Any]) -> str:
 def real_idea_clarification_continuation_mode(
     *,
     run_dir: Path,
+    run_dir_ref: str,
     workspace_id: str | None,
 ) -> tuple[str, list[Diagnostic]]:
     template_path = run_dir / "real_idea_answer_template.json"
@@ -6463,11 +6464,11 @@ def real_idea_clarification_continuation_mode(
                     )
                 )
             else:
-                expected_ref = f"{run_dir.name}/idea_intake_clarification_requests.json"
+                expected_ref = (
+                    f"{run_dir_ref}/idea_intake_clarification_requests.json"
+                )
                 source_ref = request_source.get("source_ref")
-                if not isinstance(source_ref, str) or not source_ref.endswith(
-                    expected_ref
-                ):
+                if source_ref != expected_ref:
                     diagnostics.append(
                         Diagnostic(
                             level="ERROR",
@@ -7022,7 +7023,6 @@ def real_idea_answer_continuation_execution_request_selection(
             )
         )
     for ref_field in (
-        "answer_state_ref",
         "intake_execution_ref",
         "workspace_initialization_ref",
     ):
@@ -7505,6 +7505,19 @@ def real_idea_no_clarification_continuation_output_diagnostics(
                     message=f"SpecGraph no-clarification output {key} must be ready",
                 )
             )
+        for field in ("canonical_mutations_allowed", "tracked_artifacts_written"):
+            if record.get(field) is True:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="real_idea_no_clarification_output_authority_expanded",
+                        subject=f"outputs.{key}.{field}",
+                        message=(
+                            f"SpecGraph no-clarification output {key} must not "
+                            f"set {field}=true"
+                        ),
+                    )
+                )
         for field, value in sorted(nested_mapping(record, "authority_boundary").items()):
             if value is True:
                 diagnostics.append(
@@ -8006,6 +8019,7 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
     workspace_id = getattr(args, "workspace_id", None)
     continuation_mode, mode_diagnostics = real_idea_clarification_continuation_mode(
         run_dir=run_dir,
+        run_dir_ref=run_dir_ref,
         workspace_id=workspace_id,
     )
     diagnostics.extend(mode_diagnostics)
