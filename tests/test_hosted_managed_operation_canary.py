@@ -173,6 +173,7 @@ class HostedManagedOperationCanaryTests(unittest.TestCase):
                 daemon=True,
             )
             server_thread.start()
+            self.assertTrue(service.health()["ok"])
             stop_worker = threading.Event()
 
             def process_one() -> None:
