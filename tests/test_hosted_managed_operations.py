@@ -33,6 +33,12 @@ def ready_binding() -> dict[str, object]:
     }
 
 
+def planned_binding() -> dict[str, object]:
+    binding = ready_binding()
+    binding["status"] = "planned"
+    return binding
+
+
 class HostedManagedOperationContractTests(unittest.TestCase):
     def test_registry_covers_all_managed_operations(self) -> None:
         payload = hosted.registry_payload()
@@ -49,6 +55,51 @@ class HostedManagedOperationContractTests(unittest.TestCase):
                 and item["output_reports"]
                 for item in payload["operations"]
             )
+        )
+        initialization = hosted.operation_by_id("workspace_initialization_execute")
+        self.assertEqual(initialization.binding_requirement, "planned_or_ready")
+        self.assertTrue(
+            all(
+                operation.binding_requirement == "ready"
+                for operation in hosted.MANAGED_OPERATIONS
+                if operation.operation_id != "workspace_initialization_execute"
+            )
+        )
+
+    def test_only_workspace_initialization_accepts_planned_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            initialization_input = temp / "initialization-request.json"
+            initialization_input.write_text("{}", encoding="utf-8")
+            initialization = hosted.build_request(
+                operation_id="workspace_initialization_execute",
+                workspace_binding=planned_binding(),
+                workspace_binding_ref="runs/product_workspace_initialization_execution_request.json",
+                workspace_binding_source_sha256="2" * 64,
+                inputs={
+                    "runs/product_workspace_initialization_execution_request.json": initialization_input
+                },
+                generated_at="2026-07-10T00:00:00Z",
+            )
+            review_input = temp / "review.json"
+            review_input.write_text("{}", encoding="utf-8")
+            review = hosted.build_request(
+                operation_id="review_status_execute",
+                workspace_binding=planned_binding(),
+                workspace_binding_ref="runs/product_workspace_initialization_execution_request.json",
+                workspace_binding_source_sha256="2" * 64,
+                inputs={
+                    "runs/product_candidate_promotion_execution_report.json": review_input
+                },
+                generated_at="2026-07-10T00:00:00Z",
+            )
+
+        self.assertEqual(initialization["status"], "ready")
+        self.assertEqual(hosted.request_diagnostics(initialization), [])
+        self.assertEqual(review["status"], "blocked")
+        self.assertIn(
+            "workspace binding status does not satisfy the operation requirement",
+            review["diagnostics"],
         )
 
     def test_request_pins_inputs_without_exposing_local_paths(self) -> None:

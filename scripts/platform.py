@@ -15673,9 +15673,15 @@ def managed_operation_request(args: argparse.Namespace) -> int:
         label="managed operation workspace binding source",
     )
     binding = hosted_managed_operation_binding_from_source(binding_source)
+    operation_definition = hosted_managed_operations.operation_by_id(
+        args.operation_id
+    )
     binding_diagnostics = product_workspace_binding_diagnostics(
         binding,
-        require_ready=True,
+        require_ready=(
+            operation_definition is None
+            or operation_definition.binding_requirement == "ready"
+        ),
         subject_prefix="workspace_binding",
     )
     confirmation_sha256 = (

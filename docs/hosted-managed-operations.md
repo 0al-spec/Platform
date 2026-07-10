@@ -18,6 +18,13 @@ the twelve operation ids currently exposed by SpecSpace together with their
 fixed Platform command family, typed input refs, output reports, side-effect
 class, lock scopes, timeout, replay policy, and confirmation requirement.
 
+Every operation after initialization requires a `ready` durable workspace
+binding. `workspace_initialization_execute` is the single bootstrap exception:
+it accepts a validated `planned` or `ready` binding because its purpose is to
+materialize the ready initialization evidence. The exception is declared in the
+operation registry as `binding_requirement: planned_or_ready`; workers must not
+infer or extend it to another operation.
+
 An immutable queue request uses:
 
 ```text

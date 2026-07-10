@@ -56,6 +56,7 @@ class ManagedOperationDefinition:
     lock_scopes: tuple[str, ...]
     timeout_seconds: int
     replay_policy: str
+    binding_requirement: str = "ready"
     conditional_input_refs: tuple[str, ...] = ()
     dry_run_only: bool = False
     irreversible: bool = False
@@ -76,6 +77,7 @@ MANAGED_OPERATIONS: tuple[ManagedOperationDefinition, ...] = (
         lock_scopes=_COMMON_LOCKS,
         timeout_seconds=120,
         replay_policy="matching_request_only",
+        binding_requirement="planned_or_ready",
     ),
     ManagedOperationDefinition(
         operation_id="real_idea_intake_execute",
@@ -425,6 +427,15 @@ def build_request(
         diagnostics.append("workspace binding revision digest is invalid")
     if not SHA256_RE.fullmatch(workspace_binding_source_sha256):
         diagnostics.append("workspace binding source digest is invalid")
+    binding_status = workspace_binding.get("status")
+    allowed_binding_statuses = (
+        {"planned", "ready"}
+        if definition is not None
+        and definition.binding_requirement == "planned_or_ready"
+        else {"ready"}
+    )
+    if binding_status not in allowed_binding_statuses:
+        diagnostics.append("workspace binding status does not satisfy the operation requirement")
     confirmation: dict[str, str] | None = None
     if definition is not None and definition.requires_explicit_confirmation:
         if not confirmation_ref or not SHA256_RE.fullmatch(confirmation_sha256 or ""):
@@ -470,6 +481,7 @@ def build_request(
         "workspace_binding": {
             "binding_id": workspace_binding.get("binding_id"),
             "binding_revision_sha256": binding_revision,
+            "status": binding_status,
             "source_ref": workspace_binding_ref,
             "source_sha256": workspace_binding_source_sha256,
         },
@@ -562,6 +574,7 @@ def request_diagnostics(payload: dict[str, Any]) -> list[str]:
     if set(binding) != {
         "binding_id",
         "binding_revision_sha256",
+        "status",
         "source_ref",
         "source_sha256",
     }:
@@ -575,6 +588,16 @@ def request_diagnostics(payload: dict[str, Any]) -> list[str]:
             diagnostics.append(f"request workspace binding {field} is invalid")
     if not safe_artifact_ref(binding.get("source_ref")):
         diagnostics.append("request workspace binding source ref is unsafe")
+    if definition is not None:
+        allowed_binding_statuses = (
+            {"planned", "ready"}
+            if definition.binding_requirement == "planned_or_ready"
+            else {"ready"}
+        )
+        if binding.get("status") not in allowed_binding_statuses:
+            diagnostics.append(
+                "request workspace binding status does not satisfy the operation requirement"
+            )
     boundary = payload.get("authority_boundary")
     boundary = boundary if isinstance(boundary, dict) else {}
     for key, expected in request_authority_boundary().items():
