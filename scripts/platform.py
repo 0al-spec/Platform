@@ -15872,6 +15872,44 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
         )
     finally:
         queue.close()
+    policy_findings: list[dict[str, Any]] = []
+    for receipt in receipts:
+        operation_id = receipt.get("operation_id")
+        definition = hosted_managed_operations.operation_by_id(
+            operation_id if isinstance(operation_id, str) else ""
+        )
+        status = receipt.get("status")
+        attempt = receipt.get("attempt")
+        if definition is None:
+            policy_findings.append(
+                {
+                    "code": "recovery_unknown_operation",
+                    "operation_id": operation_id,
+                    "message": "recovery receipt references an unknown operation",
+                }
+            )
+            continue
+        if status == "queued" and definition.replay_policy not in hosted_managed_operation_queue.AUTO_RETRY_POLICIES:
+            policy_findings.append(
+                {
+                    "code": "recovery_requeued_non_replay_safe_operation",
+                    "operation_id": definition.operation_id,
+                    "message": "non-replay-safe operation was requeued",
+                }
+            )
+        if (
+            status == "quarantined"
+            and definition.replay_policy in hosted_managed_operation_queue.AUTO_RETRY_POLICIES
+            and isinstance(attempt, int)
+            and attempt < args.max_attempts
+        ):
+            policy_findings.append(
+                {
+                    "code": "recovery_quarantined_replay_safe_operation",
+                    "operation_id": definition.operation_id,
+                    "message": "replay-safe operation was quarantined before its retry limit",
+                }
+            )
     report = {
         "artifact_kind": "platform_hosted_managed_operation_queue_recovery_report",
         "schema_version": 1,
@@ -15886,7 +15924,10 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
             "quarantined_count": sum(
                 receipt.get("status") == "quarantined" for receipt in receipts
             ),
+            "policy_safe": not policy_findings,
+            "strict": args.strict,
         },
+        "policy_findings": policy_findings,
         "authority_boundary": {
             "executes_managed_operations": False,
             "requeues_replay_safe_operations": True,
@@ -15894,7 +15935,7 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
         },
     }
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0
+    return 0 if not args.strict or not policy_findings else 1
 
 
 def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
@@ -19879,6 +19920,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-attempts",
         type=int,
         default=3,
+    )
+    managed_operation_recover_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail when recovery receipts violate the declared replay policy.",
     )
     managed_operation_recover_parser.set_defaults(func=managed_operation_queue_recover)
     managed_operation_worker_common = argparse.ArgumentParser(add_help=False)

@@ -146,6 +146,22 @@ The report is public-safe: it contains opaque request/workspace identifiers,
 logical artifact refs, and digests, but never bearer tokens, token paths, local
 checkout paths, raw idea text, or the full request envelope.
 
+Before enabling operations with non-replayable side effects, run recovery in
+strict mode against the hosted queue:
+
+```bash
+.venv/bin/python scripts/platform.py managed-operation recover \
+  --queue-adapter postgresql \
+  --database-url-file /run/secrets/managed_operation_database_url \
+  --max-attempts 3 \
+  --strict
+```
+
+Strict recovery succeeds only when expired replay-safe leases are requeued and
+ambiguous consume-on-attempt or irreversible leases are quarantined. It fails
+if a receipt contradicts the operation registry, so a deployment cannot hide a
+replay-policy drift behind a green recovery command.
+
 ## Local Compose Entry Point
 
 The working plan for this phase is maintained in
