@@ -204,6 +204,13 @@ Compose profile twice. Rendering without
 canary operation must pass the same allowlist to both the service and worker.
 This job does not replace a deployed canary or the PostgreSQL integration job.
 
+The separate `hosted-managed-postgres` CI job runs against a PostgreSQL 16
+service container. In addition to queue lifecycle, concurrent enqueue, workspace
+lock, and recovery tests, it exercises the canary through the real authenticated
+HTTP handler and a PostgreSQL-backed worker. It remains bounded to the read-only
+`review_status_execute` operation and uses fixture-owned artifacts; it does not
+contact a deployment or perform Git operations.
+
 The command resolves Compose inputs in this order:
 
 - compose file: `PLATFORM_COMPOSE_FILE`, then `docker-compose.local.yml`, then
