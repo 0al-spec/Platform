@@ -7352,6 +7352,53 @@ workspaces:
                 ).is_file()
             )
 
+    def test_product_repair_rerun_execute_rejects_foreign_repaired_candidate(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            makefile_path = specgraph_dir / "Makefile"
+            makefile_path.write_text(
+                makefile_path.read_text(encoding="utf-8").replace(
+                    '"candidate_id":"idea-alpha"',
+                    '"candidate_id":"foreign-candidate"',
+                ),
+                encoding="utf-8",
+            )
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn(
+            "product_repair_rerun_repaired_output_candidate_mismatch",
+            {item["code"] for item in payload["diagnostics"]},
+        )
+
     def test_product_repair_rerun_execute_surfaces_intermediate_rerun_report(
         self,
     ) -> None:

@@ -7916,6 +7916,8 @@ def product_repair_output_diagnostics(
 
 def product_repair_repaired_output_diagnostics(
     output_records: dict[str, dict[str, Any]],
+    *,
+    expected_candidate_id: str | None,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     handoff = output_records.get("repaired_handoff", {})
@@ -7979,6 +7981,23 @@ def product_repair_repaired_output_diagnostics(
                     code="product_repair_rerun_repaired_output_not_ready",
                     subject=f"outputs.{key}.readiness.ready",
                     message=f"SpecGraph repaired handoff output {key} must be ready",
+                )
+            )
+        actual_candidate_id = nested_mapping(record, "summary").get("candidate_id")
+        if (
+            key in {"repaired_active_candidate", "repaired_repair_session"}
+            and expected_candidate_id
+            and actual_candidate_id != expected_candidate_id
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_repaired_output_candidate_mismatch",
+                    subject=f"outputs.{key}.summary.candidate_id",
+                    message=(
+                        "SpecGraph repaired handoff output candidate_id must match "
+                        "the selected repair rerun plan"
+                    ),
                 )
             )
     return diagnostics
@@ -8106,7 +8125,19 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
             )
         )
         if args.build_repaired_handoff:
-            diagnostics.extend(product_repair_repaired_output_diagnostics(output_records))
+            diagnostics.extend(
+                product_repair_repaired_output_diagnostics(
+                    output_records,
+                    expected_candidate_id=(
+                        nested_mapping(plan, "summary").get("candidate_id")
+                        if isinstance(
+                            nested_mapping(plan, "summary").get("candidate_id"),
+                            str,
+                        )
+                        else None
+                    ),
+                )
+            )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0 and (args.dry_run or command_result is not None)
     requested_operation_status = "failed"
