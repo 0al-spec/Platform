@@ -25,10 +25,12 @@ try:
     from scripts import hosted_managed_operation_executor
     from scripts import hosted_managed_operations
     from scripts import hosted_managed_operation_queue
+    from scripts import hosted_managed_operation_service
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_operation_executor
     import hosted_managed_operations
     import hosted_managed_operation_queue
+    import hosted_managed_operation_service
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -15939,6 +15941,58 @@ def managed_operation_worker_once(args: argparse.Namespace) -> int:
     return 0 if receipt is None or receipt.get("status") == "succeeded" else 1
 
 
+def managed_operation_serve(args: argparse.Namespace) -> int:
+    auth_token = os.environ.get(args.auth_token_env, "")
+    if len(auth_token) < 32:
+        raise PlatformError(
+            f"{args.auth_token_env} must contain a hosted service token of at least 32 characters"
+        )
+
+    def validate_binding(binding: dict[str, Any], workspace_id: str) -> list[str]:
+        return [
+            diagnostic.code
+            for diagnostic in product_workspace_binding_diagnostics(
+                binding,
+                expected_workspace_id=workspace_id,
+                require_ready=False,
+                subject_prefix="workspace_binding",
+            )
+        ]
+
+    resolver = hosted_managed_operation_executor.FilesystemManagedOperationResolver(
+        artifact_root=Path(args.artifact_root),
+        state_dir=Path(args.state_dir),
+        specgraph_dir=Path(args.specgraph_dir),
+        binding_validator=validate_binding,
+    )
+    database_path = Path(args.database).resolve()
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(database_path)
+    queue.close()
+    service = hosted_managed_operation_service.HostedManagedOperationService(
+        database_path=database_path,
+        resolver=resolver,
+        now_epoch=time.time,
+        now_iso=utc_now_iso,
+    )
+    try:
+        server = hosted_managed_operation_service.create_server(
+            host=args.host,
+            port=args.port,
+            service=service,
+            auth_token=auth_token,
+        )
+    except hosted_managed_operation_service.HostedServiceError as exc:
+        raise PlatformError(str(exc)) from exc
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def product_workspace_creation_boundary() -> dict[str, Any]:
     return {
         "executes_specgraph": False,
@@ -19644,6 +19698,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
     )
     managed_operation_worker_parser.set_defaults(func=managed_operation_worker_once)
+    managed_operation_serve_parser = managed_operation_subcommands.add_parser(
+        "serve",
+        help="Serve authenticated enqueue and status APIs for hosted workers.",
+    )
+    managed_operation_serve_parser.add_argument("--database", required=True)
+    managed_operation_serve_parser.add_argument("--artifact-root", required=True)
+    managed_operation_serve_parser.add_argument("--state-dir", required=True)
+    managed_operation_serve_parser.add_argument("--specgraph-dir", required=True)
+    managed_operation_serve_parser.add_argument("--host", default="127.0.0.1")
+    managed_operation_serve_parser.add_argument("--port", type=int, default=8091)
+    managed_operation_serve_parser.add_argument(
+        "--auth-token-env",
+        default="PLATFORM_MANAGED_OPERATION_TOKEN",
+        help="Environment variable containing the bearer token; token values are never CLI args.",
+    )
+    managed_operation_serve_parser.set_defaults(func=managed_operation_serve)
 
     workspace_parser = subcommands.add_parser(
         "workspace",

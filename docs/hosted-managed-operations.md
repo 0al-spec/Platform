@@ -134,6 +134,41 @@ fixed two-phase `plan` then `execute` operation. The worker lease defaults to 60
 seconds so the current bounded two-phase operation fits within one lease; an
 expired lease still fails closed and enters normal recovery policy.
 
+## Hosted Enqueue Service
+
+SpecSpace must not import Platform modules, open the queue database, or start a
+Platform subprocess in hosted mode. Platform therefore exposes a narrow HTTP
+boundary:
+
+```bash
+export PLATFORM_MANAGED_OPERATION_TOKEN="$(openssl rand -hex 32)"
+.venv/bin/python scripts/platform.py managed-operation serve \
+  --database .platform/managed-operations.sqlite3 \
+  --artifact-root ../SpecGraph \
+  --state-dir ../SpecSpace/.specspace-dev/state \
+  --specgraph-dir ../SpecGraph \
+  --host 127.0.0.1 \
+  --port 8091
+```
+
+The authenticated API provides:
+
+- `POST /v1/managed-operations` for materialize-and-enqueue;
+- `GET /v1/managed-operations/status?request_id=...` for transport status;
+- `GET /v1/health` for non-secret contract/adapter readiness.
+
+The POST body contains only `operation_id`, `workspace_id`, binding source ref,
+logical input refs, and optional opaque operator/confirmation refs. The service
+resolves files beneath worker-owned roots, computes all digests, builds the v1
+request, and then enqueues it. It rejects unknown fields, so raw idea text,
+argv, local paths, environment values, and output overrides cannot be sent by a
+SpecSpace client.
+
+The bearer token is read from `PLATFORM_MANAGED_OPERATION_TOKEN` (or another
+explicit environment variable name). It is never accepted as a CLI argument or
+returned by health/status. Non-loopback deployment requires TLS or an
+authenticated private service network.
+
 ## Delivery And Recovery
 
 Hosted execution uses **at-least-once** delivery. It must not claim exactly-once
