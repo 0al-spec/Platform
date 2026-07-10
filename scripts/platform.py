@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -15972,6 +15973,8 @@ def managed_operation_worker_once(args: argparse.Namespace) -> int:
 def _write_managed_operation_worker_health(
     args: argparse.Namespace,
     report: dict[str, Any],
+    *,
+    heartbeat_sequence: int,
 ) -> None:
     if not args.health_file:
         return
@@ -15981,10 +15984,12 @@ def _write_managed_operation_worker_health(
         "artifact_kind": "platform_hosted_managed_operation_worker_health",
         "schema_version": 1,
         "ok": True,
-        "generated_at": report["generated_at"],
+        "generated_at": utc_now_iso(),
         "worker_id": args.worker_id,
         "adapter": args.queue_adapter,
         "last_cycle_status": report["summary"]["status"],
+        "last_cycle_generated_at": report["generated_at"],
+        "heartbeat_sequence": heartbeat_sequence,
         "authority_boundary": {
             "health_is_execution_authority": False,
             "queue_status_is_lifecycle_evidence": False,
@@ -15998,20 +16003,80 @@ def _write_managed_operation_worker_health(
     temporary.replace(path)
 
 
+class _ManagedOperationWorkerHeartbeat:
+    def __init__(
+        self,
+        args: argparse.Namespace,
+        *,
+        interval_seconds: float = 5.0,
+    ) -> None:
+        self.args = args
+        self.interval_seconds = interval_seconds
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._sequence = 0
+        self._report = {
+            "generated_at": utc_now_iso(),
+            "summary": {"status": "hosted_managed_operation_worker_starting"},
+        }
+
+    def _write_locked(self) -> None:
+        self._sequence += 1
+        _write_managed_operation_worker_health(
+            self.args,
+            self._report,
+            heartbeat_sequence=self._sequence,
+        )
+
+    def _pulse(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            with self._lock:
+                self._write_locked()
+
+    def start(self) -> None:
+        if not self.args.health_file:
+            return
+        with self._lock:
+            self._write_locked()
+        self._thread = threading.Thread(
+            target=self._pulse,
+            name="managed-operation-worker-heartbeat",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def update(self, report: dict[str, Any]) -> None:
+        if not self.args.health_file:
+            return
+        with self._lock:
+            self._report = report
+            self._write_locked()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(1.0, self.interval_seconds * 2))
+
+
 def managed_operation_worker(args: argparse.Namespace) -> int:
     if args.poll_interval < 0.1:
         raise PlatformError("managed-operation worker poll interval must be at least 0.1 seconds")
     cycles = 0
+    heartbeat = _ManagedOperationWorkerHeartbeat(args)
+    heartbeat.start()
     try:
         while args.max_cycles <= 0 or cycles < args.max_cycles:
             report = _managed_operation_worker_cycle(args)
-            _write_managed_operation_worker_health(args, report)
+            heartbeat.update(report)
             print(json.dumps(report, sort_keys=True), flush=True)
             cycles += 1
             if report["summary"]["operation_processed"] is False:
                 time.sleep(args.poll_interval)
     except KeyboardInterrupt:
         pass
+    finally:
+        heartbeat.stop()
     return 0
 
 

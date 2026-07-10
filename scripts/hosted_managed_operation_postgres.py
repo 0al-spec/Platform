@@ -155,29 +155,13 @@ class PostgreSQLManagedOperationQueue:
             with self.connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT operation_id, workspace_id, receipt_json
-                    FROM managed_operation_jobs
-                    WHERE idempotency_key = %s FOR UPDATE
-                    """,
-                    (idempotency_key,),
-                )
-                existing = cursor.fetchone()
-                if existing is not None:
-                    if (
-                        existing["operation_id"] != operation_id
-                        or existing["workspace_id"] != workspace_id
-                    ):
-                        raise queue_module.QueueContractError(
-                            "idempotency key is already owned by another operation"
-                        )
-                    return self._loads(existing["receipt_json"])
-                cursor.execute(
-                    """
                     INSERT INTO managed_operation_jobs (
                       request_id, idempotency_key, operation_id, workspace_id,
                       request_sha256, request_json, status, attempt, available_at,
                       receipt_json, created_at, updated_at
                     ) VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    RETURNING request_id
                     """,
                     (
                         request_id,
@@ -192,8 +176,40 @@ class PostgreSQLManagedOperationQueue:
                         now_iso,
                     ),
                 )
-                self._record_event(cursor, request_id, "queued", 0, now_iso, receipt)
-        return receipt
+                inserted = cursor.fetchone()
+                if inserted is not None:
+                    self._record_event(
+                        cursor, request_id, "queued", 0, now_iso, receipt
+                    )
+                    return receipt
+                cursor.execute(
+                    """
+                    SELECT request_id, idempotency_key, operation_id, workspace_id,
+                           request_sha256, receipt_json
+                    FROM managed_operation_jobs
+                    WHERE request_id = %s OR idempotency_key = %s
+                    FOR UPDATE
+                    """,
+                    (request_id, idempotency_key),
+                )
+                matches = cursor.fetchall()
+                if len(matches) != 1:
+                    raise queue_module.QueueContractError(
+                        "managed operation request identity conflicts with queue state"
+                    )
+                existing = matches[0]
+                if (
+                    existing["request_id"] != request_id
+                    or existing["idempotency_key"] != idempotency_key
+                    or existing["operation_id"] != operation_id
+                    or existing["workspace_id"] != workspace_id
+                    or existing["request_sha256"]
+                    != queue_module.canonical_sha256(request)
+                ):
+                    raise queue_module.QueueContractError(
+                        "idempotency key is already owned by another operation"
+                    )
+                return self._loads(existing["receipt_json"])
 
     def lease_next(
         self,

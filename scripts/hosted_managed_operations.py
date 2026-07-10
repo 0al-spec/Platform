@@ -43,6 +43,9 @@ SIDE_EFFECT_CLASSES = (
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 WORKSPACE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 ARTIFACT_KIND_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+OPERATOR_REPLAY_POLICIES = frozenset(
+    {"read_only_replay_allowed", "same_request_dry_run_only"}
+)
 
 
 @dataclass(frozen=True)
@@ -461,6 +464,11 @@ def build_request(
         "inputs": [{"logical_ref": item["logical_ref"], "sha256": item["sha256"]} for item in input_records],
         "confirmation": confirmation,
     }
+    if (
+        definition is not None
+        and definition.replay_policy in OPERATOR_REPLAY_POLICIES
+    ):
+        idempotency_payload["operator_ref"] = operator_ref
     idempotency_key = hashlib.sha256(
         json.dumps(idempotency_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -689,6 +697,11 @@ def request_diagnostics(payload: dict[str, Any]) -> list[str]:
         ],
         "confirmation": payload.get("confirmation"),
     }
+    if (
+        definition is not None
+        and definition.replay_policy in OPERATOR_REPLAY_POLICIES
+    ):
+        idempotency_payload["operator_ref"] = payload.get("operator_ref")
     expected_idempotency_key = hashlib.sha256(
         json.dumps(idempotency_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
