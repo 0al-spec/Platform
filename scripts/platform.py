@@ -9802,16 +9802,17 @@ def product_candidate_approval_repair_session_diagnostics(
     *,
     expected_active_candidate_refs: tuple[str, ...],
     expected_promotion_gate_refs: tuple[str, ...],
+    expected_source_refs: dict[str, tuple[str, ...]] | None = None,
 ) -> list[Diagnostic]:
-    expected_source_refs: dict[str, tuple[str, ...]] = {}
+    expected_refs = dict(expected_source_refs or {})
     if expected_active_candidate_refs:
-        expected_source_refs["active_candidate"] = expected_active_candidate_refs
+        expected_refs["active_candidate"] = expected_active_candidate_refs
     if expected_promotion_gate_refs:
-        expected_source_refs["promotion_gate"] = expected_promotion_gate_refs
+        expected_refs["promotion_gate"] = expected_promotion_gate_refs
     diagnostics = [
         *graph_repository_repair_session_diagnostics(
             repair_session,
-            expected_source_refs=expected_source_refs,
+            expected_source_refs=expected_refs,
         )
     ]
     if nested_mapping(repair_session, "readiness").get("ready") is not True:
@@ -10293,6 +10294,7 @@ def build_product_candidate_approval_gate_report(
     expected_active_candidate_refs: tuple[str, ...],
     expected_repair_session_refs: tuple[str, ...],
     expected_promotion_gate_refs: tuple[str, ...],
+    expected_repair_session_source_refs: dict[str, tuple[str, ...]] | None,
     extra_diagnostics: list[Diagnostic],
 ) -> tuple[dict[str, Any], list[Diagnostic]]:
     diagnostics: list[Diagnostic] = [
@@ -10336,6 +10338,7 @@ def build_product_candidate_approval_gate_report(
                 expected_promotion_gate_refs=(
                     expected_promotion_gate_refs if active_candidate is not None else ()
                 ),
+                expected_source_refs=expected_repair_session_source_refs,
             )
         )
     if promotion_gate is not None:
@@ -10681,6 +10684,14 @@ def product_candidate_approval_gate_report_from_args(
                 ),
             )
         )
+    bound_run_dir_ref = (
+        workspace_binding_context.get("platform_default_run_dir_ref")
+        if isinstance(workspace_binding_context, dict)
+        and isinstance(
+            workspace_binding_context.get("platform_default_run_dir_ref"), str
+        )
+        else None
+    )
     report, diagnostics = build_product_candidate_approval_gate_report(
         deployment_profile_path=deployment_profile_path,
         deployment_profile=deployment_profile,
@@ -10716,6 +10727,11 @@ def product_candidate_approval_gate_report_from_args(
             resolved_path=promotion_gate_path,
             default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
             specgraph_dir=specgraph_dir,
+        ),
+        expected_repair_session_source_refs=(
+            repair_session_expected_source_refs_for_run_dir(bound_run_dir_ref)
+            if bound_run_dir_ref
+            else None
         ),
         extra_diagnostics=[
             *intent_diagnostics,

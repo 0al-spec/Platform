@@ -9937,6 +9937,99 @@ workspaces:
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ready_to_materialize"])
 
+    def test_product_candidate_approval_gate_accepts_bound_run_dir_repair_refs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/idea-alpha/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/idea-alpha/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+            )
+            runs_dir = specgraph_dir / "runs"
+            bound_dir = runs_dir / "idea-alpha"
+            bound_dir.mkdir()
+            for filename in (
+                "idea_to_spec_candidate_approval_intents.json",
+                "repaired_active_idea_to_spec_candidate.json",
+                "repaired_idea_to_spec_repair_session.json",
+                "repaired_idea_to_spec_promotion_gate.json",
+                "repaired_candidate_promotion_handoff_report.json",
+                "platform_product_repair_rerun_execution_report.json",
+                "platform_product_repair_rerun_publication_report.json",
+            ):
+                shutil.copyfile(runs_dir / filename, bound_dir / filename)
+
+            repair_session_path = bound_dir / "repaired_idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+                    )
+            repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
+
+            handoff_path = bound_dir / "repaired_candidate_promotion_handoff_report.json"
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            for entry in handoff["output_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+                    )
+            handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+            initialization = (
+                bound_dir / "platform_product_workspace_initialization_execution_report.json"
+            )
+            self.write_workspace_initialization_execution_report(
+                initialization,
+                workspace_id="idea-alpha",
+                display_name="Idea Alpha",
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--workspace-initialization",
+                str(initialization),
+                "--approval-intents",
+                str(bound_dir / "idea_to_spec_candidate_approval_intents.json"),
+                "--active-candidate",
+                str(bound_dir / "repaired_active_idea_to_spec_candidate.json"),
+                "--repair-session",
+                str(repair_session_path),
+                "--promotion-gate",
+                str(bound_dir / "repaired_idea_to_spec_promotion_gate.json"),
+                "--repaired-handoff",
+                str(handoff_path),
+                "--repair-execution",
+                str(bound_dir / "platform_product_repair_rerun_execution_report.json"),
+                "--repair-publication",
+                str(bound_dir / "platform_product_repair_rerun_publication_report.json"),
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ready_to_materialize"])
+        codes = {item["code"] for item in payload["diagnostics"]}
+        self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
+
     def test_product_candidate_approval_gate_rejects_stale_repaired_handoff_ref(
         self,
     ) -> None:
