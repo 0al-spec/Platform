@@ -49,7 +49,7 @@ services:
       - managed_operation_token
       - managed_operation_db_password
     environment:
-      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:-}"
+      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:?set PLATFORM_MANAGED_OPERATION_ALLOWLIST}"
     depends_on:
       managed-operation-postgres:
         condition: service_healthy
@@ -89,7 +89,7 @@ services:
     secrets:
       - managed_operation_db_password
     environment:
-      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:-}"
+      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:?set PLATFORM_MANAGED_OPERATION_ALLOWLIST}"
     depends_on:
       managed-operation-postgres:
         condition: service_healthy
