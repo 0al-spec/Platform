@@ -5048,6 +5048,11 @@ workspaces:
             gate_ref = "runs/ui-started-smoke/repaired_idea_to_spec_promotion_gate.json"
             repair_session_path = runs_dir / "repaired_idea_to_spec_repair_session.json"
             repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/ui-started-smoke/{Path(entry['source_ref']).name}"
+                    )
             repair_session["source_artifacts"]["active_candidate"]["source_ref"] = active_ref
             repair_session["source_artifacts"]["promotion_gate"]["source_ref"] = gate_ref
             repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
