@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 
@@ -14,9 +15,19 @@ SCRIPTS_ROOT = REPO_ROOT / "scripts"
 if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
+import hosted_managed_operation_canary as canary_module
+import hosted_managed_operation_executor as executor_module
 import hosted_managed_operation_postgres as postgres_module
 import hosted_managed_operation_queue as queue_module
+import hosted_managed_operation_service as service_module
+from tests.test_hosted_managed_operation_executor import (
+    ExecutorFixture,
+    RecordingRunner,
+)
 from tests.test_hosted_managed_operation_queue import SuccessfulExecutor, request_for
+
+
+TOKEN = "hosted-postgres-test-token-0123456789abcdef"
 
 
 class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
@@ -66,6 +77,99 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
         self.assertEqual(
             [event["status"] for event in events],
             ["queued", "leased", "running", "succeeded"],
+        )
+
+    @unittest.skipUnless(
+        os.environ.get("PLATFORM_TEST_POSTGRES_URL"),
+        "set PLATFORM_TEST_POSTGRES_URL for PostgreSQL queue integration",
+    )
+    def test_real_postgresql_canary_http_worker_lifecycle(self) -> None:
+        database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
+        setup_queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        try:
+            with setup_queue.connection.cursor() as cursor:
+                cursor.execute(
+                    "TRUNCATE managed_operation_events, managed_operation_locks, "
+                    "managed_operation_jobs RESTART IDENTITY CASCADE"
+                )
+        finally:
+            setup_queue.close()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = ExecutorFixture(Path(temp_dir))
+            request = fixture.request("review_status_execute")
+            allowlist = frozenset({"review_status_execute"})
+            service = service_module.HostedManagedOperationService(
+                queue_factory=lambda: postgres_module.PostgreSQLManagedOperationQueue(
+                    database_url
+                ),
+                adapter="postgresql",
+                resolver=fixture.resolver(),
+                now_epoch=lambda: 100.0,
+                now_iso=lambda: "2026-07-10T00:00:00Z",
+                allowed_operation_ids=allowlist,
+            )
+            service_health = service.health()
+            server = service_module.create_server(
+                host="127.0.0.1",
+                port=0,
+                service=service,
+                auth_token=TOKEN,
+            )
+            server_thread = threading.Thread(
+                target=server.serve_forever,
+                daemon=True,
+            )
+            server_thread.start()
+            stop_worker = threading.Event()
+
+            def process_one() -> None:
+                worker_queue = postgres_module.PostgreSQLManagedOperationQueue(
+                    database_url
+                )
+                worker = queue_module.HostedManagedOperationWorker(
+                    worker_queue,
+                    executor_module.PlatformManagedOperationExecutor(
+                        resolver=fixture.resolver(),
+                        platform_script=fixture.platform_script,
+                        runner=RecordingRunner(),
+                    ),
+                    worker_id="postgres-canary-worker",
+                    allowed_operation_ids=allowlist,
+                )
+                try:
+                    while not stop_worker.is_set():
+                        receipt = worker.run_once()
+                        if receipt is not None:
+                            return
+                        time.sleep(0.01)
+                finally:
+                    worker_queue.close()
+
+            worker_thread = threading.Thread(target=process_one, daemon=True)
+            worker_thread.start()
+            try:
+                report = canary_module.run_canary(
+                    request=request,
+                    service_url=f"http://127.0.0.1:{server.server_address[1]}",
+                    token=TOKEN,
+                    poll_interval_seconds=0.01,
+                    max_wait_seconds=5,
+                    artifact_root=fixture.artifact_root,
+                )
+            finally:
+                stop_worker.set()
+                worker_thread.join(timeout=5)
+                server.shutdown()
+                server_thread.join(timeout=5)
+                server.server_close()
+
+        self.assertTrue(report["summary"]["ok"], report["diagnostics"])
+        self.assertTrue(service_health["ok"])
+        self.assertEqual(service_health["adapter"], "postgresql")
+        self.assertEqual(
+            service_health["enabled_operation_ids"],
+            ["review_status_execute"],
         )
 
     @unittest.skipUnless(

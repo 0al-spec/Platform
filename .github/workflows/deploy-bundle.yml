@@ -28,6 +28,40 @@ jobs:
       - name: Validate fail-closed hosted Compose contract
         run: make hosted-managed-compose-contract PYTHON=python3
 
+  hosted-managed-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: managed_operations_test
+          POSTGRES_USER: managed_operations
+          POSTGRES_PASSWORD: managed-operations-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U managed_operations -d managed_operations_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PLATFORM_TEST_POSTGRES_URL: >-
+        postgresql://managed_operations:managed-operations-ci@127.0.0.1:5432/managed_operations_test
+    steps:
+      - name: Check out Platform
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install validation and hosted dependencies
+        run: python3 -m pip install -r requirements-dev.txt -r requirements-hosted.txt
+
+      - name: Test PostgreSQL queue and hosted canary lifecycle
+        run: make hosted-managed-postgres-integration PYTHON=python3
+
   platform-deploy-bundle:
     runs-on: ubuntu-latest
     steps:
