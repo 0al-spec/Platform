@@ -103,6 +103,37 @@ Queue transitions and their audit events are written atomically. The generic
 worker runtime receives a typed executor adapter; it does not accept a command,
 working directory, or environment from the queue request.
 
+## Fixed Platform Executor
+
+The worker entry point leases at most one request and routes it through the
+fixed adapter for its registered operation id:
+
+```bash
+.venv/bin/python scripts/platform.py managed-operation worker-once \
+  --database .platform/managed-operations.sqlite3 \
+  --artifact-root ../SpecGraph \
+  --state-dir ../SpecSpace/.specspace-dev/state \
+  --specgraph-dir ../SpecGraph \
+  --worker-id local-candidate-worker
+```
+
+Worker roots are deployment configuration, not request fields. The adapter:
+
+1. Reloads the binding source and verifies its pinned digest and revision.
+2. Resolves every registry input beneath the configured state, runs, or
+   SpecGraph roots and verifies its digest, size, media type, and artifact kind.
+3. Reloads digest-pinned confirmation evidence for non-dry-run Git review.
+4. Builds one fixed Platform argument list for the selected operation id.
+5. Runs the wrapper with the registry timeout and no request-provided argv,
+   environment, cwd, or output path.
+6. Requires every expected Platform report and records its digest before the
+   queue may mark the operation `succeeded`.
+
+All twelve SpecSpace managed operations have an adapter. Repair rerun remains a
+fixed two-phase `plan` then `execute` operation. The worker lease defaults to 600
+seconds so the current bounded two-phase operation fits within one lease; an
+expired lease still fails closed and enters normal recovery policy.
+
 ## Delivery And Recovery
 
 Hosted execution uses **at-least-once** delivery. It must not claim exactly-once
