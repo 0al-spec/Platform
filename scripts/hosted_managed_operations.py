@@ -131,7 +131,7 @@ MANAGED_OPERATIONS: tuple[ManagedOperationDefinition, ...] = (
     ),
     ManagedOperationDefinition(
         operation_id="repair_rerun_execute",
-        platform_command=("product-repair-rerun", "plan", "execute"),
+        platform_command=("product-repair-rerun", "execute"),
         input_refs=(
             "specspace-state://idea_to_spec_repair_rerun_requests.json",
             "runs/specspace_repair_draft_import_preview.json",
@@ -801,6 +801,45 @@ def receipt_diagnostics(payload: dict[str, Any]) -> list[str]:
             continue
         if not SHA256_RE.fullmatch(str(report.get("sha256") or "")):
             diagnostics.append(f"receipt output report {index} has an invalid digest")
-    if payload.get("status") == "succeeded" and not reports:
-        diagnostics.append("succeeded receipt must cite validated Platform output reports")
+    if payload.get("status") == "succeeded":
+        definition = operation_by_id(payload.get("operation_id"))
+        if definition is None:
+            diagnostics.append("succeeded receipt operation is not registered")
+        else:
+            report_refs = [
+                report.get("logical_ref")
+                for report in reports
+                if isinstance(report, dict)
+                and safe_artifact_ref(report.get("logical_ref"))
+            ]
+            for report_ref in report_refs:
+                if not any(
+                    artifact_ref_matches_template(report_ref, expected)
+                    for expected in definition.output_reports
+                ):
+                    diagnostics.append(
+                        f"succeeded receipt cites unexpected output report: {report_ref}"
+                    )
+            for expected in definition.output_reports:
+                if not any(
+                    artifact_ref_matches_template(report_ref, expected)
+                    for report_ref in report_refs
+                ):
+                    diagnostics.append(
+                        f"succeeded receipt is missing expected output report: {expected}"
+                    )
     return diagnostics
+
+
+def artifact_ref_matches_template(logical_ref: str, template: str) -> bool:
+    if "<request-id>" not in template:
+        return logical_ref == template
+    prefix, suffix = template.split("<request-id>", 1)
+    request_component = logical_ref.removeprefix(prefix).removesuffix(suffix)
+    return (
+        logical_ref.startswith(prefix)
+        and logical_ref.endswith(suffix)
+        and bool(request_component)
+        and "/" not in request_component
+        and request_component not in {".", ".."}
+    )

@@ -63,6 +63,11 @@ class HostedManagedOperationContractTests(unittest.TestCase):
         )
         initialization = hosted.operation_by_id("workspace_initialization_execute")
         self.assertEqual(initialization.binding_requirement, "planned_or_ready")
+        repair = hosted.operation_by_id("repair_rerun_execute")
+        self.assertEqual(
+            repair.platform_command,
+            ("product-repair-rerun", "execute"),
+        )
         self.assertTrue(
             all(
                 operation.binding_requirement == "ready"
@@ -245,6 +250,52 @@ class HostedManagedOperationContractTests(unittest.TestCase):
             receipt["authority_boundary"]["platform_output_reports_are_authoritative"]
         )
 
+    def test_succeeded_receipt_requires_the_registered_output_report_set(self) -> None:
+        request = {
+            "request_id": "managed-operation://pantry-control/repair_rerun_execute/abc",
+            "idempotency_key": "4" * 64,
+            "operation": {"operation_id": "repair_rerun_execute"},
+            "workspace": {"workspace_id": "pantry-control"},
+        }
+        receipt = hosted.build_receipt(
+            request=request,
+            status="succeeded",
+            generated_at="2026-07-10T00:00:00Z",
+            attempt=1,
+            output_reports=(
+                {
+                    "logical_ref": "runs/platform_product_repair_rerun_execution_report.json",
+                    "sha256": "5" * 64,
+                },
+                {
+                    "logical_ref": "runs/unrelated.json",
+                    "sha256": "6" * 64,
+                },
+            ),
+        )
+
+        diagnostics = hosted.receipt_diagnostics(receipt)
+
+        self.assertIn(
+            "succeeded receipt is missing expected output report: "
+            "runs/managed_repair_rerun_plans/<request-id>."
+            "platform_product_repair_rerun_execution_plan.json",
+            diagnostics,
+        )
+        self.assertIn(
+            "succeeded receipt cites unexpected output report: runs/unrelated.json",
+            diagnostics,
+        )
+
+        receipt["output_reports"][1] = {
+            "logical_ref": (
+                "runs/managed_repair_rerun_plans/request-42."
+                "platform_product_repair_rerun_execution_plan.json"
+            ),
+            "sha256": "6" * 64,
+        }
+        self.assertEqual(hosted.receipt_diagnostics(receipt), [])
+
     def test_queued_receipt_has_no_execution_attempt_yet(self) -> None:
         request = {
             "request_id": "managed-operation://pantry-control/review_status_execute/abc",
@@ -344,6 +395,61 @@ class HostedManagedOperationContractTests(unittest.TestCase):
             self.assertEqual(payload["status"], "ready")
             self.assertEqual(hosted.request_diagnostics(payload), [])
             self.assertNotIn(temp_dir, json.dumps(payload))
+
+    def test_cli_materializes_initialization_request_from_planned_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            binding = platform.product_workspace_initialization_binding(
+                workspace_id="pantry-control",
+                display_name="Pantry Control",
+                route="/pantry-control",
+                workspace_root=temp / "PantryControl",
+                governance_profile="product_workspace",
+                artifact_base_url="https://specgraph.tech",
+                status="planned",
+                plan_ref="runs/pantry-control/initialization-plan.json",
+                plan_sha256="1" * 64,
+            )
+            binding_path = temp / "initialization-plan.json"
+            binding_path.write_text(
+                json.dumps({"workspace_binding": binding}),
+                encoding="utf-8",
+            )
+            execution_request = temp / "initialization-request.json"
+            execution_request.write_text("{}", encoding="utf-8")
+            output_path = temp / "hosted-request.json"
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "scripts" / "platform.py"),
+                    "managed-operation",
+                    "request",
+                    "--operation-id",
+                    "workspace_initialization_execute",
+                    "--workspace-binding",
+                    str(binding_path),
+                    "--workspace-binding-ref",
+                    "runs/product_workspace_initialization_execution_plan.json",
+                    "--input",
+                    (
+                        "runs/product_workspace_initialization_execution_request.json="
+                        f"{execution_request}"
+                    ),
+                    "--output",
+                    str(output_path),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "ready")
+            self.assertEqual(payload["workspace_binding"]["status"], "planned")
+            self.assertEqual(hosted.request_diagnostics(payload), [])
 
     def test_missing_input_diagnostic_does_not_expose_local_path(self) -> None:
         missing_path = Path("/Users/private/raw-idea.json")
