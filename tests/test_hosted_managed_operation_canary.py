@@ -247,6 +247,28 @@ class HostedManagedOperationCanaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             fixture = ExecutorFixture(Path(temp_dir))
             request = fixture.request("promotion_execute_dry_run")
+
+            blocked_server, blocked_thread, blocked_service_url = self.server()
+            try:
+                blocked_report = canary.run_canary(
+                    request=request,
+                    service_url=blocked_service_url,
+                    token=TOKEN,
+                    poll_interval_seconds=0,
+                    artifact_root=fixture.artifact_root,
+                )
+            finally:
+                blocked_server.shutdown()
+                blocked_thread.join(timeout=5)
+                blocked_server.server_close()
+
+            self.assertFalse(blocked_report["summary"]["ok"])
+            self.assertIn(
+                "canary operation must be read-only",
+                " ".join(blocked_report["diagnostics"]),
+            )
+            self.assertIsNone(CanaryHTTPHandler.request_payload)
+
             output_reports = []
             for ref in request["expected_output_reports"]:
                 output = fixture.path_for_ref(ref)
