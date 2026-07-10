@@ -15862,17 +15862,86 @@ def managed_operation_queue_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _recovery_preflight_findings(
+    expired_requests: list[dict[str, Any]],
+    *,
+    max_attempts: int,
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for item in expired_requests:
+        request = item.get("request")
+        request = request if isinstance(request, dict) else {}
+        operation = request.get("operation")
+        operation = operation if isinstance(operation, dict) else {}
+        operation_id = operation.get("operation_id")
+        definition = hosted_managed_operations.operation_by_id(
+            operation_id if isinstance(operation_id, str) else ""
+        )
+        if definition is None:
+            findings.append(
+                {
+                    "code": "recovery_unknown_operation",
+                    "operation_id": operation_id,
+                    "message": "strict recovery preflight found an unknown operation",
+                }
+            )
+            continue
+        attempt = item.get("attempt")
+        attempt = int(attempt) if isinstance(attempt, int) else 0
+        stored_policy = str(operation.get("replay_policy") or "")
+        stored_retry = (
+            stored_policy in hosted_managed_operation_queue.AUTO_RETRY_POLICIES
+            and attempt < max_attempts
+        )
+        current_retry = (
+            definition.replay_policy
+            in hosted_managed_operation_queue.AUTO_RETRY_POLICIES
+            and attempt < max_attempts
+        )
+        if stored_retry and not current_retry:
+            findings.append(
+                {
+                    "code": "recovery_requeued_non_replay_safe_operation",
+                    "operation_id": definition.operation_id,
+                    "message": "strict recovery blocked before requeueing an operation whose current policy is not replay-safe",
+                }
+            )
+        elif not stored_retry and current_retry:
+            findings.append(
+                {
+                    "code": "recovery_quarantined_replay_safe_operation",
+                    "operation_id": definition.operation_id,
+                    "message": "strict recovery blocked before quarantining an operation whose current policy is replay-safe",
+                }
+            )
+    return findings
+
+
 def managed_operation_queue_recover(args: argparse.Namespace) -> int:
+    now_epoch = time.time()
+    now_iso = utc_now_iso()
     queue = _open_managed_operation_queue(args)
     try:
-        receipts = queue.recover_expired(
-            now_epoch=time.time(),
-            now_iso=utc_now_iso(),
+        expired_requests = queue.expired_requests(now_epoch=now_epoch)
+        preflight_findings = _recovery_preflight_findings(
+            expired_requests,
             max_attempts=args.max_attempts,
+        )
+        preflight_blocked = args.strict and bool(preflight_findings)
+        receipts = (
+            []
+            if preflight_blocked
+            else queue.recover_expired(
+                now_epoch=now_epoch,
+                now_iso=now_iso,
+                max_attempts=args.max_attempts,
+            )
         )
     finally:
         queue.close()
-    policy_findings: list[dict[str, Any]] = []
+    policy_findings: list[dict[str, Any]] = (
+        preflight_findings if preflight_blocked else []
+    )
     for receipt in receipts:
         operation_id = receipt.get("operation_id")
         definition = hosted_managed_operations.operation_by_id(
@@ -15916,7 +15985,11 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
         "generated_at": utc_now_iso(),
         "receipts": receipts,
         "summary": {
-            "status": "hosted_managed_operation_queue_recovered",
+            "status": (
+                "hosted_managed_operation_queue_recovery_preflight_blocked"
+                if preflight_blocked
+                else "hosted_managed_operation_queue_recovered"
+            ),
             "recovered_count": len(receipts),
             "requeued_count": sum(
                 receipt.get("status") == "queued" for receipt in receipts
@@ -15925,6 +15998,7 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
                 receipt.get("status") == "quarantined" for receipt in receipts
             ),
             "policy_safe": not policy_findings,
+            "preflight_blocked": preflight_blocked,
             "strict": args.strict,
         },
         "policy_findings": policy_findings,

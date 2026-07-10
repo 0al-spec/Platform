@@ -535,6 +535,27 @@ class PostgreSQLManagedOperationQueue:
                     recovered.append(receipt)
         return recovered
 
+    def expired_requests(self, *, now_epoch: float) -> list[dict[str, Any]]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT request_id, attempt, request_json
+                FROM managed_operation_jobs
+                WHERE status IN ('leased', 'running') AND lease_expires_at <= %s
+                ORDER BY request_id
+                """,
+                (now_epoch,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "request_id": row["request_id"],
+                "attempt": int(row["attempt"]),
+                "request": self._loads(row["request_json"]),
+            }
+            for row in rows
+        ]
+
     def get(self, request_id: str) -> dict[str, Any] | None:
         with self.connection.cursor() as cursor:
             cursor.execute(
