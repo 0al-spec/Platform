@@ -43,18 +43,46 @@ class HostedManagedOperationService:
     def __init__(
         self,
         *,
-        database_path: Path,
+        database_path: Path | None = None,
+        queue_factory: Callable[[], queue_module.ManagedOperationQueue] | None = None,
+        adapter: str = "sqlite",
         resolver: executor_module.FilesystemManagedOperationResolver,
         now_epoch: Callable[[], float],
         now_iso: Callable[[], str],
     ) -> None:
-        self.database_path = database_path.resolve()
+        if queue_factory is None and database_path is None:
+            raise HostedServiceError("hosted service queue storage is not configured")
+        self.database_path = database_path.resolve() if database_path is not None else None
+        self.queue_factory = queue_factory or (
+            lambda: queue_module.SQLiteManagedOperationQueue(self.database_path)
+        )
+        self.adapter = adapter
         self.resolver = resolver
         self.now_epoch = now_epoch
         self.now_iso = now_iso
 
-    def _queue(self) -> queue_module.SQLiteManagedOperationQueue:
-        return queue_module.SQLiteManagedOperationQueue(self.database_path)
+    def _queue(self) -> queue_module.ManagedOperationQueue:
+        return self.queue_factory()
+
+    def health(self) -> dict[str, Any]:
+        queue: queue_module.ManagedOperationQueue | None = None
+        try:
+            queue = self._queue()
+            ready = queue.health()
+        except Exception:
+            ready = False
+        finally:
+            if queue is not None:
+                queue.close()
+        return {
+            "artifact_kind": "platform_hosted_managed_operation_service_health",
+            "ok": ready,
+            "status": "ready" if ready else "queue_unavailable",
+            "contract_ref": contracts.REQUEST_CONTRACT_REF,
+            "registry_contract_ref": contracts.REGISTRY_CONTRACT_REF,
+            "operation_count": len(contracts.MANAGED_OPERATIONS),
+            "adapter": self.adapter,
+        }
 
     def enqueue(self, payload: dict[str, Any]) -> dict[str, Any]:
         unknown = sorted(set(payload) - ENQUEUE_FIELDS)
@@ -254,14 +282,10 @@ class HostedManagedOperationHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/v1/health":
+            report = self.server.service.health()
             self._write_json(
-                HTTPStatus.OK,
-                {
-                    "artifact_kind": "platform_hosted_managed_operation_service_health",
-                    "ok": True,
-                    "contract_ref": contracts.REQUEST_CONTRACT_REF,
-                    "adapter": "sqlite",
-                },
+                HTTPStatus.OK if report["ok"] else HTTPStatus.SERVICE_UNAVAILABLE,
+                report,
             )
             return
         if not self._authorized():

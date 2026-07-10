@@ -544,6 +544,29 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(payload["compose_files"], [str(production_compose)])
         self.assertEqual(payload["command"].count("--file"), 1)
 
+    def test_deploy_hosted_managed_profile_adds_web_and_queue_overlays(self) -> None:
+        result = self.run_cli(
+            "deploy",
+            "render",
+            "--profile",
+            "hosted-managed",
+            "--dry-run",
+            "--format",
+            "json",
+            env_overrides={"COMPOSE_PROJECT_NAME": None},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(
+            payload["compose_files"][-2:],
+            [
+                str(REPO_ROOT / "docker-compose.production-web.example.yml"),
+                str(REPO_ROOT / "docker-compose.hosted-managed.example.yml"),
+            ],
+        )
+        self.assertEqual(payload["command"].count("--file"), 3)
+
     def test_deploy_missing_compose_file_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             result = self.run_cli(

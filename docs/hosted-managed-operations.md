@@ -90,6 +90,19 @@ adapter behavior and supports deterministic tests before the PostgreSQL adapter
 is deployed. The store persists immutable request documents, idempotency keys,
 leases, workspace/operation locks, receipts, and an append-only transition log.
 
+The production adapter uses PostgreSQL row leases and `FOR UPDATE SKIP LOCKED`:
+
+```bash
+.venv/bin/python scripts/platform.py managed-operation queue-init \
+  --queue-adapter postgresql \
+  --database-url-file /run/secrets/managed-operation-database-url
+```
+
+Install `requirements-hosted.txt` in service and worker images. PostgreSQL is
+required for multi-worker deployments; SQLite remains restricted to local and
+single-worker integration use. Production service/worker argv must contain only
+the database URL file path, never the URL or password itself.
+
 Expired leases are handled by policy:
 
 - read-only inspection and dry-run operations may be requeued within their
@@ -116,6 +129,10 @@ fixed adapter for its registered operation id:
   --specgraph-dir ../SpecGraph \
   --worker-id local-candidate-worker
 ```
+
+The long-running production entry point is `managed-operation worker`. It uses
+the same fixed adapter, performs lease recovery before each cycle, and sleeps
+only when the queue is idle.
 
 Worker roots are deployment configuration, not request fields. The adapter:
 
@@ -203,3 +220,56 @@ introduced. One operator request must be claimed by exactly one executor mode;
 the local and hosted executors must not race on the same request. Production
 read-only mode remains the default until a hosted worker, store, and queue are
 explicitly configured and healthy.
+
+Use a drain-and-cutover migration; do not copy SQLite queue rows into
+PostgreSQL or let local and hosted executors consume the same request state:
+
+1. Disable creation of new local managed-operation requests while keeping the
+   existing local executor available for inspection.
+2. Let replay-safe local work finish. Reconcile any running or expired
+   consume-on-attempt operation from its authoritative Platform reports; create
+   a new UI request when the old request is consumed, superseded, ambiguous, or
+   quarantined.
+3. Start PostgreSQL, initialize the empty production queue, and verify database
+   health before starting the hosted service or worker.
+4. Start one worker profile first. Require a fresh heartbeat and a healthy
+   authenticated service response before enabling hosted mode in SpecSpace.
+5. Disable the local executor and enable the hosted executor in one deployment
+   change. Submit a new replay-safe inspection request, then one bounded
+   consume-on-attempt request, and require their authoritative Platform reports
+   before declaring cutover complete.
+6. Preserve the old SQLite database read-only for audit. Never replay its rows
+   into PostgreSQL and never infer lifecycle completion from either queue alone.
+
+Rollback is also a drain operation. Stop new hosted enqueueing, stop workers
+after their current lease, recover expired leases, and reconcile or quarantine
+all non-terminal requests. Only after the PostgreSQL queue has no `queued`,
+`leased`, or `running` jobs may SpecSpace disable hosted mode and re-enable the
+local executor. Consume-on-attempt and non-dry-run Git review work requires a
+new operator request after rollback; it must not be copied or blindly retried.
+
+The minimum recovery drill must demonstrate:
+
+- a replay-safe expired lease is requeued and can be leased by another worker;
+- an expired consume-on-attempt lease is quarantined;
+- workspace locks are shared across PostgreSQL connections;
+- service health becomes unavailable when PostgreSQL is unavailable;
+- queue `succeeded` does not advance SpecSpace without the expected durable
+  Platform report.
+
+For a Compose-capable host, use the `hosted-managed` deployment profile. It
+adds PostgreSQL, the authenticated enqueue/status service, a long-running
+worker, shared workspace-scoped SpecGraph artifacts, and SpecSpace hosted mode:
+
+```bash
+umask 077
+openssl rand -hex 32 > /secure/path/managed-operation-token
+openssl rand -hex 32 > /secure/path/managed-operation-db-password
+export PLATFORM_MANAGED_OPERATION_TOKEN_FILE=/secure/path/managed-operation-token
+export PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE=/secure/path/managed-operation-db-password
+.venv/bin/python scripts/platform.py deploy render --profile hosted-managed
+.venv/bin/python scripts/platform.py deploy up --profile hosted-managed
+```
+
+The example is a single-host topology. The service is private to the Compose
+network; expose it externally only behind TLS and authenticated ingress.

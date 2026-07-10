@@ -54,6 +54,8 @@ class ManagedOperationExecutor(Protocol):
 
 
 class ManagedOperationQueue(Protocol):
+    def health(self) -> bool: ...
+
     def enqueue(
         self,
         request: dict[str, Any],
@@ -87,6 +89,39 @@ class ManagedOperationQueue(Protocol):
         now_epoch: float,
         now_iso: str,
     ) -> dict[str, Any]: ...
+
+    def close(self) -> None: ...
+
+    def get(self, request_id: str) -> dict[str, Any] | None: ...
+
+    def events(self, request_id: str) -> list[dict[str, Any]]: ...
+
+    def recover_expired(
+        self,
+        *,
+        now_epoch: float,
+        now_iso: str,
+        max_attempts: int = 3,
+    ) -> list[dict[str, Any]]: ...
+
+
+def open_managed_operation_queue(
+    *,
+    adapter: str,
+    database: str | Path,
+) -> ManagedOperationQueue:
+    if adapter == "sqlite":
+        return SQLiteManagedOperationQueue(Path(database).resolve())
+    if adapter == "postgresql":
+        try:
+            from scripts import hosted_managed_operation_postgres
+        except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
+            import hosted_managed_operation_postgres
+
+        return hosted_managed_operation_postgres.PostgreSQLManagedOperationQueue(
+            str(database)
+        )
+    raise QueueContractError("managed-operation queue adapter is unsupported")
 
 
 def canonical_sha256(payload: dict[str, Any]) -> str:
@@ -164,6 +199,9 @@ class SQLiteManagedOperationQueue:
 
     def close(self) -> None:
         self.connection.close()
+
+    def health(self) -> bool:
+        return self.connection.execute("SELECT 1").fetchone()[0] == 1
 
     def initialize(self) -> None:
         self.connection.executescript(
