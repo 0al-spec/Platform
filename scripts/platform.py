@@ -3897,6 +3897,22 @@ def graph_repository_repaired_source_ref_aliases(
     return (graph_repository_repaired_source_ref(runs_dir=runs_dir, filename=filename),)
 
 
+def graph_repository_repair_session_source_refs_for_runs_dir(
+    runs_dir: Path,
+) -> dict[str, tuple[str, ...]]:
+    """Return the only valid journal provenance refs for the selected run scope."""
+    if runs_dir.parent.name != "runs":
+        return {
+            key: (value,)
+            for key, value in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items()
+        }
+    run_dir_ref = f"runs/{runs_dir.name}"
+    return {
+        key: (f"{run_dir_ref}/{Path(value).name}",)
+        for key, value in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items()
+    }
+
+
 def graph_repository_operation(
     *,
     name: str,
@@ -4270,7 +4286,16 @@ def build_graph_repository_execution_plan(
 
         repair_session = payloads.get("idea_to_spec_repair_session")
         if repair_session is not None:
-            diagnostics.extend(graph_repository_repair_session_diagnostics(repair_session))
+            diagnostics.extend(
+                graph_repository_repair_session_diagnostics(
+                    repair_session,
+                    expected_source_refs=(
+                        graph_repository_repair_session_source_refs_for_runs_dir(
+                            runs_dir
+                        )
+                    ),
+                )
+            )
 
     repaired_payloads: dict[str, dict[str, Any]] = {}
     repaired_source_refs: dict[str, str] = {}
@@ -4312,6 +4337,9 @@ def build_graph_repository_execution_plan(
                     repaired_repair_session,
                     subject="runs.repaired_idea_to_spec_repair_session.json",
                     expected_source_refs={
+                        **graph_repository_repair_session_source_refs_for_runs_dir(
+                            runs_dir
+                        ),
                         "active_candidate": graph_repository_repaired_source_ref_aliases(
                             runs_dir=runs_dir,
                             filename=Path(

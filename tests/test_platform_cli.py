@@ -5163,6 +5163,64 @@ workspaces:
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
         self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
 
+    def test_graph_repository_plan_accepts_repaired_handoff_in_selected_run_dir(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            runs_dir = root / "runs"
+            runs_dir.mkdir()
+            self.write_graph_repository_run_artifacts(runs_dir)
+            self.write_graph_repository_repaired_run_artifacts(runs_dir)
+            selected_run_dir = runs_dir / "idea-alpha"
+            selected_run_dir.mkdir()
+            for filename in (
+                "repaired_active_idea_to_spec_candidate.json",
+                "repaired_idea_to_spec_repair_session.json",
+                "repaired_idea_to_spec_promotion_gate.json",
+                "repaired_candidate_promotion_handoff_report.json",
+            ):
+                shutil.copyfile(runs_dir / filename, selected_run_dir / filename)
+
+            repair_session_path = (
+                selected_run_dir / "repaired_idea_to_spec_repair_session.json"
+            )
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+                    )
+            repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
+
+            handoff_path = selected_run_dir / "repaired_candidate_promotion_handoff_report.json"
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            for entry in handoff["output_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+                    )
+            handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                str(Path("graph-repository-service.example.json").resolve()),
+                "--runs-dir",
+                str(selected_run_dir),
+                "--repaired-handoff",
+                "repaired_candidate_promotion_handoff_report.json",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        codes = {item["code"] for item in payload["diagnostics"]}
+        self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
+
     def test_graph_repository_plan_rejects_stale_repaired_handoff_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             runs_dir = Path(tmp_dir)
