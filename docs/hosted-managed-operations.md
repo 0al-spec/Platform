@@ -116,6 +116,11 @@ Queue transitions and their audit events are written atomically. The generic
 worker runtime receives a typed executor adapter; it does not accept a command,
 working directory, or environment from the queue request.
 
+Concurrent enqueue is idempotent at the PostgreSQL constraint boundary. The
+adapter inserts with `ON CONFLICT DO NOTHING` and then reloads the winning row;
+it must not rely on locking a row that does not exist yet. Transport retries
+using the same request return the current receipt rather than a database error.
+
 ## Fixed Platform Executor
 
 The worker entry point leases at most one request and routes it through the
@@ -133,6 +138,12 @@ fixed adapter for its registered operation id:
 The long-running production entry point is `managed-operation worker`. It uses
 the same fixed adapter, performs lease recovery before each cycle, and sleeps
 only when the queue is idle.
+
+Container liveness heartbeat runs independently from the synchronous execution
+cycle. A bounded operation may legitimately occupy the worker for several
+minutes; the health file continues to receive fresh non-secret heartbeat
+records while the Platform wrapper runs. Lease ownership and authoritative
+operation completion remain separate queue/report checks.
 
 Worker roots are deployment configuration, not request fields. The adapter:
 
@@ -198,6 +209,13 @@ If a worker exits after Platform writes a report but before queue acknowledgemen
 the next lease reconciles the idempotency key and report digest instead of
 blindly repeating the side effect. `promotion_review_execute` additionally
 requires an explicit confirmation ref and reconcile-before-retry behavior.
+
+For `read_only_replay_allowed` and `same_request_dry_run_only`, an explicit new
+operator action may use a new opaque `operator_ref`. Platform includes that ref
+in the idempotency identity only for those replay-safe policies, allowing a
+fresh review-status inspection or dry-run without weakening idempotency for
+consume-on-attempt and irreversible operations. A transport retry must reuse
+the original request and operator ref.
 
 ## Privacy And Authority
 

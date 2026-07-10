@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
+from types import SimpleNamespace
 import unittest
 
 
@@ -17,6 +19,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
 import hosted_managed_operation_executor as executor_module
 import hosted_managed_operation_queue as queue_module
 import hosted_managed_operations as contracts
+from scripts import platform
 
 
 WORKSPACE_ID = "pantry-control"
@@ -395,7 +398,31 @@ class HostedManagedOperationExecutorTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertTrue(health["ok"])
         self.assertEqual(health["adapter"], "sqlite")
+        self.assertGreaterEqual(health["heartbeat_sequence"], 2)
         self.assertNotIn(str(database), json.dumps(health))
+
+    def test_worker_heartbeat_advances_while_cycle_is_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            health_file = Path(temp_dir) / "worker-health.json"
+            args = SimpleNamespace(
+                health_file=str(health_file),
+                worker_id="worker-test",
+                queue_adapter="postgresql",
+            )
+            heartbeat = platform._ManagedOperationWorkerHeartbeat(
+                args,
+                interval_seconds=0.01,
+            )
+            heartbeat.start()
+            time.sleep(0.055)
+            heartbeat.stop()
+            health = json.loads(health_file.read_text(encoding="utf-8"))
+
+        self.assertGreaterEqual(health["heartbeat_sequence"], 3)
+        self.assertEqual(
+            health["last_cycle_status"],
+            "hosted_managed_operation_worker_starting",
+        )
 
 
 if __name__ == "__main__":

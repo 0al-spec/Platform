@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 
 
@@ -112,6 +114,53 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
 
         self.assertIsNotNone(leased)
         self.assertIsNone(blocked)
+
+    @unittest.skipUnless(
+        os.environ.get("PLATFORM_TEST_POSTGRES_URL"),
+        "set PLATFORM_TEST_POSTGRES_URL for PostgreSQL queue integration",
+    )
+    def test_concurrent_idempotent_enqueue_returns_one_queue_job(self) -> None:
+        database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
+        first_queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        second_queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        try:
+            with first_queue.connection.cursor() as cursor:
+                cursor.execute(
+                    "TRUNCATE managed_operation_events, managed_operation_locks, "
+                    "managed_operation_jobs RESTART IDENTITY CASCADE"
+                )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                request = request_for(Path(temp_dir), "review_status_execute")
+                barrier = threading.Barrier(2)
+
+                def enqueue(queue: object) -> dict[str, object]:
+                    barrier.wait(timeout=5)
+                    return queue.enqueue(
+                        request,
+                        now_epoch=100,
+                        now_iso="2026-07-10T00:00:00Z",
+                    )
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = (
+                        executor.submit(enqueue, first_queue),
+                        executor.submit(enqueue, second_queue),
+                    )
+                    receipts = [future.result(timeout=10) for future in futures]
+                retry_request = {**request, "generated_at": "2026-07-10T00:00:01Z"}
+                retry_receipt = second_queue.enqueue(
+                    retry_request,
+                    now_epoch=101,
+                    now_iso="2026-07-10T00:00:01Z",
+                )
+                events = first_queue.events(request["request_id"])
+        finally:
+            first_queue.close()
+            second_queue.close()
+
+        self.assertEqual(receipts[0], receipts[1])
+        self.assertEqual(retry_receipt, receipts[0])
+        self.assertEqual([event["status"] for event in events], ["queued"])
 
     @unittest.skipUnless(
         os.environ.get("PLATFORM_TEST_POSTGRES_URL"),

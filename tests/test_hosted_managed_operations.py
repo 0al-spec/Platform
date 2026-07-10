@@ -147,6 +147,68 @@ class HostedManagedOperationContractTests(unittest.TestCase):
             "platform_product_repair_rerun_execution_report",
         )
 
+    def test_operator_ref_distinguishes_only_replay_safe_execution_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            review_input = temp / "promotion.json"
+            review_input.write_text("{}", encoding="utf-8")
+            review_inputs = {
+                "runs/product_candidate_promotion_execution_report.json": review_input
+            }
+            first_review = hosted.build_request(
+                operation_id="review_status_execute",
+                workspace_binding=ready_binding(),
+                workspace_binding_ref="runs/initialization.json",
+                workspace_binding_source_sha256="2" * 64,
+                inputs=review_inputs,
+                generated_at="2026-07-10T00:00:00Z",
+                operator_ref="operator://specspace-action-a",
+            )
+            second_review = hosted.build_request(
+                operation_id="review_status_execute",
+                workspace_binding=ready_binding(),
+                workspace_binding_ref="runs/initialization.json",
+                workspace_binding_source_sha256="2" * 64,
+                inputs=review_inputs,
+                generated_at="2026-07-10T00:00:01Z",
+                operator_ref="operator://specspace-action-b",
+            )
+
+            intake_inputs: dict[str, Path] = {}
+            for index, ref in enumerate(
+                hosted.operation_by_id("real_idea_intake_execute").input_refs
+            ):
+                path = temp / f"intake-{index}.json"
+                path.write_text("{}", encoding="utf-8")
+                intake_inputs[ref] = path
+            first_intake = hosted.build_request(
+                operation_id="real_idea_intake_execute",
+                workspace_binding=ready_binding(),
+                workspace_binding_ref="runs/initialization.json",
+                workspace_binding_source_sha256="2" * 64,
+                inputs=intake_inputs,
+                generated_at="2026-07-10T00:00:00Z",
+                operator_ref="operator://specspace-action-a",
+            )
+            second_intake = hosted.build_request(
+                operation_id="real_idea_intake_execute",
+                workspace_binding=ready_binding(),
+                workspace_binding_ref="runs/initialization.json",
+                workspace_binding_source_sha256="2" * 64,
+                inputs=intake_inputs,
+                generated_at="2026-07-10T00:00:01Z",
+                operator_ref="operator://specspace-action-b",
+            )
+
+        self.assertNotEqual(
+            first_review["idempotency_key"], second_review["idempotency_key"]
+        )
+        self.assertEqual(hosted.request_diagnostics(first_review), [])
+        self.assertEqual(hosted.request_diagnostics(second_review), [])
+        self.assertEqual(
+            first_intake["idempotency_key"], second_intake["idempotency_key"]
+        )
+
     def test_request_rejects_registry_and_idempotency_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = Path(temp_dir) / "execution.json"
