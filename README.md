@@ -113,6 +113,9 @@ scripts/platform.py git-service validate-request \
   --request path/to/git-service-request.json
 scripts/platform.py git-service validate-response \
   --response path/to/git-service-response.json
+scripts/platform.py managed-operation contract
+scripts/platform.py managed-operation validate-request \
+  --request runs/hosted_managed_operation_request.json
 scripts/platform.py git-service execute-promotion \
   --contract git-service-operation-contract.example.json \
   --deployment-profile deployment-profile.product-idea-to-spec.example.json \
