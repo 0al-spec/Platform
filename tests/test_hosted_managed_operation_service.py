@@ -172,6 +172,27 @@ class HostedManagedOperationServiceTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertNotIn(TOKEN, json.dumps(payload))
 
+    def test_health_fails_without_exposing_queue_failure_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = ExecutorFixture(Path(temp_dir))
+
+            def unavailable_queue():
+                raise RuntimeError("private database failure")
+
+            service = service_module.HostedManagedOperationService(
+                queue_factory=unavailable_queue,
+                adapter="postgresql",
+                resolver=fixture.resolver(),
+                now_epoch=lambda: 100.0,
+                now_iso=lambda: "2026-07-10T00:00:00Z",
+            )
+
+            report = service.health()
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["status"], "queue_unavailable")
+        self.assertNotIn("private database failure", json.dumps(report))
+
 
 if __name__ == "__main__":
     unittest.main()

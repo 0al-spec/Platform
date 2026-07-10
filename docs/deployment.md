@@ -129,6 +129,14 @@ a Node static file server instead of running the Vite development server.
 If another local process already owns the default web port, set
 `SPECSPACE_WEB_PORT` in `.env` or the shell and rerun `deploy up`.
 
+Use `--profile hosted-managed` to add both the production web overlay and
+`docker-compose.hosted-managed.example.yml`. This profile requires
+`PLATFORM_MANAGED_OPERATION_TOKEN` and
+`PLATFORM_MANAGED_OPERATION_DB_PASSWORD`; it runs PostgreSQL, the private
+Platform enqueue/status service, a long-running worker, and SpecSpace in hosted
+managed mode. Queue status remains transport telemetry and does not replace
+validated Platform output reports.
+
 The command resolves Compose inputs in this order:
 
 - compose file: `PLATFORM_COMPOSE_FILE`, then `docker-compose.local.yml`, then

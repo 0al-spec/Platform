@@ -352,6 +352,51 @@ class HostedManagedOperationExecutorTests(unittest.TestCase):
         )
         self.assertFalse(report["summary"]["operation_processed"])
 
+    def test_continuous_worker_writes_non_secret_health_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            artifact_root = temp / "artifacts"
+            state_dir = temp / "state"
+            specgraph_dir = temp / "SpecGraph"
+            artifact_root.mkdir()
+            state_dir.mkdir()
+            specgraph_dir.mkdir()
+            (specgraph_dir / "Makefile").write_text("test:\n\t@true\n", encoding="utf-8")
+            database = temp / "queue.sqlite3"
+            health_file = temp / "worker-health.json"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "scripts" / "platform.py"),
+                    "managed-operation",
+                    "worker",
+                    "--database",
+                    str(database),
+                    "--artifact-root",
+                    str(artifact_root),
+                    "--state-dir",
+                    str(state_dir),
+                    "--specgraph-dir",
+                    str(specgraph_dir),
+                    "--worker-id",
+                    "worker-test",
+                    "--max-cycles",
+                    "1",
+                    "--health-file",
+                    str(health_file),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            health = json.loads(health_file.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue(health["ok"])
+        self.assertEqual(health["adapter"], "sqlite")
+        self.assertNotIn(str(database), json.dumps(health))
+
 
 if __name__ == "__main__":
     unittest.main()

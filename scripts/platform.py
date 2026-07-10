@@ -39,6 +39,7 @@ DEFAULT_EXAMPLE_CATALOG = REPO_ROOT / "workspaces.example.yaml"
 DEFAULT_LOCAL_COMPOSE = REPO_ROOT / "docker-compose.local.yml"
 DEFAULT_EXAMPLE_COMPOSE = REPO_ROOT / "docker-compose.example.yml"
 DEFAULT_PRODUCTION_WEB_COMPOSE = REPO_ROOT / "docker-compose.production-web.example.yml"
+DEFAULT_HOSTED_MANAGED_COMPOSE = REPO_ROOT / "docker-compose.hosted-managed.example.yml"
 DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE = (
     REPO_ROOT / "deployment-profile.product-idea-to-spec.example.json"
 )
@@ -15753,17 +15754,47 @@ def managed_operation_validate_request(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
+def _open_managed_operation_queue(
+    args: argparse.Namespace,
+) -> hosted_managed_operation_queue.ManagedOperationQueue:
+    adapter = getattr(args, "queue_adapter", "sqlite")
+    database_arg = getattr(args, "database", None)
+    database_url_file = getattr(args, "database_url_file", None)
+    if database_arg and database_url_file:
+        raise PlatformError(
+            "managed-operation database must use either --database or --database-url-file"
+        )
+    if database_url_file:
+        try:
+            database = Path(database_url_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise PlatformError("managed-operation database URL file is unreadable") from exc
+    elif database_arg:
+        database = str(database_arg)
+    else:
+        raise PlatformError("managed-operation database storage is required")
+    if adapter == "sqlite":
+        database_path = Path(database).resolve()
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+        database = str(database_path)
+    try:
+        return hosted_managed_operation_queue.open_managed_operation_queue(
+            adapter=adapter,
+            database=database,
+        )
+    except (hosted_managed_operation_queue.QueueContractError, RuntimeError) as exc:
+        raise PlatformError(str(exc)) from exc
+
+
 def managed_operation_queue_init(args: argparse.Namespace) -> int:
-    database_path = Path(args.database).resolve()
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(database_path)
+    queue = _open_managed_operation_queue(args)
     queue.close()
     report = {
         "artifact_kind": "platform_hosted_managed_operation_queue_initialization_report",
         "schema_version": 1,
         "generated_at": utc_now_iso(),
         "ok": True,
-        "adapter": "sqlite",
+        "adapter": args.queue_adapter,
         "summary": {"status": "hosted_managed_operation_queue_ready"},
         "authority_boundary": {
             "initializes_queue_storage": True,
@@ -15780,9 +15811,7 @@ def managed_operation_enqueue(args: argparse.Namespace) -> int:
         Path(args.request).resolve(),
         label="hosted managed operation request",
     )
-    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(
-        Path(args.database).resolve()
-    )
+    queue = _open_managed_operation_queue(args)
     try:
         receipt = queue.enqueue(
             request,
@@ -15798,9 +15827,7 @@ def managed_operation_enqueue(args: argparse.Namespace) -> int:
 
 
 def managed_operation_queue_status(args: argparse.Namespace) -> int:
-    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(
-        Path(args.database).resolve()
-    )
+    queue = _open_managed_operation_queue(args)
     try:
         job = queue.get(args.request_id)
         events = queue.events(args.request_id) if args.include_events and job else []
@@ -15830,9 +15857,7 @@ def managed_operation_queue_status(args: argparse.Namespace) -> int:
 
 
 def managed_operation_queue_recover(args: argparse.Namespace) -> int:
-    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(
-        Path(args.database).resolve()
-    )
+    queue = _open_managed_operation_queue(args)
     try:
         receipts = queue.recover_expired(
             now_epoch=time.time(),
@@ -15866,14 +15891,12 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
     return 0
 
 
-def managed_operation_worker_once(args: argparse.Namespace) -> int:
+def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
     if args.lease_seconds < 600:
         raise PlatformError(
             "hosted managed-operation worker lease must be at least 600 seconds"
         )
-    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(
-        Path(args.database).resolve()
-    )
+    queue = _open_managed_operation_queue(args)
 
     def validate_binding(binding: dict[str, Any], workspace_id: str) -> list[str]:
         return [
@@ -15917,7 +15940,7 @@ def managed_operation_worker_once(args: argparse.Namespace) -> int:
         raise PlatformError(str(exc)) from exc
     finally:
         queue.close()
-    report = {
+    return {
         "artifact_kind": "platform_hosted_managed_operation_worker_run_report",
         "schema_version": 1,
         "generated_at": utc_now_iso(),
@@ -15937,12 +15960,72 @@ def managed_operation_worker_once(args: argparse.Namespace) -> int:
             "platform_output_reports_are_authoritative": True,
         },
     }
+
+
+def managed_operation_worker_once(args: argparse.Namespace) -> int:
+    report = _managed_operation_worker_cycle(args)
     print(json.dumps(report, indent=2, sort_keys=True))
+    receipt = report.get("receipt")
     return 0 if receipt is None or receipt.get("status") == "succeeded" else 1
+
+
+def _write_managed_operation_worker_health(
+    args: argparse.Namespace,
+    report: dict[str, Any],
+) -> None:
+    if not args.health_file:
+        return
+    path = Path(args.health_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "artifact_kind": "platform_hosted_managed_operation_worker_health",
+        "schema_version": 1,
+        "ok": True,
+        "generated_at": report["generated_at"],
+        "worker_id": args.worker_id,
+        "adapter": args.queue_adapter,
+        "last_cycle_status": report["summary"]["status"],
+        "authority_boundary": {
+            "health_is_execution_authority": False,
+            "queue_status_is_lifecycle_evidence": False,
+        },
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def managed_operation_worker(args: argparse.Namespace) -> int:
+    if args.poll_interval < 0.1:
+        raise PlatformError("managed-operation worker poll interval must be at least 0.1 seconds")
+    cycles = 0
+    try:
+        while args.max_cycles <= 0 or cycles < args.max_cycles:
+            report = _managed_operation_worker_cycle(args)
+            _write_managed_operation_worker_health(args, report)
+            print(json.dumps(report, sort_keys=True), flush=True)
+            cycles += 1
+            if report["summary"]["operation_processed"] is False:
+                time.sleep(args.poll_interval)
+    except KeyboardInterrupt:
+        pass
+    return 0
 
 
 def managed_operation_serve(args: argparse.Namespace) -> int:
     auth_token = os.environ.get(args.auth_token_env, "")
+    if args.auth_token_file:
+        if auth_token:
+            raise PlatformError(
+                "hosted service token must use either environment or file input, not both"
+            )
+        try:
+            auth_token = Path(args.auth_token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise PlatformError("hosted service token file is unreadable") from exc
     if len(auth_token) < 32:
         raise PlatformError(
             f"{args.auth_token_env} must contain a hosted service token of at least 32 characters"
@@ -15965,12 +16048,12 @@ def managed_operation_serve(args: argparse.Namespace) -> int:
         specgraph_dir=Path(args.specgraph_dir),
         binding_validator=validate_binding,
     )
-    database_path = Path(args.database).resolve()
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(database_path)
+    queue = _open_managed_operation_queue(args)
     queue.close()
+    queue_factory = lambda: _open_managed_operation_queue(args)
     service = hosted_managed_operation_service.HostedManagedOperationService(
-        database_path=database_path,
+        queue_factory=queue_factory,
+        adapter=args.queue_adapter,
         resolver=resolver,
         now_epoch=time.time,
         now_iso=utc_now_iso,
@@ -18162,8 +18245,10 @@ def resolve_deploy_paths(
     include_env: bool = True,
 ) -> tuple[list[Path], Path | None]:
     compose_paths = [Path(args.compose_file) if args.compose_file else default_compose_path()]
-    if args.profile == "production-web":
+    if args.profile in {"production-web", "hosted-managed"}:
         compose_paths.append(DEFAULT_PRODUCTION_WEB_COMPOSE)
+    if args.profile == "hosted-managed":
+        compose_paths.append(DEFAULT_HOSTED_MANAGED_COMPOSE)
     deduped_compose_paths: list[Path] = []
     seen_compose_paths: set[Path] = set()
     for compose_path in compose_paths:
@@ -19638,20 +19723,32 @@ def build_parser() -> argparse.ArgumentParser:
         "queue-init",
         help="Initialize the durable SQLite queue adapter.",
     )
-    managed_operation_queue_init_parser.add_argument("--database", required=True)
+    managed_operation_queue_init_parser.add_argument("--database")
+    managed_operation_queue_init_parser.add_argument("--database-url-file")
+    managed_operation_queue_init_parser.add_argument(
+        "--queue-adapter", choices=("sqlite", "postgresql"), default="sqlite"
+    )
     managed_operation_queue_init_parser.set_defaults(func=managed_operation_queue_init)
     managed_operation_enqueue_parser = managed_operation_subcommands.add_parser(
         "enqueue",
         help="Validate and enqueue one immutable managed-operation request.",
     )
-    managed_operation_enqueue_parser.add_argument("--database", required=True)
+    managed_operation_enqueue_parser.add_argument("--database")
+    managed_operation_enqueue_parser.add_argument("--database-url-file")
+    managed_operation_enqueue_parser.add_argument(
+        "--queue-adapter", choices=("sqlite", "postgresql"), default="sqlite"
+    )
     managed_operation_enqueue_parser.add_argument("--request", required=True)
     managed_operation_enqueue_parser.set_defaults(func=managed_operation_enqueue)
     managed_operation_status_parser = managed_operation_subcommands.add_parser(
         "status",
         help="Read queue transport status without treating it as lifecycle evidence.",
     )
-    managed_operation_status_parser.add_argument("--database", required=True)
+    managed_operation_status_parser.add_argument("--database")
+    managed_operation_status_parser.add_argument("--database-url-file")
+    managed_operation_status_parser.add_argument(
+        "--queue-adapter", choices=("sqlite", "postgresql"), default="sqlite"
+    )
     managed_operation_status_parser.add_argument("--request-id", required=True)
     managed_operation_status_parser.add_argument("--include-events", action="store_true")
     managed_operation_status_parser.set_defaults(func=managed_operation_queue_status)
@@ -19659,50 +19756,89 @@ def build_parser() -> argparse.ArgumentParser:
         "recover",
         help="Requeue replay-safe expired leases and quarantine the rest.",
     )
-    managed_operation_recover_parser.add_argument("--database", required=True)
+    managed_operation_recover_parser.add_argument("--database")
+    managed_operation_recover_parser.add_argument("--database-url-file")
+    managed_operation_recover_parser.add_argument(
+        "--queue-adapter", choices=("sqlite", "postgresql"), default="sqlite"
+    )
     managed_operation_recover_parser.add_argument(
         "--max-attempts",
         type=int,
         default=3,
     )
     managed_operation_recover_parser.set_defaults(func=managed_operation_queue_recover)
-    managed_operation_worker_parser = managed_operation_subcommands.add_parser(
-        "worker-once",
-        help="Lease and execute at most one operation through a fixed Platform adapter.",
+    managed_operation_worker_common = argparse.ArgumentParser(add_help=False)
+    managed_operation_worker_common.add_argument("--database")
+    managed_operation_worker_common.add_argument(
+        "--database-url-file",
+        help="Mounted secret file containing the PostgreSQL URL; the URL is never reported.",
     )
-    managed_operation_worker_parser.add_argument("--database", required=True)
-    managed_operation_worker_parser.add_argument(
+    managed_operation_worker_common.add_argument(
+        "--queue-adapter", choices=("sqlite", "postgresql"), default="sqlite"
+    )
+    managed_operation_worker_common.add_argument(
         "--artifact-root",
         required=True,
         help="Worker-owned root containing workspace-scoped runs/ artifacts.",
     )
-    managed_operation_worker_parser.add_argument(
+    managed_operation_worker_common.add_argument(
         "--state-dir",
         required=True,
         help="Worker-owned SpecSpace state root used to resolve specspace-state refs.",
     )
-    managed_operation_worker_parser.add_argument(
+    managed_operation_worker_common.add_argument(
         "--specgraph-dir",
         required=True,
         help="Pinned SpecGraph checkout used by allowlisted Platform wrappers.",
     )
-    managed_operation_worker_parser.add_argument("--worker-id", required=True)
-    managed_operation_worker_parser.add_argument(
+    managed_operation_worker_common.add_argument("--worker-id", required=True)
+    managed_operation_worker_common.add_argument(
         "--lease-seconds",
         type=int,
         default=600,
     )
-    managed_operation_worker_parser.add_argument(
+    managed_operation_worker_common.add_argument(
         "--max-attempts",
         type=int,
         default=3,
     )
+    managed_operation_worker_parser = managed_operation_subcommands.add_parser(
+        "worker-once",
+        help="Lease and execute at most one operation through a fixed Platform adapter.",
+        parents=[managed_operation_worker_common],
+    )
     managed_operation_worker_parser.set_defaults(func=managed_operation_worker_once)
+    managed_operation_worker_loop_parser = managed_operation_subcommands.add_parser(
+        "worker",
+        help="Continuously recover, lease, and execute allowlisted managed operations.",
+        parents=[managed_operation_worker_common],
+    )
+    managed_operation_worker_loop_parser.add_argument(
+        "--poll-interval", type=float, default=2.0
+    )
+    managed_operation_worker_loop_parser.add_argument(
+        "--max-cycles",
+        type=int,
+        default=0,
+        help="Stop after N cycles for tests; zero runs until interrupted.",
+    )
+    managed_operation_worker_loop_parser.add_argument(
+        "--health-file",
+        help="Atomic non-secret heartbeat report for container health checks.",
+    )
+    managed_operation_worker_loop_parser.set_defaults(func=managed_operation_worker)
     managed_operation_serve_parser = managed_operation_subcommands.add_parser(
         "serve",
         help="Serve authenticated enqueue and status APIs for hosted workers.",
     )
-    managed_operation_serve_parser.add_argument("--database", required=True)
+    managed_operation_serve_parser.add_argument("--database")
+    managed_operation_serve_parser.add_argument(
+        "--database-url-file",
+        help="Mounted secret file containing the PostgreSQL URL; the URL is never reported.",
+    )
+    managed_operation_serve_parser.add_argument(
+        "--queue-adapter", choices=("sqlite", "postgresql"), default="sqlite"
+    )
     managed_operation_serve_parser.add_argument("--artifact-root", required=True)
     managed_operation_serve_parser.add_argument("--state-dir", required=True)
     managed_operation_serve_parser.add_argument("--specgraph-dir", required=True)
@@ -19712,6 +19848,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--auth-token-env",
         default="PLATFORM_MANAGED_OPERATION_TOKEN",
         help="Environment variable containing the bearer token; token values are never CLI args.",
+    )
+    managed_operation_serve_parser.add_argument(
+        "--auth-token-file",
+        help="Mounted secret file containing the bearer token; its value is never reported.",
     )
     managed_operation_serve_parser.set_defaults(func=managed_operation_serve)
 
@@ -22135,11 +22275,12 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command_parser.add_argument(
             "--profile",
-            choices=["dev", "production-web"],
+            choices=["dev", "production-web", "hosted-managed"],
             default="dev",
             help=(
                 "Deployment profile. production-web overlays the default compose "
-                "file with a static SpecSpace web service."
+                "file with a static SpecSpace web service; hosted-managed also "
+                "adds the PostgreSQL queue, service, worker, and hosted API mode."
             ),
         )
         command_parser.add_argument(
@@ -22225,7 +22366,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bundle_parser.add_argument(
         "--profile",
-        choices=["dev", "production-web"],
+        choices=["dev", "production-web", "hosted-managed"],
         default="production-web",
         help="Deployment profile to package. Defaults to production-web.",
     )

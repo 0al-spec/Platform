@@ -90,6 +90,19 @@ adapter behavior and supports deterministic tests before the PostgreSQL adapter
 is deployed. The store persists immutable request documents, idempotency keys,
 leases, workspace/operation locks, receipts, and an append-only transition log.
 
+The production adapter uses PostgreSQL row leases and `FOR UPDATE SKIP LOCKED`:
+
+```bash
+.venv/bin/python scripts/platform.py managed-operation queue-init \
+  --queue-adapter postgresql \
+  --database-url-file /run/secrets/managed-operation-database-url
+```
+
+Install `requirements-hosted.txt` in service and worker images. PostgreSQL is
+required for multi-worker deployments; SQLite remains restricted to local and
+single-worker integration use. Production service/worker argv must contain only
+the database URL file path, never the URL or password itself.
+
 Expired leases are handled by policy:
 
 - read-only inspection and dry-run operations may be requeued within their
@@ -116,6 +129,10 @@ fixed adapter for its registered operation id:
   --specgraph-dir ../SpecGraph \
   --worker-id local-candidate-worker
 ```
+
+The long-running production entry point is `managed-operation worker`. It uses
+the same fixed adapter, performs lease recovery before each cycle, and sleeps
+only when the queue is idle.
 
 Worker roots are deployment configuration, not request fields. The adapter:
 
@@ -203,3 +220,20 @@ introduced. One operator request must be claimed by exactly one executor mode;
 the local and hosted executors must not race on the same request. Production
 read-only mode remains the default until a hosted worker, store, and queue are
 explicitly configured and healthy.
+
+For a Compose-capable host, use the `hosted-managed` deployment profile. It
+adds PostgreSQL, the authenticated enqueue/status service, a long-running
+worker, shared workspace-scoped SpecGraph artifacts, and SpecSpace hosted mode:
+
+```bash
+umask 077
+openssl rand -hex 32 > /secure/path/managed-operation-token
+openssl rand -hex 32 > /secure/path/managed-operation-db-password
+export PLATFORM_MANAGED_OPERATION_TOKEN_FILE=/secure/path/managed-operation-token
+export PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE=/secure/path/managed-operation-db-password
+.venv/bin/python scripts/platform.py deploy render --profile hosted-managed
+.venv/bin/python scripts/platform.py deploy up --profile hosted-managed
+```
+
+The example is a single-host topology. The service is private to the Compose
+network; expose it externally only behind TLS and authenticated ingress.

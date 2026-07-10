@@ -1,0 +1,141 @@
+services:
+  managed-operation-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${PLATFORM_MANAGED_OPERATION_DB:-managed_operations}"
+      POSTGRES_USER: "${PLATFORM_MANAGED_OPERATION_DB_USER:-managed_operations}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/managed_operation_db_password
+    volumes:
+      - managed-operation-postgres:/var/lib/postgresql/data
+    secrets:
+      - managed_operation_db_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  managed-operation-service:
+    image: "${PLATFORM_MANAGED_OPERATION_IMAGE:-python:3.12-slim}"
+    restart: unless-stopped
+    working_dir: /workspace/Platform
+    command:
+      - sh
+      - -lc
+      - >-
+        printf 'postgresql://${PLATFORM_MANAGED_OPERATION_DB_USER:-managed_operations}:%s@managed-operation-postgres:5432/${PLATFORM_MANAGED_OPERATION_DB:-managed_operations}' "$$(cat /run/secrets/managed_operation_db_password)" > /tmp/managed-operation-database-url &&
+        chmod 600 /tmp/managed-operation-database-url &&
+        python3 -m pip install --quiet -r requirements-hosted.txt &&
+        python3 scripts/platform.py managed-operation serve
+        --queue-adapter postgresql
+        --database-url-file /tmp/managed-operation-database-url
+        --artifact-root /workspace/SpecGraph
+        --state-dir /data/specspace-state
+        --specgraph-dir /workspace/SpecGraph
+        --host 0.0.0.0
+        --port 8091
+        --auth-token-file /run/secrets/managed_operation_token
+    expose:
+      - "8091"
+    volumes:
+      - .:/workspace/Platform:ro
+      - "${ORG_ROOT:?set ORG_ROOT}/SpecGraph:/workspace/SpecGraph"
+      - specspace-state:/data/specspace-state:ro
+    secrets:
+      - managed_operation_token
+      - managed_operation_db_password
+    depends_on:
+      managed-operation-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8091/v1/health', timeout=3).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  managed-operation-worker:
+    image: "${PLATFORM_MANAGED_OPERATION_IMAGE:-python:3.12-slim}"
+    restart: unless-stopped
+    working_dir: /workspace/Platform
+    command:
+      - sh
+      - -lc
+      - >-
+        printf 'postgresql://${PLATFORM_MANAGED_OPERATION_DB_USER:-managed_operations}:%s@managed-operation-postgres:5432/${PLATFORM_MANAGED_OPERATION_DB:-managed_operations}' "$$(cat /run/secrets/managed_operation_db_password)" > /tmp/managed-operation-database-url &&
+        chmod 600 /tmp/managed-operation-database-url &&
+        python3 -m pip install --quiet -r requirements-hosted.txt &&
+        python3 scripts/platform.py managed-operation worker
+        --queue-adapter postgresql
+        --database-url-file /tmp/managed-operation-database-url
+        --artifact-root /workspace/SpecGraph
+        --state-dir /data/specspace-state
+        --specgraph-dir /workspace/SpecGraph
+        --worker-id "$${HOSTNAME}"
+        --health-file /tmp/managed-operation-worker-health.json
+    volumes:
+      - .:/workspace/Platform:ro
+      - "${ORG_ROOT:?set ORG_ROOT}/SpecGraph:/workspace/SpecGraph"
+      - specspace-state:/data/specspace-state:ro
+    secrets:
+      - managed_operation_db_password
+    depends_on:
+      managed-operation-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import json,pathlib,time;
+          p=pathlib.Path('/tmp/managed-operation-worker-health.json');
+          d=json.loads(p.read_text());
+          raise SystemExit(0 if d.get('ok') is True and time.time()-p.stat().st_mtime < 15 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  specspace-api:
+    command:
+      - sh
+      - -lc
+      - >-
+        python3 -m pip install --quiet -r requirements.txt &&
+        python3 viewer/server.py
+        --host 0.0.0.0
+        --port ${SPECSPACE_API_PORT:-8001}
+        --dialog-dir ${SPECSPACE_DIALOG_DIR:-/data/dialogs}
+        --specgraph-dir /workspace/SpecGraph
+        --specspace-state-dir /data/specspace-state
+        --runs-dir /workspace/SpecGraph/runs
+        --enable-hosted-managed-execution
+        --hosted-managed-executor-url http://managed-operation-service:8091
+    environment:
+      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN_FILE: /run/secrets/managed_operation_token
+    volumes:
+      - "${ORG_ROOT:?set ORG_ROOT}/SpecSpace:/workspace/SpecSpace:ro"
+      - "${ORG_ROOT:?set ORG_ROOT}/SpecGraph:/workspace/SpecGraph"
+      - specspace-state:/data/specspace-state
+      - specspace-dialogs:${SPECSPACE_DIALOG_DIR:-/data/dialogs}
+    secrets:
+      - managed_operation_token
+    depends_on:
+      managed-operation-service:
+        condition: service_healthy
+
+volumes:
+  managed-operation-postgres:
+  specspace-state:
+
+secrets:
+  managed_operation_token:
+    file: "${PLATFORM_MANAGED_OPERATION_TOKEN_FILE:?set PLATFORM_MANAGED_OPERATION_TOKEN_FILE}"
+  managed_operation_db_password:
+    file: "${PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE:?set PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE}"
