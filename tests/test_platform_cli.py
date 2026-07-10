@@ -8,7 +8,9 @@ import tempfile
 from pathlib import Path
 import unittest
 
+from scripts import hosted_managed_operation_queue as queue_module
 from tests.platform_fixtures import workspace_creation_request
+from tests.test_hosted_managed_operation_queue import request_for
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +71,66 @@ class PlatformCliTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+    def test_strict_recovery_preflight_does_not_requeue_policy_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database = root / "managed-operations.sqlite3"
+            request = request_for(root, "real_idea_intake_execute")
+            queue = queue_module.SQLiteManagedOperationQueue(database)
+            try:
+                queue.enqueue(
+                    request,
+                    now_epoch=100,
+                    now_iso="2026-07-10T00:00:00Z",
+                )
+                stored_request = json.dumps(
+                    {
+                        **request,
+                        "operation": {
+                            **request["operation"],
+                            "replay_policy": "read_only_replay_allowed",
+                        },
+                    },
+                    sort_keys=True,
+                )
+                queue.connection.execute(
+                    "UPDATE managed_operation_jobs "
+                    "SET request_json = ? WHERE request_id = ?",
+                    (stored_request, request["request_id"]),
+                )
+                queue.connection.commit()
+                queue.lease_next(
+                    worker_id="strict-recovery-test",
+                    now_epoch=101,
+                    now_iso="2026-07-10T00:00:01Z",
+                    lease_seconds=10,
+                )
+            finally:
+                queue.close()
+
+            result = self.run_cli(
+                "managed-operation",
+                "recover",
+                "--database",
+                str(database),
+                "--strict",
+            )
+
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            report = json.loads(result.stdout)
+            self.assertTrue(report["summary"]["preflight_blocked"])
+            self.assertIn(
+                "recovery_requeued_non_replay_safe_operation",
+                [item["code"] for item in report["policy_findings"]],
+            )
+            queue = queue_module.SQLiteManagedOperationQueue(database)
+            try:
+                job = queue.get(request["request_id"])
+            finally:
+                queue.close()
+            self.assertIsNotNone(job)
+            self.assertEqual(job["status"], "leased")
 
     def test_workspace_initialize_from_request_writes_report_only_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -76,6 +76,11 @@ bounded timeout/failure; it does not submit a blind retry. Recovery and
 quarantine remain the queue adapter's responsibility and must be checked before
 enabling operations with non-replayable side effects.
 
+The queue recovery command supports a strict policy audit. In strict mode a
+read-only or dry-run receipt may be requeued only under the registry's
+replay-safe policy; an ambiguous consume-on-attempt or Git-review receipt must
+remain quarantined. This is a recovery invariant, not a lifecycle gate.
+
 ## SpecSpace Authority Transition Strategy
 
 SpecSpace currently acts as an inspect/request surface. That remains the safe

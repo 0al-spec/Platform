@@ -96,6 +96,8 @@ class ManagedOperationQueue(Protocol):
 
     def events(self, request_id: str) -> list[dict[str, Any]]: ...
 
+    def expired_requests(self, *, now_epoch: float) -> list[dict[str, Any]]: ...
+
     def recover_expired(
         self,
         *,
@@ -642,6 +644,25 @@ class SQLiteManagedOperationQueue:
             self.connection.execute("ROLLBACK")
             raise
         return recovered
+
+    def expired_requests(self, *, now_epoch: float) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT request_id, attempt, request_json
+            FROM managed_operation_jobs
+            WHERE status IN ('leased', 'running') AND lease_expires_at <= ?
+            ORDER BY request_id
+            """,
+            (now_epoch,),
+        ).fetchall()
+        return [
+            {
+                "request_id": row["request_id"],
+                "attempt": int(row["attempt"]),
+                "request": json.loads(row["request_json"]),
+            }
+            for row in rows
+        ]
 
     def get(self, request_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(
