@@ -62,6 +62,21 @@ jobs:
       - name: Test PostgreSQL queue and hosted canary lifecycle
         run: make hosted-managed-postgres-integration PYTHON=python3
 
+  hosted-managed-compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out Platform
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Start hosted service and worker profile
+        run: make hosted-managed-compose-smoke PYTHON=python3
+
   platform-deploy-bundle:
     runs-on: ubuntu-latest
     steps:
