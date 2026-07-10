@@ -269,11 +269,12 @@ The current execution order is:
    selected binding context. Execution-backed Playwright covers real Platform
    initialization, browser reload, workspace-scoped runs, raw-idea privacy, and
    rejection of foreign or mismatched binding inputs.
-4. **Hosted/queue-backed managed execution.** The local SpecSpace backend can
-   now call allowlisted Platform wrappers and read durable reports. Production
-   should preserve the same operation/report contracts while moving execution to
-   a hosted service or queue-backed worker boundary with idempotency and audit
-   records.
+4. **Hosted/queue-backed managed execution.** In progress. Platform now owns
+   `platform.managed-operation.registry.v1` and queue-safe request/receipt
+   contracts for all twelve SpecSpace operations. The next slices add the
+   durable queue/store worker, SpecSpace hosted mode, deployment profiles, and
+   execution-backed recovery tests. Existing Platform reports remain lifecycle
+   authority; queue status remains transport telemetry.
 5. **Human-friendly candidate aliases.** SpecGraph should keep stable machine
    ids for refs and promotion paths, but expose readable aliases for candidate
    overview, topology, PR artifacts, and operator-facing diagnostics.

@@ -21,6 +21,11 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+try:
+    from scripts import hosted_managed_operations
+except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
+    import hosted_managed_operations
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOCAL_CATALOG = REPO_ROOT / "workspaces.local.yaml"
@@ -15628,6 +15633,120 @@ PRODUCT_WORKSPACE_BINDING_KIND = "platform_product_workspace_binding"
 PRODUCT_WORKSPACE_BINDING_CONTRACT_REF = "platform.product-workspace.binding.v1"
 
 
+def parse_managed_operation_input_paths(values: list[str] | None) -> dict[str, Path]:
+    inputs: dict[str, Path] = {}
+    for value in values or []:
+        logical_ref, separator, local_path = value.partition("=")
+        if not separator or not logical_ref or not local_path:
+            raise PlatformError(
+                "managed operation inputs must use LOGICAL_REF=LOCAL_PATH"
+            )
+        if logical_ref in inputs:
+            raise PlatformError(f"managed operation input ref repeated: {logical_ref}")
+        inputs[logical_ref] = Path(local_path).resolve()
+    return inputs
+
+
+def hosted_managed_operation_binding_from_source(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if payload.get("artifact_kind") == PRODUCT_WORKSPACE_BINDING_KIND:
+        return payload
+    binding = nested_mapping(payload, "workspace_binding")
+    if binding:
+        return binding
+    raise PlatformError(
+        "workspace binding source must be a binding artifact or contain workspace_binding"
+    )
+
+
+def managed_operation_contract(args: argparse.Namespace) -> int:
+    payload = hosted_managed_operations.registry_payload()
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def managed_operation_request(args: argparse.Namespace) -> int:
+    binding_path = Path(args.workspace_binding).resolve()
+    binding_source = load_json_mapping(
+        binding_path,
+        label="managed operation workspace binding source",
+    )
+    binding = hosted_managed_operation_binding_from_source(binding_source)
+    operation_definition = hosted_managed_operations.operation_by_id(
+        args.operation_id
+    )
+    binding_diagnostics = product_workspace_binding_diagnostics(
+        binding,
+        require_ready=(
+            operation_definition is None
+            or operation_definition.binding_requirement == "ready"
+        ),
+        subject_prefix="workspace_binding",
+    )
+    confirmation_sha256 = (
+        file_sha256(Path(args.confirmation).resolve())
+        if args.confirmation
+        else None
+    )
+    payload = hosted_managed_operations.build_request(
+        operation_id=args.operation_id,
+        workspace_binding=binding,
+        workspace_binding_ref=args.workspace_binding_ref,
+        workspace_binding_source_sha256=file_sha256(binding_path),
+        inputs=parse_managed_operation_input_paths(args.input),
+        generated_at=utc_now_iso(),
+        operator_ref=args.operator_ref,
+        confirmation_ref=args.confirmation_ref,
+        confirmation_sha256=confirmation_sha256,
+    )
+    payload["diagnostics"].extend(
+        f"{item.code}: {item.message}" for item in binding_diagnostics
+    )
+    payload["diagnostics"].extend(
+        hosted_managed_operations.request_diagnostics(payload)
+    )
+    payload["diagnostics"] = list(dict.fromkeys(payload["diagnostics"]))
+    ready = not payload["diagnostics"]
+    payload["status"] = "ready" if ready else "blocked"
+    payload["summary"]["ready_for_queue"] = ready
+    payload["summary"]["diagnostic_count"] = len(payload["diagnostics"])
+    output_path = Path(args.output).resolve() if args.output else None
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if ready else 1
+
+
+def managed_operation_validate_request(args: argparse.Namespace) -> int:
+    request_path = Path(args.request).resolve()
+    payload = load_json_mapping(request_path, label="hosted managed operation request")
+    diagnostics = hosted_managed_operations.request_diagnostics(payload)
+    report = {
+        "artifact_kind": "platform_hosted_managed_operation_validation_report",
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "request_ref": str(args.request),
+        "request_sha256": file_sha256(request_path),
+        "ok": not diagnostics,
+        "diagnostics": diagnostics,
+        "summary": {
+            "status": "hosted_managed_operation_request_valid"
+            if not diagnostics
+            else "hosted_managed_operation_request_invalid",
+            "ready_for_queue": not diagnostics,
+            "diagnostic_count": len(diagnostics),
+        },
+        "authority_boundary": hosted_managed_operations.request_authority_boundary(),
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["ok"] else 1
+
+
 def product_workspace_creation_boundary() -> dict[str, Any]:
     return {
         "executes_specgraph": False,
@@ -19210,6 +19329,65 @@ def build_parser() -> argparse.ArgumentParser:
         description="Operate local 0AL Platform metadata.",
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
+
+    managed_operation_parser = subcommands.add_parser(
+        "managed-operation",
+        help="Build and validate transport-neutral hosted managed-operation artifacts.",
+    )
+    managed_operation_subcommands = managed_operation_parser.add_subparsers(
+        dest="managed_operation_command",
+        required=True,
+    )
+    managed_operation_contract_parser = managed_operation_subcommands.add_parser(
+        "contract",
+        help="Print the versioned allowlist for Platform managed operations.",
+    )
+    managed_operation_contract_parser.set_defaults(func=managed_operation_contract)
+    managed_operation_request_parser = managed_operation_subcommands.add_parser(
+        "request",
+        help="Build an immutable queue-safe request envelope for one managed operation.",
+    )
+    managed_operation_request_parser.add_argument(
+        "--operation-id",
+        required=True,
+        choices=[item.operation_id for item in hosted_managed_operations.MANAGED_OPERATIONS],
+    )
+    managed_operation_request_parser.add_argument(
+        "--workspace-binding",
+        required=True,
+        help="Local binding artifact or initialization report used only for validation.",
+    )
+    managed_operation_request_parser.add_argument(
+        "--workspace-binding-ref",
+        required=True,
+        help="Queue-safe logical ref for the binding source; local paths are rejected.",
+    )
+    managed_operation_request_parser.add_argument(
+        "--input",
+        action="append",
+        default=[],
+        metavar="LOGICAL_REF=LOCAL_PATH",
+        help="Pinned operation input. Repeat for every required registry input.",
+    )
+    managed_operation_request_parser.add_argument("--operator-ref")
+    managed_operation_request_parser.add_argument(
+        "--confirmation-ref",
+        help="Required logical confirmation ref for operations marked irreversible.",
+    )
+    managed_operation_request_parser.add_argument(
+        "--confirmation",
+        help="Local confirmation evidence used only to calculate its pinned digest.",
+    )
+    managed_operation_request_parser.add_argument("--output")
+    managed_operation_request_parser.set_defaults(func=managed_operation_request)
+    managed_operation_validate_parser = managed_operation_subcommands.add_parser(
+        "validate-request",
+        help="Validate a hosted managed-operation request against the Platform registry.",
+    )
+    managed_operation_validate_parser.add_argument("--request", required=True)
+    managed_operation_validate_parser.set_defaults(
+        func=managed_operation_validate_request
+    )
 
     workspace_parser = subcommands.add_parser(
         "workspace",
