@@ -243,6 +243,46 @@ class HostedManagedOperationCanaryTests(unittest.TestCase):
         )
         self.assertIsNone(CanaryHTTPHandler.request_payload)
 
+    def test_canary_requires_explicit_opt_in_for_registered_promotion_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = ExecutorFixture(Path(temp_dir))
+            request = fixture.request("promotion_execute_dry_run")
+            output_reports = []
+            for ref in request["expected_output_reports"]:
+                output = fixture.path_for_ref(ref)
+                output.write_text('{"dry_run":true}\n', encoding="utf-8")
+                output_reports.append(
+                    {
+                        "logical_ref": ref,
+                        "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+                    }
+                )
+            CanaryHTTPHandler.success_receipt = contracts.build_receipt(
+                request=request,
+                status="succeeded",
+                generated_at="2026-07-10T00:00:02Z",
+                attempt=1,
+                output_reports=output_reports,
+            )
+            server, thread, service_url = self.server()
+            try:
+                report = canary.run_canary(
+                    request=request,
+                    service_url=service_url,
+                    token=TOKEN,
+                    poll_interval_seconds=0,
+                    allow_dry_run=True,
+                    artifact_root=fixture.artifact_root,
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertTrue(report["summary"]["ok"], report["diagnostics"])
+        self.assertEqual(report["summary"]["profile"], "dry_run")
+        self.assertFalse(report["authority_boundary"]["allows_irreversible_operations"])
+
     def test_cli_writes_durable_canary_report(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
