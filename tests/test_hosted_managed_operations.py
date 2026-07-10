@@ -189,6 +189,22 @@ class HostedManagedOperationContractTests(unittest.TestCase):
             receipt["authority_boundary"]["platform_output_reports_are_authoritative"]
         )
 
+    def test_queued_receipt_has_no_execution_attempt_yet(self) -> None:
+        request = {
+            "request_id": "managed-operation://pantry-control/review_status_execute/abc",
+            "idempotency_key": "4" * 64,
+            "operation": {"operation_id": "review_status_execute"},
+            "workspace": {"workspace_id": "pantry-control"},
+        }
+        receipt = hosted.build_receipt(
+            request=request,
+            status="queued",
+            generated_at="2026-07-10T00:00:00Z",
+            attempt=0,
+        )
+
+        self.assertEqual(hosted.receipt_diagnostics(receipt), [])
+
     def test_cli_exposes_versioned_registry(self) -> None:
         completed = subprocess.run(
             [

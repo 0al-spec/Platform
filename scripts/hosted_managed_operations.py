@@ -746,8 +746,11 @@ def receipt_diagnostics(payload: dict[str, Any]) -> list[str]:
         diagnostics.append("receipt contract version is unsupported")
     if payload.get("status") not in RECEIPT_STATUSES:
         diagnostics.append("receipt status is unsupported")
-    if not isinstance(payload.get("attempt"), int) or isinstance(payload.get("attempt"), bool) or payload.get("attempt", 0) < 1:
-        diagnostics.append("receipt attempt must be a positive integer")
+    attempt = payload.get("attempt")
+    if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 0:
+        diagnostics.append("receipt attempt must be a non-negative integer")
+    elif payload.get("status") not in {"rejected", "queued"} and attempt < 1:
+        diagnostics.append("leased or completed receipt must record an execution attempt")
     if not SHA256_RE.fullmatch(str(payload.get("request_sha256") or "")):
         diagnostics.append("receipt request digest is invalid")
     if not SHA256_RE.fullmatch(str(payload.get("idempotency_key") or "")):
