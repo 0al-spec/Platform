@@ -112,3 +112,47 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
 
         self.assertIsNotNone(leased)
         self.assertIsNone(blocked)
+
+    @unittest.skipUnless(
+        os.environ.get("PLATFORM_TEST_POSTGRES_URL"),
+        "set PLATFORM_TEST_POSTGRES_URL for PostgreSQL queue integration",
+    )
+    def test_real_postgresql_expired_lease_recovery_respects_replay_policy(self) -> None:
+        database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
+        queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp = Path(temp_dir)
+                expectations = (
+                    ("review_status_execute", "queued"),
+                    ("real_idea_intake_execute", "quarantined"),
+                )
+                for operation_id, expected_status in expectations:
+                    with queue.connection.cursor() as cursor:
+                        cursor.execute(
+                            "TRUNCATE managed_operation_events, managed_operation_locks, "
+                            "managed_operation_jobs RESTART IDENTITY CASCADE"
+                        )
+                    request = request_for(temp, operation_id)
+                    queue.enqueue(
+                        request,
+                        now_epoch=100,
+                        now_iso="2026-07-10T00:00:00Z",
+                    )
+                    queue.lease_next(
+                        worker_id="postgres-worker-a",
+                        now_epoch=101,
+                        now_iso="2026-07-10T00:00:01Z",
+                        lease_seconds=10,
+                    )
+
+                    receipts = queue.recover_expired(
+                        now_epoch=112,
+                        now_iso="2026-07-10T00:00:12Z",
+                    )
+                    job = queue.get(request["request_id"])
+
+                    self.assertEqual(receipts[0]["status"], expected_status)
+                    self.assertEqual(job["status"], expected_status)
+        finally:
+            queue.close()

@@ -221,6 +221,42 @@ the local and hosted executors must not race on the same request. Production
 read-only mode remains the default until a hosted worker, store, and queue are
 explicitly configured and healthy.
 
+Use a drain-and-cutover migration; do not copy SQLite queue rows into
+PostgreSQL or let local and hosted executors consume the same request state:
+
+1. Disable creation of new local managed-operation requests while keeping the
+   existing local executor available for inspection.
+2. Let replay-safe local work finish. Reconcile any running or expired
+   consume-on-attempt operation from its authoritative Platform reports; create
+   a new UI request when the old request is consumed, superseded, ambiguous, or
+   quarantined.
+3. Start PostgreSQL, initialize the empty production queue, and verify database
+   health before starting the hosted service or worker.
+4. Start one worker profile first. Require a fresh heartbeat and a healthy
+   authenticated service response before enabling hosted mode in SpecSpace.
+5. Disable the local executor and enable the hosted executor in one deployment
+   change. Submit a new replay-safe inspection request, then one bounded
+   consume-on-attempt request, and require their authoritative Platform reports
+   before declaring cutover complete.
+6. Preserve the old SQLite database read-only for audit. Never replay its rows
+   into PostgreSQL and never infer lifecycle completion from either queue alone.
+
+Rollback is also a drain operation. Stop new hosted enqueueing, stop workers
+after their current lease, recover expired leases, and reconcile or quarantine
+all non-terminal requests. Only after the PostgreSQL queue has no `queued`,
+`leased`, or `running` jobs may SpecSpace disable hosted mode and re-enable the
+local executor. Consume-on-attempt and non-dry-run Git review work requires a
+new operator request after rollback; it must not be copied or blindly retried.
+
+The minimum recovery drill must demonstrate:
+
+- a replay-safe expired lease is requeued and can be leased by another worker;
+- an expired consume-on-attempt lease is quarantined;
+- workspace locks are shared across PostgreSQL connections;
+- service health becomes unavailable when PostgreSQL is unavailable;
+- queue `succeeded` does not advance SpecSpace without the expected durable
+  Platform report.
+
 For a Compose-capable host, use the `hosted-managed` deployment profile. It
 adds PostgreSQL, the authenticated enqueue/status service, a long-running
 worker, shared workspace-scoped SpecGraph artifacts, and SpecSpace hosted mode:

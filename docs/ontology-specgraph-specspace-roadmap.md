@@ -269,19 +269,22 @@ The current execution order is:
    selected binding context. Execution-backed Playwright covers real Platform
    initialization, browser reload, workspace-scoped runs, raw-idea privacy, and
    rejection of foreign or mismatched binding inputs.
-4. **Hosted/queue-backed managed execution.** In progress. Platform now owns
+4. **Hosted/queue-backed managed execution.** Implemented for the current
+   single-host production boundary. Platform owns
    `platform.managed-operation.registry.v1` and queue-safe request/receipt
-   contracts for all twelve SpecSpace operations. A durable SQLite adapter and
-   transport-independent worker core now cover idempotency, leases, lock scopes,
+   contracts for all twelve SpecSpace operations. SQLite remains the isolated
+   local/test adapter; PostgreSQL provides production leases, shared lock scopes,
    transition audit, replay-safe recovery, and quarantine. Fixed executor
    adapters now cover all twelve operation ids and revalidate binding, inputs,
    confirmation evidence, and output reports around existing Platform wrappers.
-   An authenticated Platform HTTP boundary now materializes/enqueues logical
-   SpecSpace requests and exposes sanitized queue status without accepting raw
-   payloads or arbitrary execution parameters. The next slices add the
-   PostgreSQL deployment backend, SpecSpace hosted mode, and execution-backed
-   recovery tests. Existing Platform reports remain lifecycle authority; queue
-   status remains transport telemetry.
+   The authenticated HTTP boundary materializes/enqueues logical SpecSpace
+   requests and exposes sanitized queue status without accepting raw payloads or
+   arbitrary execution parameters. SpecSpace hosted mode and execution-backed
+   browser coverage use this boundary, while Platform Compose smoke validates
+   PostgreSQL service/worker health. Existing Platform reports remain lifecycle
+   authority; queue status remains transport telemetry. Remaining operations
+   work is deployment recovery rehearsal and SLO/alert definition, not another
+   execution contract.
 5. **Human-friendly candidate aliases.** SpecGraph should keep stable machine
    ids for refs and promotion paths, but expose readable aliases for candidate
    overview, topology, PR artifacts, and operator-facing diagnostics.
