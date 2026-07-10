@@ -196,6 +196,14 @@ report exposes only the enabled operation ids. Add
 `promotion_execute_dry_run` only for an explicit dry-run rollout; do not enable
 Git review, publication, or consume-on-attempt operations during canary.
 
+The `hosted-managed-contract` CI job provides the fast pre-deployment layer. It
+runs the canary against the real HTTP handler with an in-process SQLite queue
+and worker, checks service and queue safety contracts, and renders the hosted
+Compose profile twice. Rendering without
+`PLATFORM_MANAGED_OPERATION_ALLOWLIST` must fail; rendering with the read-only
+canary operation must pass the same allowlist to both the service and worker.
+This job does not replace a deployed canary or the PostgreSQL integration job.
+
 The command resolves Compose inputs in this order:
 
 - compose file: `PLATFORM_COMPOSE_FILE`, then `docker-compose.local.yml`, then
