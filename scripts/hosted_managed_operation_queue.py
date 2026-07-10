@@ -654,7 +654,7 @@ class HostedManagedOperationWorker:
         executor: ManagedOperationExecutor,
         *,
         worker_id: str,
-        lease_seconds: int = 120,
+        lease_seconds: int = 600,
         monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.queue = queue
@@ -666,9 +666,15 @@ class HostedManagedOperationWorker:
     def run_once(
         self,
         *,
-        now_epoch: float,
-        now_iso: str,
+        now_epoch: float | None = None,
+        now_iso: str | None = None,
+        completion_epoch: float | None = None,
+        completion_iso: str | None = None,
     ) -> dict[str, Any] | None:
+        if now_epoch is None:
+            now_epoch = time.time()
+        if now_iso is None:
+            now_iso = datetime.now(timezone.utc).isoformat()
         started_at = self.monotonic_clock()
         leased = self.queue.lease_next(
             worker_id=self.worker_id,
@@ -687,8 +693,10 @@ class HostedManagedOperationWorker:
                 diagnostics=(f"executor failed: {type(exc).__name__}",),
             )
         elapsed_seconds = max(0.0, self.monotonic_clock() - started_at)
-        completion_epoch = now_epoch + elapsed_seconds
-        completion_iso = _advance_iso(now_iso, elapsed_seconds)
+        if completion_epoch is None:
+            completion_epoch = now_epoch + elapsed_seconds
+        if completion_iso is None:
+            completion_iso = _advance_iso(now_iso, elapsed_seconds)
         return self.queue.complete(
             leased,
             result,

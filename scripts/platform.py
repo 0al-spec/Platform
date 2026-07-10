@@ -22,9 +22,11 @@ import urllib.request
 from typing import Any
 
 try:
+    from scripts import hosted_managed_operation_executor
     from scripts import hosted_managed_operations
     from scripts import hosted_managed_operation_queue
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
+    import hosted_managed_operation_executor
     import hosted_managed_operations
     import hosted_managed_operation_queue
 
@@ -15862,6 +15864,81 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
     return 0
 
 
+def managed_operation_worker_once(args: argparse.Namespace) -> int:
+    if args.lease_seconds < 600:
+        raise PlatformError(
+            "hosted managed-operation worker lease must be at least 600 seconds"
+        )
+    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(
+        Path(args.database).resolve()
+    )
+
+    def validate_binding(binding: dict[str, Any], workspace_id: str) -> list[str]:
+        return [
+            diagnostic.code
+            for diagnostic in product_workspace_binding_diagnostics(
+                binding,
+                expected_workspace_id=workspace_id,
+                require_ready=False,
+                subject_prefix="workspace_binding",
+            )
+        ]
+
+    resolver = hosted_managed_operation_executor.FilesystemManagedOperationResolver(
+        artifact_root=Path(args.artifact_root),
+        state_dir=Path(args.state_dir),
+        specgraph_dir=Path(args.specgraph_dir),
+        binding_validator=validate_binding,
+    )
+    executor = hosted_managed_operation_executor.PlatformManagedOperationExecutor(
+        resolver=resolver,
+        platform_script=Path(__file__),
+        python_executable=sys.executable,
+    )
+    try:
+        recovered = queue.recover_expired(
+            now_epoch=time.time(),
+            now_iso=utc_now_iso(),
+            max_attempts=args.max_attempts,
+        )
+        worker = hosted_managed_operation_queue.HostedManagedOperationWorker(
+            queue,
+            executor,
+            worker_id=args.worker_id,
+            lease_seconds=args.lease_seconds,
+        )
+        receipt = worker.run_once()
+    except (
+        hosted_managed_operation_queue.QueueContractError,
+        hosted_managed_operation_executor.ExecutorContractError,
+    ) as exc:
+        raise PlatformError(str(exc)) from exc
+    finally:
+        queue.close()
+    report = {
+        "artifact_kind": "platform_hosted_managed_operation_worker_run_report",
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "receipt": receipt,
+        "recovered_receipts": recovered,
+        "summary": {
+            "status": "hosted_managed_operation_worker_idle"
+            if receipt is None
+            else f"hosted_managed_operation_{receipt.get('status')}",
+            "operation_processed": receipt is not None,
+            "recovered_count": len(recovered),
+        },
+        "authority_boundary": {
+            "worker_executes_allowlisted_platform_wrappers": True,
+            "accepts_arbitrary_commands": False,
+            "queue_status_is_lifecycle_evidence": False,
+            "platform_output_reports_are_authoritative": True,
+        },
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if receipt is None or receipt.get("status") == "succeeded" else 1
+
+
 def product_workspace_creation_boundary() -> dict[str, Any]:
     return {
         "executes_specgraph": False,
@@ -19535,6 +19612,38 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
     )
     managed_operation_recover_parser.set_defaults(func=managed_operation_queue_recover)
+    managed_operation_worker_parser = managed_operation_subcommands.add_parser(
+        "worker-once",
+        help="Lease and execute at most one operation through a fixed Platform adapter.",
+    )
+    managed_operation_worker_parser.add_argument("--database", required=True)
+    managed_operation_worker_parser.add_argument(
+        "--artifact-root",
+        required=True,
+        help="Worker-owned root containing workspace-scoped runs/ artifacts.",
+    )
+    managed_operation_worker_parser.add_argument(
+        "--state-dir",
+        required=True,
+        help="Worker-owned SpecSpace state root used to resolve specspace-state refs.",
+    )
+    managed_operation_worker_parser.add_argument(
+        "--specgraph-dir",
+        required=True,
+        help="Pinned SpecGraph checkout used by allowlisted Platform wrappers.",
+    )
+    managed_operation_worker_parser.add_argument("--worker-id", required=True)
+    managed_operation_worker_parser.add_argument(
+        "--lease-seconds",
+        type=int,
+        default=600,
+    )
+    managed_operation_worker_parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=3,
+    )
+    managed_operation_worker_parser.set_defaults(func=managed_operation_worker_once)
 
     workspace_parser = subcommands.add_parser(
         "workspace",
