@@ -38,7 +38,11 @@ def _service_url(base_url: str, path: str) -> str:
     parsed = urllib.parse.urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise HostedCanaryError("hosted service URL must be an HTTP(S) URL")
-    if parsed.scheme != "https" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+    if parsed.scheme != "https" and parsed.hostname not in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }:
         raise HostedCanaryError("non-loopback hosted service URL must use HTTPS")
     return base_url.rstrip("/") + path
 
@@ -52,7 +56,10 @@ def _request_json(
     timeout: float,
 ) -> tuple[int, dict[str, Any]]:
     body = None
-    headers = {"Accept": "application/json", "User-Agent": "0al-platform-hosted-canary/1.0"}
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "0al-platform-hosted-canary/1.0",
+    }
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if payload is not None:
@@ -84,7 +91,9 @@ def _output_matches(ref: str, expected: str, workspace_id: str) -> bool:
 def _artifact_path(artifact_root: Path, workspace_id: str, logical_ref: str) -> Path:
     if not logical_ref.startswith("runs/"):
         raise HostedCanaryError("canary artifact verification only supports runs refs")
-    path = (artifact_root / "runs" / workspace_id / logical_ref.removeprefix("runs/")).resolve()
+    path = (
+        artifact_root / "runs" / workspace_id / logical_ref.removeprefix("runs/")
+    ).resolve()
     workspace_root = (artifact_root / "runs" / workspace_id).resolve()
     if path != workspace_root and workspace_root not in path.parents:
         raise HostedCanaryError("canary output ref escapes the workspace run directory")
@@ -105,20 +114,59 @@ def _verify_output_files(
             continue
         logical_ref = item.get("logical_ref")
         expected_sha256 = item.get("sha256")
-        if not isinstance(logical_ref, str) or not contracts.safe_artifact_ref(logical_ref):
+        if not isinstance(logical_ref, str) or not contracts.safe_artifact_ref(
+            logical_ref
+        ):
             diagnostics.append("authoritative output report has an unsafe logical ref")
             continue
         try:
             path = _artifact_path(artifact_root, workspace_id, logical_ref)
             actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
         except (OSError, HostedCanaryError):
-            diagnostics.append(f"authoritative output report is not locally verifiable: {logical_ref}")
+            diagnostics.append(
+                f"authoritative output report is not locally verifiable: {logical_ref}"
+            )
             continue
         if actual_sha256 != expected_sha256:
-            diagnostics.append(f"authoritative output report digest mismatch: {logical_ref}")
+            diagnostics.append(
+                f"authoritative output report digest mismatch: {logical_ref}"
+            )
             continue
         verified.append(logical_ref)
     return verified, diagnostics
+
+
+def service_enqueue_payload(request: dict[str, Any]) -> dict[str, Any]:
+    """Project a validated v1 request into the hosted service enqueue contract."""
+    operation = request.get("operation")
+    operation = operation if isinstance(operation, dict) else {}
+    workspace = request.get("workspace")
+    workspace = workspace if isinstance(workspace, dict) else {}
+    binding = request.get("workspace_binding")
+    binding = binding if isinstance(binding, dict) else {}
+    inputs = request.get("inputs")
+    if not isinstance(inputs, list):
+        raise HostedCanaryError("canary request inputs must be an array")
+    input_refs = [
+        item.get("logical_ref")
+        for item in inputs
+        if isinstance(item, dict) and isinstance(item.get("logical_ref"), str)
+    ]
+    payload: dict[str, Any] = {
+        "operation_id": operation.get("operation_id"),
+        "workspace_id": workspace.get("workspace_id"),
+        "workspace_binding_ref": binding.get("source_ref"),
+        "input_refs": input_refs,
+    }
+    operator_ref = request.get("operator_ref")
+    if operator_ref is not None:
+        payload["operator_ref"] = operator_ref
+    confirmation = request.get("confirmation")
+    if isinstance(confirmation, dict) and confirmation.get("logical_ref") is not None:
+        payload["confirmation_ref"] = confirmation.get("logical_ref")
+    if any(value is None for value in payload.values()):
+        raise HostedCanaryError("canary request is missing a logical enqueue field")
+    return payload
 
 
 def run_canary(
@@ -139,7 +187,9 @@ def run_canary(
     checks: list[dict[str, Any]] = []
 
     def check(check_id: str, ok: bool, message: str) -> None:
-        checks.append({"id": check_id, "status": "passed" if ok else "failed", "message": message})
+        checks.append(
+            {"id": check_id, "status": "passed" if ok else "failed", "message": message}
+        )
         if not ok:
             diagnostics.append(message)
 
@@ -155,7 +205,11 @@ def run_canary(
     ).hexdigest()
 
     request_diagnostics = contracts.request_diagnostics(request)
-    check("request_contract_valid", not request_diagnostics, "canary request must satisfy the hosted operation contract")
+    check(
+        "request_contract_valid",
+        not request_diagnostics,
+        "canary request must satisfy the hosted operation contract",
+    )
     definition = contracts.operation_by_id(operation_id)
     operation_allowed = operation_id in READ_ONLY_OPERATION_IDS or (
         allow_dry_run and operation_id in DRY_RUN_OPERATION_IDS
@@ -179,23 +233,58 @@ def run_canary(
             _service_url(service_url, "/v1/health"),
             timeout=timeout_seconds,
         )
-        check("service_health", health_status == 200 and health.get("ok") is True, "hosted service health must be ready")
-        if not request_diagnostics and operation_allowed and health_status == 200 and health.get("ok") is True:
+        check(
+            "service_health",
+            health_status == 200 and health.get("ok") is True,
+            "hosted service health must be ready",
+        )
+        if (
+            not request_diagnostics
+            and operation_allowed
+            and health_status == 200
+            and health.get("ok") is True
+        ):
+            enqueue_payload = service_enqueue_payload(request)
             enqueue_status, enqueue = _request_json(
                 _service_url(service_url, "/v1/managed-operations"),
                 method="POST",
                 token=token,
-                payload=request,
+                payload=enqueue_payload,
                 timeout=timeout_seconds,
             )
-            check("enqueue_accepted", enqueue_status == 202 and enqueue.get("ok") is True, "hosted service must accept the canary request")
-            receipt = enqueue.get("receipt") if isinstance(enqueue.get("receipt"), dict) else {}
+            check(
+                "enqueue_accepted",
+                enqueue_status == 202 and enqueue.get("ok") is True,
+                "hosted service must accept the canary request",
+            )
+            receipt = (
+                enqueue.get("receipt")
+                if isinstance(enqueue.get("receipt"), dict)
+                else {}
+            )
             queue_status = str(receipt.get("status") or "rejected")
+            enqueue_summary = enqueue.get("summary")
+            enqueue_summary = (
+                enqueue_summary if isinstance(enqueue_summary, dict) else {}
+            )
+            remote_request_id = enqueue_summary.get("request_id") or receipt.get(
+                "request_ref"
+            )
+            if isinstance(remote_request_id, str) and remote_request_id.startswith(
+                "managed-operation://"
+            ):
+                request_id = remote_request_id
+            else:
+                diagnostics.append(
+                    "hosted service enqueue response did not include a request id"
+                )
             status_history.append(queue_status)
             while queue_status not in TERMINAL_STATUSES:
                 if clock() - started >= max_wait_seconds:
                     queue_status = "timed_out"
-                    diagnostics.append("hosted canary exceeded its bounded wait timeout")
+                    diagnostics.append(
+                        "hosted canary exceeded its bounded wait timeout"
+                    )
                     break
                 request_ref = urllib.parse.quote(request_id, safe="")
                 status_url = _service_url(
@@ -207,10 +296,18 @@ def run_canary(
                     token=token,
                     timeout=timeout_seconds,
                 )
-                check("status_available", status_code == 200 and status_report.get("ok") is True, "hosted service status must be available")
+                check(
+                    "status_available",
+                    status_code == 200 and status_report.get("ok") is True,
+                    "hosted service status must be available",
+                )
                 job = status_report.get("job")
                 job = job if isinstance(job, dict) else {}
-                receipt = job.get("receipt") if isinstance(job.get("receipt"), dict) else receipt
+                receipt = (
+                    job.get("receipt")
+                    if isinstance(job.get("receipt"), dict)
+                    else receipt
+                )
                 queue_status = str(job.get("status") or "unknown")
                 status_history.append(queue_status)
                 raw_events = status_report.get("events")
@@ -218,7 +315,11 @@ def run_canary(
                 if queue_status in TERMINAL_STATUSES:
                     break
                 sleep(max(0.0, poll_interval_seconds))
-            check("queue_terminal", queue_status in TERMINAL_STATUSES, "hosted canary must reach a terminal queue state")
+            check(
+                "queue_terminal",
+                queue_status in TERMINAL_STATUSES,
+                "hosted canary must reach a terminal queue state",
+            )
         else:
             queue_status = "rejected"
     except HostedCanaryError as exc:
@@ -296,10 +397,16 @@ def run_canary(
         "diagnostics": diagnostics,
         "summary": {
             "ok": ok,
-            "status": "hosted_managed_canary_passed" if ok else "hosted_managed_canary_blocked",
-            "profile": "dry_run" if operation_id in DRY_RUN_OPERATION_IDS else "read_only",
+            "status": "hosted_managed_canary_passed"
+            if ok
+            else "hosted_managed_canary_blocked",
+            "profile": "dry_run"
+            if operation_id in DRY_RUN_OPERATION_IDS
+            else "read_only",
             "authoritative_output_report_count": len(observed_refs),
-            "local_output_files_verified": artifact_root is not None and not diagnostics and queue_status == "succeeded",
+            "local_output_files_verified": artifact_root is not None
+            and not diagnostics
+            and queue_status == "succeeded",
         },
         "authority_boundary": {
             "accepts_arbitrary_commands": False,
