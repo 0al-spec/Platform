@@ -301,6 +301,67 @@ class HostedManagedOperationQueueTests(unittest.TestCase):
         self.assertEqual(receipts[0]["status"], "quarantined")
         self.assertEqual(job["status"], "quarantined")
 
+    def test_expired_lock_blocks_new_work_until_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            queue = queue_module.SQLiteManagedOperationQueue(":memory:")
+            first_request = request_for(temp, "real_idea_intake_execute")
+            second_request = request_for(temp, "review_status_execute")
+            queue.enqueue(first_request, now_epoch=100, now_iso="2026-07-10T00:00:00Z")
+            queue.enqueue(second_request, now_epoch=100, now_iso="2026-07-10T00:00:00Z")
+            queue.lease_next(
+                worker_id="worker-a",
+                now_epoch=101,
+                now_iso="2026-07-10T00:00:01Z",
+                lease_seconds=10,
+            )
+
+            blocked = queue.lease_next(
+                worker_id="worker-b",
+                now_epoch=112,
+                now_iso="2026-07-10T00:00:12Z",
+                lease_seconds=10,
+            )
+            recovered = queue.recover_expired(
+                now_epoch=112,
+                now_iso="2026-07-10T00:00:12Z",
+            )
+            leased_after_recovery = queue.lease_next(
+                worker_id="worker-b",
+                now_epoch=113,
+                now_iso="2026-07-10T00:00:13Z",
+                lease_seconds=10,
+            )
+            queue.close()
+
+        self.assertIsNone(blocked)
+        self.assertEqual(recovered[0]["status"], "quarantined")
+        self.assertEqual(leased_after_recovery.request_id, second_request["request_id"])
+
+    def test_worker_cannot_complete_after_lease_expires_during_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            queue = queue_module.SQLiteManagedOperationQueue(":memory:")
+            request = request_for(Path(temp_dir), "review_status_execute")
+            queue.enqueue(request, now_epoch=100, now_iso="2026-07-10T00:00:00Z")
+            clock_values = iter((0.0, 11.0))
+            worker = queue_module.HostedManagedOperationWorker(
+                queue,
+                SuccessfulExecutor(),
+                worker_id="worker-a",
+                lease_seconds=10,
+                monotonic_clock=lambda: next(clock_values),
+            )
+
+            with self.assertRaises(queue_module.QueueContractError):
+                worker.run_once(
+                    now_epoch=101,
+                    now_iso="2026-07-10T00:00:01Z",
+                )
+            job = queue.get(request["request_id"])
+            queue.close()
+
+        self.assertEqual(job["status"], "running")
+
     def test_queue_rejects_tampered_request(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             request = request_for(Path(temp_dir), "review_status_execute")

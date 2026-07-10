@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
 import re
 import sqlite3
-from typing import Any, Protocol
+import time
+from typing import Any, Callable, Protocol
 
 try:
     from scripts import hosted_managed_operations as contracts
@@ -296,10 +298,6 @@ class SQLiteManagedOperationQueue:
         lease_expires_at: float,
         now_epoch: float,
     ) -> bool:
-        self.connection.execute(
-            "DELETE FROM managed_operation_locks WHERE lease_expires_at <= ?",
-            (now_epoch,),
-        )
         scopes = _operation_lock_scopes(request)
         if not scopes:
             return False
@@ -657,11 +655,13 @@ class HostedManagedOperationWorker:
         *,
         worker_id: str,
         lease_seconds: int = 120,
+        monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.queue = queue
         self.executor = executor
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
+        self.monotonic_clock = monotonic_clock
 
     def run_once(
         self,
@@ -669,6 +669,7 @@ class HostedManagedOperationWorker:
         now_epoch: float,
         now_iso: str,
     ) -> dict[str, Any] | None:
+        started_at = self.monotonic_clock()
         leased = self.queue.lease_next(
             worker_id=self.worker_id,
             now_epoch=now_epoch,
@@ -685,9 +686,25 @@ class HostedManagedOperationWorker:
                 status="failed",
                 diagnostics=(f"executor failed: {type(exc).__name__}",),
             )
+        elapsed_seconds = max(0.0, self.monotonic_clock() - started_at)
+        completion_epoch = now_epoch + elapsed_seconds
+        completion_iso = _advance_iso(now_iso, elapsed_seconds)
         return self.queue.complete(
             leased,
             result,
-            now_epoch=now_epoch,
-            now_iso=now_iso,
+            now_epoch=completion_epoch,
+            now_iso=completion_iso,
         )
+
+
+def _advance_iso(value: str, elapsed_seconds: float) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = datetime.now(timezone.utc)
+    return (
+        (parsed + timedelta(seconds=elapsed_seconds))
+        .astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
