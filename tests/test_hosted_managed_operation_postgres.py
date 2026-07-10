@@ -156,3 +156,62 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
                     self.assertEqual(job["status"], expected_status)
         finally:
             queue.close()
+
+    @unittest.skipUnless(
+        os.environ.get("PLATFORM_TEST_POSTGRES_URL"),
+        "set PLATFORM_TEST_POSTGRES_URL for PostgreSQL queue integration",
+    )
+    def test_real_postgresql_expired_lock_blocks_until_recovery(self) -> None:
+        database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
+        first_queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        second_queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        try:
+            with first_queue.connection.cursor() as cursor:
+                cursor.execute(
+                    "TRUNCATE managed_operation_events, managed_operation_locks, "
+                    "managed_operation_jobs RESTART IDENTITY CASCADE"
+                )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp = Path(temp_dir)
+                first_request = request_for(temp, "real_idea_intake_execute")
+                second_request = request_for(temp, "review_status_execute")
+                first_queue.enqueue(
+                    first_request,
+                    now_epoch=100,
+                    now_iso="2026-07-10T00:00:00Z",
+                )
+                first_queue.enqueue(
+                    second_request,
+                    now_epoch=100,
+                    now_iso="2026-07-10T00:00:00Z",
+                )
+                first_queue.lease_next(
+                    worker_id="postgres-worker-a",
+                    now_epoch=101,
+                    now_iso="2026-07-10T00:00:01Z",
+                    lease_seconds=10,
+                )
+
+                blocked = second_queue.lease_next(
+                    worker_id="postgres-worker-b",
+                    now_epoch=112,
+                    now_iso="2026-07-10T00:00:12Z",
+                    lease_seconds=10,
+                )
+                recovered = first_queue.recover_expired(
+                    now_epoch=112,
+                    now_iso="2026-07-10T00:00:12Z",
+                )
+                leased_after_recovery = second_queue.lease_next(
+                    worker_id="postgres-worker-b",
+                    now_epoch=113,
+                    now_iso="2026-07-10T00:00:13Z",
+                    lease_seconds=10,
+                )
+        finally:
+            first_queue.close()
+            second_queue.close()
+
+        self.assertIsNone(blocked)
+        self.assertEqual(recovered[0]["status"], "quarantined")
+        self.assertEqual(leased_after_recovery.request_id, second_request["request_id"])

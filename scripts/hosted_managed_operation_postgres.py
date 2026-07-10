@@ -211,10 +211,6 @@ class PostgreSQLManagedOperationQueue:
         with self.connection.transaction():
             with self.connection.cursor() as cursor:
                 cursor.execute(
-                    "DELETE FROM managed_operation_locks WHERE lease_expires_at <= %s",
-                    (now_epoch,),
-                )
-                cursor.execute(
                     """
                     SELECT * FROM managed_operation_jobs
                     WHERE status = 'queued' AND available_at <= %s
