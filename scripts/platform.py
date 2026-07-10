@@ -23,8 +23,10 @@ from typing import Any
 
 try:
     from scripts import hosted_managed_operations
+    from scripts import hosted_managed_operation_queue
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_operations
+    import hosted_managed_operation_queue
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -15747,6 +15749,119 @@ def managed_operation_validate_request(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
+def managed_operation_queue_init(args: argparse.Namespace) -> int:
+    database_path = Path(args.database).resolve()
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(database_path)
+    queue.close()
+    report = {
+        "artifact_kind": "platform_hosted_managed_operation_queue_initialization_report",
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "ok": True,
+        "adapter": "sqlite",
+        "summary": {"status": "hosted_managed_operation_queue_ready"},
+        "authority_boundary": {
+            "initializes_queue_storage": True,
+            "executes_managed_operations": False,
+            "executes_platform_wrappers": False,
+        },
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
+def managed_operation_enqueue(args: argparse.Namespace) -> int:
+    request = load_json_mapping(
+        Path(args.request).resolve(),
+        label="hosted managed operation request",
+    )
+    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(
+        Path(args.database).resolve()
+    )
+    try:
+        receipt = queue.enqueue(
+            request,
+            now_epoch=time.time(),
+            now_iso=utc_now_iso(),
+        )
+    except hosted_managed_operation_queue.QueueContractError as exc:
+        raise PlatformError(str(exc)) from exc
+    finally:
+        queue.close()
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0
+
+
+def managed_operation_queue_status(args: argparse.Namespace) -> int:
+    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(
+        Path(args.database).resolve()
+    )
+    try:
+        job = queue.get(args.request_id)
+        events = queue.events(args.request_id) if args.include_events and job else []
+    finally:
+        queue.close()
+    if job is None:
+        raise PlatformError("managed operation request is not present in the queue")
+    report = {
+        "artifact_kind": "platform_hosted_managed_operation_queue_status_report",
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "job": job,
+        "events": events,
+        "summary": {
+            "status": job["status"],
+            "terminal": job["status"]
+            in hosted_managed_operation_queue.TERMINAL_STATUSES,
+        },
+        "authority_boundary": {
+            "queue_status_is_lifecycle_evidence": False,
+            "platform_output_reports_are_authoritative": True,
+            "executes_managed_operations": False,
+        },
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
+def managed_operation_queue_recover(args: argparse.Namespace) -> int:
+    queue = hosted_managed_operation_queue.SQLiteManagedOperationQueue(
+        Path(args.database).resolve()
+    )
+    try:
+        receipts = queue.recover_expired(
+            now_epoch=time.time(),
+            now_iso=utc_now_iso(),
+            max_attempts=args.max_attempts,
+        )
+    finally:
+        queue.close()
+    report = {
+        "artifact_kind": "platform_hosted_managed_operation_queue_recovery_report",
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "receipts": receipts,
+        "summary": {
+            "status": "hosted_managed_operation_queue_recovered",
+            "recovered_count": len(receipts),
+            "requeued_count": sum(
+                receipt.get("status") == "queued" for receipt in receipts
+            ),
+            "quarantined_count": sum(
+                receipt.get("status") == "quarantined" for receipt in receipts
+            ),
+        },
+        "authority_boundary": {
+            "executes_managed_operations": False,
+            "requeues_replay_safe_operations": True,
+            "retries_irreversible_operations": False,
+        },
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
 def product_workspace_creation_boundary() -> dict[str, Any]:
     return {
         "executes_specgraph": False,
@@ -19388,6 +19503,38 @@ def build_parser() -> argparse.ArgumentParser:
     managed_operation_validate_parser.set_defaults(
         func=managed_operation_validate_request
     )
+    managed_operation_queue_init_parser = managed_operation_subcommands.add_parser(
+        "queue-init",
+        help="Initialize the durable SQLite queue adapter.",
+    )
+    managed_operation_queue_init_parser.add_argument("--database", required=True)
+    managed_operation_queue_init_parser.set_defaults(func=managed_operation_queue_init)
+    managed_operation_enqueue_parser = managed_operation_subcommands.add_parser(
+        "enqueue",
+        help="Validate and enqueue one immutable managed-operation request.",
+    )
+    managed_operation_enqueue_parser.add_argument("--database", required=True)
+    managed_operation_enqueue_parser.add_argument("--request", required=True)
+    managed_operation_enqueue_parser.set_defaults(func=managed_operation_enqueue)
+    managed_operation_status_parser = managed_operation_subcommands.add_parser(
+        "status",
+        help="Read queue transport status without treating it as lifecycle evidence.",
+    )
+    managed_operation_status_parser.add_argument("--database", required=True)
+    managed_operation_status_parser.add_argument("--request-id", required=True)
+    managed_operation_status_parser.add_argument("--include-events", action="store_true")
+    managed_operation_status_parser.set_defaults(func=managed_operation_queue_status)
+    managed_operation_recover_parser = managed_operation_subcommands.add_parser(
+        "recover",
+        help="Requeue replay-safe expired leases and quarantine the rest.",
+    )
+    managed_operation_recover_parser.add_argument("--database", required=True)
+    managed_operation_recover_parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=3,
+    )
+    managed_operation_recover_parser.set_defaults(func=managed_operation_queue_recover)
 
     workspace_parser = subcommands.add_parser(
         "workspace",
