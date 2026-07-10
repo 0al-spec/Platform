@@ -68,6 +68,41 @@ Validate a stored request before enqueueing it:
   --request runs/pantry/hosted_repair_publication_request.json
 ```
 
+## Durable Queue Adapter
+
+The first durable adapter uses SQLite for local development, integration tests,
+and single-worker recovery drills:
+
+```bash
+.venv/bin/python scripts/platform.py managed-operation queue-init \
+  --database .platform/managed-operations.sqlite3
+.venv/bin/python scripts/platform.py managed-operation enqueue \
+  --database .platform/managed-operations.sqlite3 \
+  --request runs/pantry/hosted_repair_publication_request.json
+.venv/bin/python scripts/platform.py managed-operation status \
+  --database .platform/managed-operations.sqlite3 \
+  --request-id 'managed-operation://pantry/repair_rerun_publish/…' \
+  --include-events
+```
+
+SQLite is not the horizontally scaled production backend. It establishes the
+adapter behavior and supports deterministic tests before the PostgreSQL adapter
+is deployed. The store persists immutable request documents, idempotency keys,
+leases, workspace/operation locks, receipts, and an append-only transition log.
+
+Expired leases are handled by policy:
+
+- read-only inspection and dry-run operations may be requeued within their
+  attempt limit;
+- consume-on-attempt, publication, workspace initialization, approval, and Git
+  review operations are quarantined for reconciliation or a new operator
+  request;
+- an expired non-dry-run Git review is never blindly retried.
+
+Queue transitions and their audit events are written atomically. The generic
+worker runtime receives a typed executor adapter; it does not accept a command,
+working directory, or environment from the queue request.
+
 ## Delivery And Recovery
 
 Hosted execution uses **at-least-once** delivery. It must not claim exactly-once

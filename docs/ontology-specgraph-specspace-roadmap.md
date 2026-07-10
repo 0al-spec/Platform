@@ -271,10 +271,12 @@ The current execution order is:
    rejection of foreign or mismatched binding inputs.
 4. **Hosted/queue-backed managed execution.** In progress. Platform now owns
    `platform.managed-operation.registry.v1` and queue-safe request/receipt
-   contracts for all twelve SpecSpace operations. The next slices add the
-   durable queue/store worker, SpecSpace hosted mode, deployment profiles, and
-   execution-backed recovery tests. Existing Platform reports remain lifecycle
-   authority; queue status remains transport telemetry.
+   contracts for all twelve SpecSpace operations. A durable SQLite adapter and
+   transport-independent worker core now cover idempotency, leases, lock scopes,
+   transition audit, replay-safe recovery, and quarantine. The next slices add
+   fixed Platform executor adapters, the PostgreSQL deployment backend,
+   SpecSpace hosted mode, and execution-backed recovery tests. Existing Platform
+   reports remain lifecycle authority; queue status remains transport telemetry.
 5. **Human-friendly candidate aliases.** SpecGraph should keep stable machine
    ids for refs and promotion paths, but expose readable aliases for candidate
    overview, topology, PR artifacts, and operator-facing diagnostics.
