@@ -15673,6 +15673,21 @@ def hosted_managed_operation_binding_from_source(
     )
 
 
+def managed_operation_allowlist_from_args(
+    args: argparse.Namespace,
+) -> frozenset[str]:
+    values = getattr(args, "operation_allowlist", None)
+    if values is None:
+        configured = os.environ.get("PLATFORM_MANAGED_OPERATION_ALLOWLIST", "").strip()
+        values = configured.split(",") if configured else None
+    elif isinstance(values, str):
+        values = values.split(",")
+    try:
+        return hosted_managed_operations.normalize_operation_allowlist(values)
+    except ValueError as exc:
+        raise PlatformError(str(exc)) from exc
+
+
 def managed_operation_contract(args: argparse.Namespace) -> int:
     payload = hosted_managed_operations.registry_payload()
     print(json.dumps(payload, indent=2, sort_keys=True))
@@ -16018,6 +16033,7 @@ def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
             "hosted managed-operation worker lease must be at least 600 seconds"
         )
     queue = _open_managed_operation_queue(args)
+    allowed_operation_ids = managed_operation_allowlist_from_args(args)
 
     def validate_binding(binding: dict[str, Any], workspace_id: str) -> list[str]:
         return [
@@ -16052,6 +16068,7 @@ def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
             executor,
             worker_id=args.worker_id,
             lease_seconds=args.lease_seconds,
+            allowed_operation_ids=allowed_operation_ids,
         )
         receipt = worker.run_once()
     except (
@@ -16073,6 +16090,7 @@ def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
             else f"hosted_managed_operation_{receipt.get('status')}",
             "operation_processed": receipt is not None,
             "recovered_count": len(recovered),
+            "enabled_operation_count": len(allowed_operation_ids),
         },
         "authority_boundary": {
             "worker_executes_allowlisted_platform_wrappers": True,
@@ -16236,12 +16254,14 @@ def managed_operation_serve(args: argparse.Namespace) -> int:
     queue = _open_managed_operation_queue(args)
     queue.close()
     queue_factory = lambda: _open_managed_operation_queue(args)
+    allowed_operation_ids = managed_operation_allowlist_from_args(args)
     service = hosted_managed_operation_service.HostedManagedOperationService(
         queue_factory=queue_factory,
         adapter=args.queue_adapter,
         resolver=resolver,
         now_epoch=time.time,
         now_iso=utc_now_iso,
+        allowed_operation_ids=allowed_operation_ids,
     )
     try:
         server = hosted_managed_operation_service.create_server(
@@ -20036,6 +20056,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=3,
     )
+    managed_operation_worker_common.add_argument(
+        "--operation-allowlist",
+        action="append",
+        help=(
+            "Restrict this worker to registered operation ids. May also be set via "
+            "PLATFORM_MANAGED_OPERATION_ALLOWLIST as a comma-separated list."
+        ),
+    )
     managed_operation_worker_parser = managed_operation_subcommands.add_parser(
         "worker-once",
         help="Lease and execute at most one operation through a fixed Platform adapter.",
@@ -20076,6 +20104,14 @@ def build_parser() -> argparse.ArgumentParser:
     managed_operation_serve_parser.add_argument("--artifact-root", required=True)
     managed_operation_serve_parser.add_argument("--state-dir", required=True)
     managed_operation_serve_parser.add_argument("--specgraph-dir", required=True)
+    managed_operation_serve_parser.add_argument(
+        "--operation-allowlist",
+        action="append",
+        help=(
+            "Restrict this service to registered operation ids. May also be set via "
+            "PLATFORM_MANAGED_OPERATION_ALLOWLIST as a comma-separated list."
+        ),
+    )
     managed_operation_serve_parser.add_argument("--host", default="127.0.0.1")
     managed_operation_serve_parser.add_argument("--port", type=int, default=8091)
     managed_operation_serve_parser.add_argument(

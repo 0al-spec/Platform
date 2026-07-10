@@ -715,12 +715,16 @@ class HostedManagedOperationWorker:
         worker_id: str,
         lease_seconds: int = 600,
         monotonic_clock: Callable[[], float] = time.monotonic,
+        allowed_operation_ids: frozenset[str] | None = None,
     ) -> None:
         self.queue = queue
         self.executor = executor
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.monotonic_clock = monotonic_clock
+        self.allowed_operation_ids = contracts.normalize_operation_allowlist(
+            allowed_operation_ids
+        )
 
     def run_once(
         self,
@@ -745,7 +749,14 @@ class HostedManagedOperationWorker:
             return None
         self.queue.mark_running(leased, now_epoch=now_epoch, now_iso=now_iso)
         try:
-            result = self.executor.execute(leased)
+            operation_id = str(leased.request.get("operation", {}).get("operation_id") or "")
+            if operation_id not in self.allowed_operation_ids:
+                result = ExecutionResult(
+                    status="quarantined",
+                    diagnostics=("worker operation allowlist rejected request",),
+                )
+            else:
+                result = self.executor.execute(leased)
         except Exception as exc:
             result = ExecutionResult(
                 status="failed",

@@ -362,6 +362,28 @@ class HostedManagedOperationQueueTests(unittest.TestCase):
 
         self.assertEqual(job["status"], "running")
 
+    def test_worker_quarantines_operation_outside_deploy_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            queue = queue_module.SQLiteManagedOperationQueue(":memory:")
+            request = request_for(Path(temp_dir), "review_status_execute")
+            queue.enqueue(request, now_epoch=100, now_iso="2026-07-10T00:00:00Z")
+            worker = queue_module.HostedManagedOperationWorker(
+                queue,
+                SuccessfulExecutor(),
+                worker_id="worker-a",
+                allowed_operation_ids=frozenset({"real_idea_intake_execute"}),
+            )
+
+            receipt = worker.run_once(now_epoch=101, now_iso="2026-07-10T00:00:01Z")
+            job = queue.get(request["request_id"])
+            queue.close()
+
+        self.assertEqual(receipt["status"], "quarantined")
+        self.assertEqual(job["status"], "quarantined")
+        self.assertTrue(
+            any("allowlist rejected" in item for item in receipt["diagnostics"])
+        )
+
     def test_queue_rejects_tampered_request(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             request = request_for(Path(temp_dir), "review_status_execute")

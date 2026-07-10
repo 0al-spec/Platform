@@ -48,6 +48,8 @@ services:
     secrets:
       - managed_operation_token
       - managed_operation_db_password
+    environment:
+      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:-}"
     depends_on:
       managed-operation-postgres:
         condition: service_healthy
@@ -86,6 +88,8 @@ services:
       - specspace-state:/data/specspace-state:ro
     secrets:
       - managed_operation_db_password
+    environment:
+      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:-}"
     depends_on:
       managed-operation-postgres:
         condition: service_healthy
