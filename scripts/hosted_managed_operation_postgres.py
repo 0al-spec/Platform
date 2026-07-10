@@ -185,7 +185,7 @@ class PostgreSQLManagedOperationQueue:
                 cursor.execute(
                     """
                     SELECT request_id, idempotency_key, operation_id, workspace_id,
-                           request_sha256, receipt_json
+                           receipt_json
                     FROM managed_operation_jobs
                     WHERE request_id = %s OR idempotency_key = %s
                     FOR UPDATE
@@ -203,8 +203,6 @@ class PostgreSQLManagedOperationQueue:
                     or existing["idempotency_key"] != idempotency_key
                     or existing["operation_id"] != operation_id
                     or existing["workspace_id"] != workspace_id
-                    or existing["request_sha256"]
-                    != queue_module.canonical_sha256(request)
                 ):
                     raise queue_module.QueueContractError(
                         "idempotency key is already owned by another operation"

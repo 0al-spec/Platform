@@ -147,12 +147,19 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
                         executor.submit(enqueue, second_queue),
                     )
                     receipts = [future.result(timeout=10) for future in futures]
+                retry_request = {**request, "generated_at": "2026-07-10T00:00:01Z"}
+                retry_receipt = second_queue.enqueue(
+                    retry_request,
+                    now_epoch=101,
+                    now_iso="2026-07-10T00:00:01Z",
+                )
                 events = first_queue.events(request["request_id"])
         finally:
             first_queue.close()
             second_queue.close()
 
         self.assertEqual(receipts[0], receipts[1])
+        self.assertEqual(retry_receipt, receipts[0])
         self.assertEqual([event["status"] for event in events], ["queued"])
 
     @unittest.skipUnless(
