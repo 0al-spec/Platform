@@ -163,6 +163,8 @@ def run_hosted_managed_compose_smoke() -> dict[str, Any]:
         raise RuntimeError("hosted service did not enforce the read-only allowlist")
     if worker_health.get("ok") is not True:
         raise RuntimeError("hosted worker heartbeat was not ready")
+    if worker_health.get("adapter") != "postgresql":
+        raise RuntimeError("hosted worker did not use PostgreSQL")
 
     return {
         "artifact_kind": "platform_hosted_managed_compose_smoke_report",
