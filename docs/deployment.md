@@ -211,6 +211,13 @@ HTTP handler and a PostgreSQL-backed worker. It remains bounded to the read-only
 `review_status_execute` operation and uses fixture-owned artifacts; it does not
 contact a deployment or perform Git operations.
 
+The `hosted-managed-compose-smoke` job covers the container boundary that the
+in-process jobs intentionally omit. It starts only PostgreSQL, the authenticated
+service, and the worker from the tracked Compose profile, then verifies the
+PostgreSQL service health contract and a fresh worker heartbeat. The smoke uses
+temporary fixture-owned secrets and a read-only allowlist, enqueues no managed
+request, and always removes its containers and volumes.
+
 The command resolves Compose inputs in this order:
 
 - compose file: `PLATFORM_COMPOSE_FILE`, then `docker-compose.local.yml`, then
