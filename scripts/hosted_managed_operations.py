@@ -169,6 +169,10 @@ MANAGED_OPERATIONS: tuple[ManagedOperationDefinition, ...] = (
             "runs/repaired_idea_to_spec_promotion_gate.json",
             "runs/platform_product_repair_rerun_execution_report.json",
             "runs/platform_product_repair_rerun_publication_report.json",
+            "runs/repaired_candidate_promotion_handoff_report.json",
+        ),
+        conditional_input_refs=(
+            "runs/repaired_candidate_promotion_handoff_report.json",
         ),
         output_reports=(
             "runs/platform_candidate_approval_intent_gate_report.json",

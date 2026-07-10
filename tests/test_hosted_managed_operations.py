@@ -56,6 +56,11 @@ class HostedManagedOperationContractTests(unittest.TestCase):
                 for item in payload["operations"]
             )
         )
+        approval = hosted.operation_by_id("candidate_approval_execute")
+        self.assertIn(
+            "runs/repaired_candidate_promotion_handoff_report.json",
+            approval.conditional_input_refs,
+        )
         initialization = hosted.operation_by_id("workspace_initialization_execute")
         self.assertEqual(initialization.binding_requirement, "planned_or_ready")
         self.assertTrue(
