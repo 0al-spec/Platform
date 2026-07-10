@@ -276,9 +276,12 @@ The current execution order is:
    transition audit, replay-safe recovery, and quarantine. Fixed executor
    adapters now cover all twelve operation ids and revalidate binding, inputs,
    confirmation evidence, and output reports around existing Platform wrappers.
-   The next slices add the PostgreSQL deployment backend, SpecSpace hosted mode,
-   and execution-backed recovery tests. Existing Platform reports remain
-   lifecycle authority; queue status remains transport telemetry.
+   An authenticated Platform HTTP boundary now materializes/enqueues logical
+   SpecSpace requests and exposes sanitized queue status without accepting raw
+   payloads or arbitrary execution parameters. The next slices add the
+   PostgreSQL deployment backend, SpecSpace hosted mode, and execution-backed
+   recovery tests. Existing Platform reports remain lifecycle authority; queue
+   status remains transport telemetry.
 5. **Human-friendly candidate aliases.** SpecGraph should keep stable machine
    ids for refs and promotion paths, but expose readable aliases for candidate
    overview, topology, PR artifacts, and operator-facing diagnostics.

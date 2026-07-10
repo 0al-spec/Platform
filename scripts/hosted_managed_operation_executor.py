@@ -99,27 +99,39 @@ class FilesystemManagedOperationResolver:
         self.specgraph_dir = specgraph_dir.resolve()
         self.binding_validator = binding_validator
 
-    def _binding_source(self, request: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
-        binding_projection = _mapping(request.get("workspace_binding"))
-        source_ref = binding_projection.get("source_ref")
+    def load_binding_source(
+        self,
+        source_ref: str,
+        *,
+        workspace_id: str,
+    ) -> tuple[Path, dict[str, Any]]:
         if not contracts.safe_artifact_ref(source_ref) or not str(source_ref).startswith("runs/"):
             raise ExecutorContractError("workspace binding source ref is not a safe runs ref")
         source_path = _safe_child(self.artifact_root, str(source_ref))
         if not source_path.is_file():
             raise ExecutorContractError("workspace binding source is missing")
-        digest, _, _, _ = contracts.digest_path(source_path)
-        if digest != binding_projection.get("source_sha256"):
-            raise ExecutorContractError("workspace binding source digest changed after enqueue")
         source = _read_json(source_path, "workspace binding source")
         binding = (
             source
             if source.get("artifact_kind") == "platform_product_workspace_binding"
             else _mapping(source.get("workspace_binding"))
         )
-        workspace_id = str(_mapping(request.get("workspace")).get("workspace_id") or "")
         validation_diagnostics = self.binding_validator(binding, workspace_id)
         if validation_diagnostics:
             raise ExecutorContractError("workspace binding validation failed")
+        return source_path, binding
+
+    def _binding_source(self, request: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+        binding_projection = _mapping(request.get("workspace_binding"))
+        source_ref = str(binding_projection.get("source_ref") or "")
+        workspace_id = str(_mapping(request.get("workspace")).get("workspace_id") or "")
+        source_path, binding = self.load_binding_source(
+            source_ref,
+            workspace_id=workspace_id,
+        )
+        digest, _, _, _ = contracts.digest_path(source_path)
+        if digest != binding_projection.get("source_sha256"):
+            raise ExecutorContractError("workspace binding source digest changed after enqueue")
         if binding.get("binding_id") != binding_projection.get("binding_id"):
             raise ExecutorContractError("workspace binding identity changed after enqueue")
         if binding.get("binding_revision_sha256") != binding_projection.get(
@@ -133,7 +145,7 @@ class FilesystemManagedOperationResolver:
     def _workspace_runs_dir(self, workspace_id: str) -> Path:
         return _safe_child(self.artifact_root, f"runs/{workspace_id}")
 
-    def _resolve_logical_ref(self, logical_ref: str, workspace_id: str) -> Path:
+    def resolve_logical_ref(self, logical_ref: str, workspace_id: str) -> Path:
         if logical_ref.startswith("specspace-state://"):
             relative = logical_ref.removeprefix("specspace-state://")
             return _safe_child(self.state_dir, relative)
@@ -164,7 +176,7 @@ class FilesystemManagedOperationResolver:
         confirmation = request.get("confirmation")
         if isinstance(confirmation, dict):
             confirmation_ref = str(confirmation.get("logical_ref") or "")
-            confirmation_path = self._resolve_logical_ref(
+            confirmation_path = self.resolve_logical_ref(
                 confirmation_ref, workspace_id
             )
             try:
@@ -182,7 +194,7 @@ class FilesystemManagedOperationResolver:
         input_paths: dict[str, Path] = {}
         for record in request["inputs"]:
             logical_ref = str(record["logical_ref"])
-            path = self._resolve_logical_ref(logical_ref, workspace_id)
+            path = self.resolve_logical_ref(logical_ref, workspace_id)
             try:
                 digest, size, media_type, artifact_kind = contracts.digest_path(path)
             except (OSError, ValueError) as exc:
@@ -201,7 +213,7 @@ class FilesystemManagedOperationResolver:
         output_refs: dict[str, str] = {}
         for pattern in request["expected_output_reports"]:
             concrete_ref = self._concrete_output_ref(pattern, request)
-            path = self._resolve_logical_ref(concrete_ref, workspace_id)
+            path = self.resolve_logical_ref(concrete_ref, workspace_id)
             path.parent.mkdir(parents=True, exist_ok=True)
             output_paths[pattern] = path
             output_refs[pattern] = concrete_ref

@@ -127,6 +127,12 @@ scripts/platform.py managed-operation worker-once \
   --state-dir ../SpecSpace/.specspace-dev/state \
   --specgraph-dir ../SpecGraph \
   --worker-id local-candidate-worker
+PLATFORM_MANAGED_OPERATION_TOKEN="<secret>" \
+  scripts/platform.py managed-operation serve \
+  --database .platform/managed-operations.sqlite3 \
+  --artifact-root ../SpecGraph \
+  --state-dir ../SpecSpace/.specspace-dev/state \
+  --specgraph-dir ../SpecGraph
 scripts/platform.py git-service execute-promotion \
   --contract git-service-operation-contract.example.json \
   --deployment-profile deployment-profile.product-idea-to-spec.example.json \
