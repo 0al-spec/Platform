@@ -24,11 +24,13 @@ from typing import Any
 
 try:
     from scripts import hosted_managed_operation_executor
+    from scripts import hosted_managed_operation_canary
     from scripts import hosted_managed_operations
     from scripts import hosted_managed_operation_queue
     from scripts import hosted_managed_operation_service
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_operation_executor
+    import hosted_managed_operation_canary
     import hosted_managed_operations
     import hosted_managed_operation_queue
     import hosted_managed_operation_service
@@ -60,6 +62,9 @@ DEFAULT_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL = (
 )
 DEFAULT_SPECSPACE_PRODUCT_SMOKE_REPORT = (
     REPO_ROOT / "runs" / "specspace_product_workspace_production_smoke_report.json"
+)
+DEFAULT_HOSTED_MANAGED_CANARY_REPORT = (
+    REPO_ROOT / "runs" / "platform_hosted_managed_operation_canary_report.json"
 )
 SPECSPACE_PRODUCT_SMOKE_RETRYABLE_STATUSES = {502, 503, 504}
 SPECSPACE_PRODUCT_SMOKE_WRITE_AUTHORITY_KEYS = {
@@ -19719,6 +19724,50 @@ def specspace_product_smoke(args: argparse.Namespace) -> int:
     return 0 if report["summary"]["ok"] else 1
 
 
+def managed_operation_canary_command(args: argparse.Namespace) -> int:
+    request_path = Path(args.request).resolve()
+    request = load_json_mapping(request_path, label="hosted managed-operation canary request")
+    token = os.environ.get(args.auth_token_env, "").strip()
+    if args.auth_token_file:
+        if token:
+            raise PlatformError(
+                "hosted canary token must use either environment or file input, not both"
+            )
+        try:
+            token = Path(args.auth_token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise PlatformError("hosted canary token file is unreadable") from exc
+    if len(token) < 32:
+        raise PlatformError(
+            f"{args.auth_token_env} must contain a hosted service token of at least 32 characters"
+        )
+    report = hosted_managed_operation_canary.run_canary(
+        request=request,
+        service_url=args.service_url,
+        token=token,
+        timeout_seconds=args.timeout,
+        poll_interval_seconds=args.poll_interval,
+        max_wait_seconds=args.max_wait,
+        allow_dry_run=args.allow_dry_run,
+        artifact_root=Path(args.artifact_root).resolve() if args.artifact_root else None,
+    )
+    output_path = Path(args.output).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        summary = report["summary"]
+        print(f"Hosted managed-operation canary: {'OK' if summary['ok'] else 'FAILED'}")
+        print(f"operation: {report['request']['operation_id']}")
+        print(f"workspace: {report['request']['workspace_id']}")
+        print(f"queue status: {report['queue']['status']}")
+        print(f"authoritative outputs: {summary['authoritative_output_report_count']}")
+        for diagnostic in report["diagnostics"]:
+            print(f"- {diagnostic}")
+    return 0 if report["summary"]["ok"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="platform",
@@ -19919,6 +19968,57 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mounted secret file containing the bearer token; its value is never reported.",
     )
     managed_operation_serve_parser.set_defaults(func=managed_operation_serve)
+
+    managed_operation_canary_parser = managed_operation_subcommands.add_parser(
+        "canary",
+        help=(
+            "Run a bounded hosted managed-operation canary through the authenticated "
+            "HTTP queue service."
+        ),
+    )
+    managed_operation_canary_parser.add_argument(
+        "--service-url",
+        required=True,
+        help="Hosted Platform managed-operation service URL.",
+    )
+    managed_operation_canary_parser.add_argument(
+        "--request",
+        required=True,
+        help="Existing validated queue-safe managed-operation request JSON.",
+    )
+    managed_operation_canary_parser.add_argument(
+        "--auth-token-env",
+        default="PLATFORM_MANAGED_OPERATION_TOKEN",
+        help="Environment variable containing the service bearer token.",
+    )
+    managed_operation_canary_parser.add_argument(
+        "--auth-token-file",
+        help="Mounted secret file containing the service bearer token.",
+    )
+    managed_operation_canary_parser.add_argument(
+        "--artifact-root",
+        help=(
+            "Optional local SpecGraph root for verifying receipt-pinned output digests. "
+            "The root path is never written to the report."
+        ),
+    )
+    managed_operation_canary_parser.add_argument("--timeout", type=float, default=10.0)
+    managed_operation_canary_parser.add_argument("--poll-interval", type=float, default=1.0)
+    managed_operation_canary_parser.add_argument("--max-wait", type=float, default=120.0)
+    managed_operation_canary_parser.add_argument(
+        "--allow-dry-run",
+        action="store_true",
+        help="Allow the explicitly registered promotion dry-run operation.",
+    )
+    managed_operation_canary_parser.add_argument(
+        "--output",
+        default=str(DEFAULT_HOSTED_MANAGED_CANARY_REPORT),
+        help="Durable canary report output path.",
+    )
+    managed_operation_canary_parser.add_argument(
+        "--format", choices=["table", "json"], default="table"
+    )
+    managed_operation_canary_parser.set_defaults(func=managed_operation_canary_command)
 
     workspace_parser = subcommands.add_parser(
         "workspace",

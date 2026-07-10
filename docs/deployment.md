@@ -110,6 +110,42 @@ restart-window transport failures and HTTP `502` / `503` / `504` responses with
 a bounded attempt count; persistent failures remain blocking and are recorded in
 the durable smoke report.
 
+### Hosted managed-operation canary
+
+The hosted queue profile has a separate canary command for validating the
+authenticated Platform service and worker. It consumes an already validated
+queue request; it does not build an arbitrary request from CLI arguments and it
+cannot run irreversible operations.
+
+Start with the read-only review-status operation:
+
+```bash
+.venv/bin/python scripts/platform.py managed-operation canary \
+  --service-url http://127.0.0.1:8091 \
+  --auth-token-file /run/secrets/managed_operation_token \
+  --request runs/hosted_canary_review_status_request.json \
+  --artifact-root ../SpecGraph \
+  --output runs/platform_hosted_managed_operation_canary_report.json \
+  --format json
+```
+
+The canary checks service health, request-contract validity, operation
+allowlisting, authenticated enqueue, queue terminal state, and the complete
+set of digest-pinned authoritative output reports. When `--artifact-root` is
+provided, it also verifies the output bytes against the receipt digests inside
+the workspace-scoped `runs/<workspace-id>` directory.
+
+The report is transport evidence, not lifecycle completion and not a promotion
+gate. Queue `succeeded` is accepted only together with the expected Platform
+output reports. Read-only review-status is enabled by default; the registered
+promotion dry-run can be tested only with explicit `--allow-dry-run`. Git
+review, read-model publication, consume-on-attempt operations, and automatic
+retry of ambiguous outcomes remain outside the canary profile.
+
+The report is public-safe: it contains opaque request/workspace identifiers,
+logical artifact refs, and digests, but never bearer tokens, token paths, local
+checkout paths, raw idea text, or the full request envelope.
+
 ## Local Compose Entry Point
 
 The working plan for this phase is maintained in

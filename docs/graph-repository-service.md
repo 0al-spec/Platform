@@ -53,6 +53,29 @@ worktrees and `make publish-bundle`. Hosted production can later replace the
 storage backend with a managed Git provider or queue-backed worker without
 changing the UI authority model.
 
+The hosted queue boundary now has an explicit safe canary profile. Platform
+accepts a previously validated managed-operation request, permits the
+read-only `review_status_execute` operation by default, and optionally permits
+the registered promotion dry-run with an explicit flag. The canary verifies
+authenticated service health, enqueue/status transitions, terminal receipt
+state, and the receipt-pinned authoritative output reports. It never permits
+Git review, read-model publication, or consume-on-attempt operations.
+
+This distinction is deliberate:
+
+```text
+queue transport success
+  != lifecycle completion
+authoritative Platform output reports
+  = lifecycle evidence
+```
+
+Use the canary report before enabling a hosted managed-operation profile for a
+new workspace. If a worker lease becomes ambiguous, the canary records a
+bounded timeout/failure; it does not submit a blind retry. Recovery and
+quarantine remain the queue adapter's responsibility and must be checked before
+enabling operations with non-replayable side effects.
+
 ## SpecSpace Authority Transition Strategy
 
 SpecSpace currently acts as an inspect/request surface. That remains the safe
