@@ -49,6 +49,7 @@ class HostedManagedOperationService:
         resolver: executor_module.FilesystemManagedOperationResolver,
         now_epoch: Callable[[], float],
         now_iso: Callable[[], str],
+        allowed_operation_ids: frozenset[str] | None = None,
     ) -> None:
         if queue_factory is None and database_path is None:
             raise HostedServiceError("hosted service queue storage is not configured")
@@ -60,6 +61,9 @@ class HostedManagedOperationService:
         self.resolver = resolver
         self.now_epoch = now_epoch
         self.now_iso = now_iso
+        self.allowed_operation_ids = contracts.normalize_operation_allowlist(
+            allowed_operation_ids
+        )
 
     def _queue(self) -> queue_module.ManagedOperationQueue:
         return self.queue_factory()
@@ -80,7 +84,8 @@ class HostedManagedOperationService:
             "status": "ready" if ready else "queue_unavailable",
             "contract_ref": contracts.REQUEST_CONTRACT_REF,
             "registry_contract_ref": contracts.REGISTRY_CONTRACT_REF,
-            "operation_count": len(contracts.MANAGED_OPERATIONS),
+            "operation_count": len(self.allowed_operation_ids),
+            "enabled_operation_ids": sorted(self.allowed_operation_ids),
             "adapter": self.adapter,
         }
 
@@ -96,6 +101,11 @@ class HostedManagedOperationService:
         )
         if definition is None:
             raise HostedServiceError("operation_id is not allowlisted")
+        if definition.operation_id not in self.allowed_operation_ids:
+            raise HostedServiceError(
+                "operation_id is disabled by the hosted deployment allowlist",
+                status=HTTPStatus.CONFLICT,
+            )
         workspace_id = payload.get("workspace_id")
         if not isinstance(workspace_id, str) or not contracts.WORKSPACE_ID_RE.fullmatch(
             workspace_id

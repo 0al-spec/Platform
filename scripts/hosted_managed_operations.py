@@ -267,6 +267,26 @@ def operation_by_id(operation_id: str) -> ManagedOperationDefinition | None:
     return next((item for item in MANAGED_OPERATIONS if item.operation_id == operation_id), None)
 
 
+def normalize_operation_allowlist(
+    values: Iterable[str] | None,
+) -> frozenset[str]:
+    """Return a validated deploy-time operation allowlist.
+
+    ``None`` means the legacy development profile where every registered
+    operation is available. Production profiles should pass an explicit
+    subset, normally starting with a read-only operation.
+    """
+    if values is None:
+        return frozenset(item.operation_id for item in MANAGED_OPERATIONS)
+    selected = frozenset(value.strip() for value in values if value.strip())
+    unknown = sorted(selected - {item.operation_id for item in MANAGED_OPERATIONS})
+    if unknown:
+        raise ValueError("operation allowlist contains unknown operation ids: " + ", ".join(unknown))
+    if not selected:
+        raise ValueError("operation allowlist must contain at least one registered operation")
+    return selected
+
+
 def operation_payload(definition: ManagedOperationDefinition) -> dict[str, Any]:
     payload = asdict(definition)
     for key in (

@@ -189,6 +189,13 @@ Platform enqueue/status service, a long-running worker, and SpecSpace in hosted
 managed mode. Queue status remains transport telemetry and does not replace
 validated Platform output reports.
 
+For a production canary, set
+`PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute`. The same
+allowlist is passed to the HTTP service and worker, and the service health
+report exposes only the enabled operation ids. Add
+`promotion_execute_dry_run` only for an explicit dry-run rollout; do not enable
+Git review, publication, or consume-on-attempt operations during canary.
+
 The command resolves Compose inputs in this order:
 
 - compose file: `PLATFORM_COMPOSE_FILE`, then `docker-compose.local.yml`, then

@@ -193,6 +193,28 @@ class HostedManagedOperationServiceTests(unittest.TestCase):
         self.assertEqual(report["status"], "queue_unavailable")
         self.assertNotIn("private database failure", json.dumps(report))
 
+    def test_operation_allowlist_is_reported_and_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            fixture = ExecutorFixture(temp)
+            service = service_module.HostedManagedOperationService(
+                database_path=temp / "queue.sqlite3",
+                resolver=fixture.resolver(),
+                now_epoch=lambda: 100.0,
+                now_iso=lambda: "2026-07-10T00:00:00Z",
+                allowed_operation_ids=frozenset({"review_status_execute"}),
+            )
+            health = service.health()
+            payload = self.review_status_payload(fixture)
+            payload["operation_id"] = "promotion_review_execute"
+
+            with self.assertRaises(service_module.HostedServiceError) as error:
+                service.enqueue(payload)
+
+        self.assertEqual(health["operation_count"], 1)
+        self.assertEqual(health["enabled_operation_ids"], ["review_status_execute"])
+        self.assertIn("deployment allowlist", str(error.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
