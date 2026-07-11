@@ -7527,6 +7527,11 @@ def product_repair_output_record(
                 payload = parsed
         except json.JSONDecodeError:
             payload = {}
+    output_artifact_candidate_ids = {
+        key: nested_mapping(value, "summary").get("candidate_id")
+        for key, value in nested_mapping(payload, "output_artifacts").items()
+        if isinstance(key, str) and isinstance(value, dict)
+    }
     record = {
         "path": str(path),
         "present": path.is_file(),
@@ -7536,6 +7541,7 @@ def product_repair_output_record(
         "status": nested_mapping(payload, "summary").get("status")
         or nested_mapping(payload, "readiness").get("review_state"),
         "summary": nested_mapping(payload, "summary"),
+        "output_artifact_candidate_ids": output_artifact_candidate_ids,
         "canonical_mutations_allowed": payload.get("canonical_mutations_allowed"),
         "tracked_artifacts_written": payload.get("tracked_artifacts_written"),
         "local_only": payload.get("local_only"),
@@ -7976,6 +7982,32 @@ def product_repair_repaired_output_diagnostics(
                 message="SpecGraph repaired handoff report must be ready",
             )
         )
+    if expected_candidate_id:
+        handoff_candidate_ids = nested_mapping(
+            handoff,
+            "output_artifact_candidate_ids",
+        )
+        for key in (
+            "repaired_active_candidate",
+            "repaired_repair_session",
+            "repaired_promotion_gate",
+        ):
+            actual_candidate_id = handoff_candidate_ids.get(key)
+            if actual_candidate_id != expected_candidate_id:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_repaired_handoff_candidate_mismatch",
+                        subject=(
+                            "outputs.repaired_handoff.output_artifacts."
+                            f"{key}.summary.candidate_id"
+                        ),
+                        message=(
+                            "SpecGraph repaired handoff output candidate_id must match "
+                            "the selected repair rerun plan"
+                        ),
+                    )
+                )
 
     expected = (
         ("repaired_active_candidate", "active_idea_to_spec_candidate"),
