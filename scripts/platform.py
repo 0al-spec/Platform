@@ -12956,11 +12956,27 @@ def product_candidate_promotion_materialized_source_dir(
         return None
     commit_paths = string_list(promotion_request.get("commit_paths"))
     if commit_paths and all(
-        path.startswith("runs/repaired_materialized_candidate_specs/")
+        product_candidate_promotion_is_repaired_materialized_path(path)
         for path in commit_paths
     ):
+        # Promotion paths remain repository-relative even when a durable
+        # workspace binding scopes artifacts below runs/<workspace-id>.
+        # Git Service joins this source root with each approved path.
+        for ancestor in (runs_dir, *runs_dir.parents):
+            if ancestor.name == "runs":
+                return ancestor.parent
         return runs_dir.parent
     return runs_dir / "materialized_candidate_specs"
+
+
+def product_candidate_promotion_is_repaired_materialized_path(path: str) -> bool:
+    parts = Path(path).parts
+    return (
+        len(parts) >= 3
+        and parts[0] == "runs"
+        and ".." not in parts
+        and "repaired_materialized_candidate_specs" in parts
+    )
 
 
 def product_candidate_promotion_operation(

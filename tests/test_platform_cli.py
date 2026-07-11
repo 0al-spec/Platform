@@ -9,6 +9,7 @@ from pathlib import Path
 import unittest
 
 from scripts import hosted_managed_operation_queue as queue_module
+from scripts import platform as platform_module
 from tests.platform_fixtures import workspace_creation_request
 from tests.test_hosted_managed_operation_queue import request_for
 
@@ -10779,6 +10780,87 @@ workspaces:
                     / "IDEA-ALPHA.yaml"
                 ).is_file()
             )
+
+    def test_product_candidate_promotion_execute_copies_workspace_scoped_repaired_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approved_path = (
+                "runs/hosted-operation-canary/"
+                "repaired_materialized_candidate_specs/IDEA-ALPHA.yaml"
+            )
+            approval_decision = self.write_candidate_approval_decision(
+                tmp_root,
+                paths=[approved_path],
+            )
+            promotion_request = tmp_root / "graph_repository_promotion_request.json"
+            request_result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--output",
+                str(promotion_request),
+                "--format",
+                "json",
+            )
+            self.assertEqual(request_result.returncode, 0, request_result.stderr)
+            repaired_spec_path = tmp_root / approved_path
+            repaired_spec_path.parent.mkdir(parents=True, exist_ok=True)
+            repaired_spec_path.write_text(
+                "id: IDEA-ALPHA\nsummary: Scoped repaired candidate spec\n",
+                encoding="utf-8",
+            )
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+            workspace_dir = tmp_root / "candidate-worktree"
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(workspace_dir),
+                "--open-review-dry-run",
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertEqual(payload["materialized_source_dir"], str(tmp_root.resolve()))
+            self.assertEqual(payload["git_review"]["copied_file_count"], 1)
+            self.assertTrue((workspace_dir / approved_path).is_file())
+
+    def test_product_candidate_promotion_resolves_scoped_repaired_paths_from_repository_root(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            runs_dir = tmp_root / "runs" / "hosted-operation-canary"
+            plan_path = runs_dir / "graph_repository_execution_plan.json"
+            source_dir = platform_module.product_candidate_promotion_materialized_source_dir(
+                explicit=None,
+                plan_path=plan_path,
+                plan={"runs_dir": str(runs_dir)},
+                promotion_request={
+                    "commit_paths": [
+                        "runs/hosted-operation-canary/"
+                        "repaired_materialized_candidate_specs/IDEA-ALPHA.yaml"
+                    ]
+                },
+            )
+
+            self.assertEqual(source_dir, tmp_root.resolve())
 
     def test_product_candidate_promotion_execute_resolves_relative_child_inputs(
         self,
