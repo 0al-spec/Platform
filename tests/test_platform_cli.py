@@ -5048,6 +5048,11 @@ workspaces:
             gate_ref = "runs/ui-started-smoke/repaired_idea_to_spec_promotion_gate.json"
             repair_session_path = runs_dir / "repaired_idea_to_spec_repair_session.json"
             repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/ui-started-smoke/{Path(entry['source_ref']).name}"
+                    )
             repair_session["source_artifacts"]["active_candidate"]["source_ref"] = active_ref
             repair_session["source_artifacts"]["promotion_gate"]["source_ref"] = gate_ref
             repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
@@ -5161,6 +5166,64 @@ workspaces:
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["source_mode"], "repaired_handoff")
         codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
+
+    def test_graph_repository_plan_accepts_repaired_handoff_in_selected_run_dir(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            runs_dir = root / "runs"
+            runs_dir.mkdir()
+            self.write_graph_repository_run_artifacts(runs_dir)
+            self.write_graph_repository_repaired_run_artifacts(runs_dir)
+            selected_run_dir = runs_dir / "idea-alpha"
+            selected_run_dir.mkdir()
+            for filename in (
+                "repaired_active_idea_to_spec_candidate.json",
+                "repaired_idea_to_spec_repair_session.json",
+                "repaired_idea_to_spec_promotion_gate.json",
+                "repaired_candidate_promotion_handoff_report.json",
+            ):
+                shutil.copyfile(runs_dir / filename, selected_run_dir / filename)
+
+            repair_session_path = (
+                selected_run_dir / "repaired_idea_to_spec_repair_session.json"
+            )
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+                    )
+            repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
+
+            handoff_path = selected_run_dir / "repaired_candidate_promotion_handoff_report.json"
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            for entry in handoff["output_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+                    )
+            handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+            result = self.run_cli(
+                "graph-repository",
+                "plan",
+                "--contract",
+                str(Path("graph-repository-service.example.json").resolve()),
+                "--runs-dir",
+                str(selected_run_dir),
+                "--repaired-handoff",
+                "repaired_candidate_promotion_handoff_report.json",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        codes = {item["code"] for item in payload["diagnostics"]}
         self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
 
     def test_graph_repository_plan_rejects_stale_repaired_handoff_ref(self) -> None:
@@ -7351,6 +7414,117 @@ workspaces:
                     / "repaired_candidate_promotion_handoff_report.json"
                 ).is_file()
             )
+
+    def test_product_repair_rerun_execute_rejects_foreign_repaired_candidate(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            makefile_path = specgraph_dir / "Makefile"
+            makefile_path.write_text(
+                makefile_path.read_text(encoding="utf-8").replace(
+                    '"candidate_id":"idea-alpha"',
+                    '"candidate_id":"foreign-candidate"',
+                ),
+                encoding="utf-8",
+            )
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn(
+            "product_repair_rerun_repaired_output_candidate_mismatch",
+            {item["code"] for item in payload["diagnostics"]},
+        )
+
+    def test_product_repair_rerun_execute_rejects_foreign_handoff_candidate(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            makefile_path = specgraph_dir / "Makefile"
+            makefile_path.write_text(
+                makefile_path.read_text(encoding="utf-8").replace(
+                    (
+                        '"source_ref":"runs/repaired_active_idea_to_spec_candidate.json",'
+                        '"summary":{"candidate_id":"idea-alpha"'
+                    ),
+                    (
+                        '"source_ref":"runs/repaired_active_idea_to_spec_candidate.json",'
+                        '"summary":{"candidate_id":"foreign-candidate"'
+                    ),
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        diagnostics = {item["code"]: item for item in payload["diagnostics"]}
+        self.assertIn(
+            "product_repair_rerun_repaired_handoff_candidate_mismatch",
+            diagnostics,
+        )
+        self.assertEqual(
+            diagnostics["product_repair_rerun_repaired_handoff_candidate_mismatch"][
+                "subject"
+            ],
+            (
+                "outputs.repaired_handoff.output_artifacts."
+                "repaired_active_candidate.summary.candidate_id"
+            ),
+        )
 
     def test_product_repair_rerun_execute_surfaces_intermediate_rerun_report(
         self,
@@ -9889,6 +10063,99 @@ workspaces:
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ready_to_materialize"])
+
+    def test_product_candidate_approval_gate_accepts_bound_run_dir_repair_refs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(
+                specgraph_dir,
+                intent_repair_session_ref=(
+                    "runs/idea-alpha/repaired_idea_to_spec_repair_session.json"
+                ),
+                intent_promotion_gate_ref=(
+                    "runs/idea-alpha/repaired_idea_to_spec_promotion_gate.json"
+                ),
+                include_repaired_handoff=True,
+            )
+            runs_dir = specgraph_dir / "runs"
+            bound_dir = runs_dir / "idea-alpha"
+            bound_dir.mkdir()
+            for filename in (
+                "idea_to_spec_candidate_approval_intents.json",
+                "repaired_active_idea_to_spec_candidate.json",
+                "repaired_idea_to_spec_repair_session.json",
+                "repaired_idea_to_spec_promotion_gate.json",
+                "repaired_candidate_promotion_handoff_report.json",
+                "platform_product_repair_rerun_execution_report.json",
+                "platform_product_repair_rerun_publication_report.json",
+            ):
+                shutil.copyfile(runs_dir / filename, bound_dir / filename)
+
+            repair_session_path = bound_dir / "repaired_idea_to_spec_repair_session.json"
+            repair_session = json.loads(repair_session_path.read_text(encoding="utf-8"))
+            for entry in repair_session["source_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+                    )
+            repair_session_path.write_text(json.dumps(repair_session), encoding="utf-8")
+
+            handoff_path = bound_dir / "repaired_candidate_promotion_handoff_report.json"
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            for entry in handoff["output_artifacts"].values():
+                if isinstance(entry, dict) and isinstance(entry.get("source_ref"), str):
+                    entry["source_ref"] = (
+                        f"runs/idea-alpha/{Path(entry['source_ref']).name}"
+                    )
+            handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+            initialization = (
+                bound_dir / "platform_product_workspace_initialization_execution_report.json"
+            )
+            self.write_workspace_initialization_execution_report(
+                initialization,
+                workspace_id="idea-alpha",
+                display_name="Idea Alpha",
+            )
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--workspace-initialization",
+                str(initialization),
+                "--approval-intents",
+                str(bound_dir / "idea_to_spec_candidate_approval_intents.json"),
+                "--active-candidate",
+                str(bound_dir / "repaired_active_idea_to_spec_candidate.json"),
+                "--repair-session",
+                str(repair_session_path),
+                "--promotion-gate",
+                str(bound_dir / "repaired_idea_to_spec_promotion_gate.json"),
+                "--repaired-handoff",
+                str(handoff_path),
+                "--repair-execution",
+                str(bound_dir / "platform_product_repair_rerun_execution_report.json"),
+                "--repair-publication",
+                str(bound_dir / "platform_product_repair_rerun_publication_report.json"),
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ready_to_materialize"])
+        codes = {item["code"] for item in payload["diagnostics"]}
+        self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
 
     def test_product_candidate_approval_gate_rejects_stale_repaired_handoff_ref(
         self,

@@ -3897,6 +3897,22 @@ def graph_repository_repaired_source_ref_aliases(
     return (graph_repository_repaired_source_ref(runs_dir=runs_dir, filename=filename),)
 
 
+def graph_repository_repair_session_source_refs_for_runs_dir(
+    runs_dir: Path,
+) -> dict[str, tuple[str, ...]]:
+    """Return the only valid journal provenance refs for the selected run scope."""
+    if runs_dir.parent.name != "runs":
+        return {
+            key: (value,)
+            for key, value in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items()
+        }
+    run_dir_ref = f"runs/{runs_dir.name}"
+    return {
+        key: (f"{run_dir_ref}/{Path(value).name}",)
+        for key, value in GRAPH_REPOSITORY_REPAIR_SESSION_SOURCE_REFS.items()
+    }
+
+
 def graph_repository_operation(
     *,
     name: str,
@@ -4270,7 +4286,16 @@ def build_graph_repository_execution_plan(
 
         repair_session = payloads.get("idea_to_spec_repair_session")
         if repair_session is not None:
-            diagnostics.extend(graph_repository_repair_session_diagnostics(repair_session))
+            diagnostics.extend(
+                graph_repository_repair_session_diagnostics(
+                    repair_session,
+                    expected_source_refs=(
+                        graph_repository_repair_session_source_refs_for_runs_dir(
+                            runs_dir
+                        )
+                    ),
+                )
+            )
 
     repaired_payloads: dict[str, dict[str, Any]] = {}
     repaired_source_refs: dict[str, str] = {}
@@ -4312,6 +4337,9 @@ def build_graph_repository_execution_plan(
                     repaired_repair_session,
                     subject="runs.repaired_idea_to_spec_repair_session.json",
                     expected_source_refs={
+                        **graph_repository_repair_session_source_refs_for_runs_dir(
+                            runs_dir
+                        ),
                         "active_candidate": graph_repository_repaired_source_ref_aliases(
                             runs_dir=runs_dir,
                             filename=Path(
@@ -7499,6 +7527,11 @@ def product_repair_output_record(
                 payload = parsed
         except json.JSONDecodeError:
             payload = {}
+    output_artifact_candidate_ids = {
+        key: nested_mapping(value, "summary").get("candidate_id")
+        for key, value in nested_mapping(payload, "output_artifacts").items()
+        if isinstance(key, str) and isinstance(value, dict)
+    }
     record = {
         "path": str(path),
         "present": path.is_file(),
@@ -7508,6 +7541,7 @@ def product_repair_output_record(
         "status": nested_mapping(payload, "summary").get("status")
         or nested_mapping(payload, "readiness").get("review_state"),
         "summary": nested_mapping(payload, "summary"),
+        "output_artifact_candidate_ids": output_artifact_candidate_ids,
         "canonical_mutations_allowed": payload.get("canonical_mutations_allowed"),
         "tracked_artifacts_written": payload.get("tracked_artifacts_written"),
         "local_only": payload.get("local_only"),
@@ -7916,6 +7950,8 @@ def product_repair_output_diagnostics(
 
 def product_repair_repaired_output_diagnostics(
     output_records: dict[str, dict[str, Any]],
+    *,
+    expected_candidate_id: str | None,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     handoff = output_records.get("repaired_handoff", {})
@@ -7946,6 +7982,32 @@ def product_repair_repaired_output_diagnostics(
                 message="SpecGraph repaired handoff report must be ready",
             )
         )
+    if expected_candidate_id:
+        handoff_candidate_ids = nested_mapping(
+            handoff,
+            "output_artifact_candidate_ids",
+        )
+        for key in (
+            "repaired_active_candidate",
+            "repaired_repair_session",
+            "repaired_promotion_gate",
+        ):
+            actual_candidate_id = handoff_candidate_ids.get(key)
+            if actual_candidate_id != expected_candidate_id:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_repaired_handoff_candidate_mismatch",
+                        subject=(
+                            "outputs.repaired_handoff.output_artifacts."
+                            f"{key}.summary.candidate_id"
+                        ),
+                        message=(
+                            "SpecGraph repaired handoff output candidate_id must match "
+                            "the selected repair rerun plan"
+                        ),
+                    )
+                )
 
     expected = (
         ("repaired_active_candidate", "active_idea_to_spec_candidate"),
@@ -7979,6 +8041,23 @@ def product_repair_repaired_output_diagnostics(
                     code="product_repair_rerun_repaired_output_not_ready",
                     subject=f"outputs.{key}.readiness.ready",
                     message=f"SpecGraph repaired handoff output {key} must be ready",
+                )
+            )
+        actual_candidate_id = nested_mapping(record, "summary").get("candidate_id")
+        if (
+            key in {"repaired_active_candidate", "repaired_repair_session"}
+            and expected_candidate_id
+            and actual_candidate_id != expected_candidate_id
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_repaired_output_candidate_mismatch",
+                    subject=f"outputs.{key}.summary.candidate_id",
+                    message=(
+                        "SpecGraph repaired handoff output candidate_id must match "
+                        "the selected repair rerun plan"
+                    ),
                 )
             )
     return diagnostics
@@ -8106,7 +8185,19 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
             )
         )
         if args.build_repaired_handoff:
-            diagnostics.extend(product_repair_repaired_output_diagnostics(output_records))
+            diagnostics.extend(
+                product_repair_repaired_output_diagnostics(
+                    output_records,
+                    expected_candidate_id=(
+                        nested_mapping(plan, "summary").get("candidate_id")
+                        if isinstance(
+                            nested_mapping(plan, "summary").get("candidate_id"),
+                            str,
+                        )
+                        else None
+                    ),
+                )
+            )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0 and (args.dry_run or command_result is not None)
     requested_operation_status = "failed"
@@ -9771,16 +9862,17 @@ def product_candidate_approval_repair_session_diagnostics(
     *,
     expected_active_candidate_refs: tuple[str, ...],
     expected_promotion_gate_refs: tuple[str, ...],
+    expected_source_refs: dict[str, tuple[str, ...]] | None = None,
 ) -> list[Diagnostic]:
-    expected_source_refs: dict[str, tuple[str, ...]] = {}
+    expected_refs = dict(expected_source_refs or {})
     if expected_active_candidate_refs:
-        expected_source_refs["active_candidate"] = expected_active_candidate_refs
+        expected_refs["active_candidate"] = expected_active_candidate_refs
     if expected_promotion_gate_refs:
-        expected_source_refs["promotion_gate"] = expected_promotion_gate_refs
+        expected_refs["promotion_gate"] = expected_promotion_gate_refs
     diagnostics = [
         *graph_repository_repair_session_diagnostics(
             repair_session,
-            expected_source_refs=expected_source_refs,
+            expected_source_refs=expected_refs,
         )
     ]
     if nested_mapping(repair_session, "readiness").get("ready") is not True:
@@ -10262,6 +10354,7 @@ def build_product_candidate_approval_gate_report(
     expected_active_candidate_refs: tuple[str, ...],
     expected_repair_session_refs: tuple[str, ...],
     expected_promotion_gate_refs: tuple[str, ...],
+    expected_repair_session_source_refs: dict[str, tuple[str, ...]] | None,
     extra_diagnostics: list[Diagnostic],
 ) -> tuple[dict[str, Any], list[Diagnostic]]:
     diagnostics: list[Diagnostic] = [
@@ -10305,6 +10398,7 @@ def build_product_candidate_approval_gate_report(
                 expected_promotion_gate_refs=(
                     expected_promotion_gate_refs if active_candidate is not None else ()
                 ),
+                expected_source_refs=expected_repair_session_source_refs,
             )
         )
     if promotion_gate is not None:
@@ -10650,6 +10744,14 @@ def product_candidate_approval_gate_report_from_args(
                 ),
             )
         )
+    bound_run_dir_ref = (
+        workspace_binding_context.get("platform_default_run_dir_ref")
+        if isinstance(workspace_binding_context, dict)
+        and isinstance(
+            workspace_binding_context.get("platform_default_run_dir_ref"), str
+        )
+        else None
+    )
     report, diagnostics = build_product_candidate_approval_gate_report(
         deployment_profile_path=deployment_profile_path,
         deployment_profile=deployment_profile,
@@ -10685,6 +10787,11 @@ def product_candidate_approval_gate_report_from_args(
             resolved_path=promotion_gate_path,
             default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
             specgraph_dir=specgraph_dir,
+        ),
+        expected_repair_session_source_refs=(
+            repair_session_expected_source_refs_for_run_dir(bound_run_dir_ref)
+            if bound_run_dir_ref
+            else None
         ),
         extra_diagnostics=[
             *intent_diagnostics,
