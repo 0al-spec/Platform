@@ -146,6 +146,19 @@ The report is public-safe: it contains opaque request/workspace identifiers,
 logical artifact refs, and digests, but never bearer tokens, token paths, local
 checkout paths, raw idea text, or the full request envelope.
 
+For a dedicated VM or an N100-class staging node, use the standalone
+`docker-compose.hosted-managed-runtime.example.yml` profile documented in
+[`hosted-managed-operations.md`](hosted-managed-operations.md). It packages
+PostgreSQL, the authenticated service, and one worker into one host and one
+monthly infrastructure unit. The runtime supports both `amd64` and `arm64`
+through the Debian Python base image; build it on the target architecture or
+publish a multi-architecture image.
+
+Review-status canaries must use portable GitHub PR evidence from the product
+promotion execution report. A deployed worker must not depend on a candidate
+worktree path or `.platform/graph_repository_open_review_report.json` that only
+exists on the developer workstation.
+
 Before enabling operations with non-replayable side effects, run recovery in
 strict mode against the hosted queue:
 

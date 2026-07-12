@@ -197,6 +197,89 @@ explicit environment variable name). It is never accepted as a CLI argument or
 returned by health/status. Non-loopback deployment requires TLS or an
 authenticated private service network.
 
+## Standalone Single-Node Runtime
+
+Use `docker-compose.hosted-managed-runtime.example.yml` when Platform hosted
+execution runs on a dedicated VM or small single-node server instead of inside
+the full local 0AL Compose topology. The runtime contains exactly three
+services:
+
+```text
+PostgreSQL
+Platform managed-operation HTTP service
+Platform managed-operation worker
+```
+
+Build the multi-architecture Python 3.12 runtime image and validate the
+fail-closed Compose contract before starting it:
+
+```bash
+docker build --file Dockerfile.hosted-managed \
+  --tag 0al/platform-hosted-managed:local .
+make hosted-managed-runtime-compose-contract
+```
+
+The Compose file requires these deployment values:
+
+```bash
+export PLATFORM_MANAGED_OPERATION_IMAGE=0al/platform-hosted-managed:local
+export PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute
+export PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT=/srv/0al/specgraph
+export PLATFORM_MANAGED_OPERATION_STATE_DIR=/srv/0al/state
+export PLATFORM_MANAGED_OPERATION_TOKEN_FILE=/srv/0al/secrets/managed-operation-token
+export PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE=/srv/0al/secrets/managed-operation-db-password
+export PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE=/srv/0al/secrets/managed-operation-database-url
+export PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE=/srv/0al/secrets/managed-operation-github-token
+
+docker compose --project-name platform-managed \
+  --file docker-compose.hosted-managed-runtime.example.yml up --detach
+```
+
+Do not place secret values in `.env`, Compose YAML, image layers, or queue
+requests. With non-Swarm Docker Compose, secret sources are bind-mounted and
+retain host ownership and mode. For the default image user (`uid=1000`,
+`gid=1000`), provision them as root-owned, group-readable files:
+
+```bash
+sudo chown root:1000 /srv/0al/secrets/managed-operation-*
+sudo chmod 0440 /srv/0al/secrets/managed-operation-*
+```
+
+The HTTP port is published on `127.0.0.1` only. Put TLS or an authenticated
+private network in front of it before connecting a remote SpecSpace instance.
+The service receives the artifact root read-only; only the worker can write
+authoritative reports. Both Platform containers use a read-only root
+filesystem, drop Linux capabilities, and disable privilege escalation.
+
+For a review-status canary, copy only the workspace binding, portable promotion
+execution report, and queue-safe canary request needed by that operation. Do not
+copy an entire developer `runs/` tree. Product review status can use validated
+embedded `git_review` evidence containing the GitHub pull request URL, number,
+branch, and explicit non-dry-run status; it does not require a Mac- or
+workstation-local candidate worktree or open-review report.
+
+After a host reboot, require all three containers to be healthy, verify
+`GET /v1/health`, and run strict recovery:
+
+```bash
+docker compose --project-name platform-managed \
+  --file docker-compose.hosted-managed-runtime.example.yml ps
+
+docker compose --project-name platform-managed \
+  --file docker-compose.hosted-managed-runtime.example.yml \
+  exec managed-operation-worker \
+  python3 scripts/platform.py managed-operation recover \
+    --queue-adapter postgresql \
+    --database-url-file /run/secrets/managed_operation_database_url \
+    --max-attempts 3 \
+    --strict
+```
+
+Re-enqueueing the same replay-safe canary request must return the existing
+terminal receipt with the same `request_id`, `idempotency_key`, and attempt
+number. It must not execute the operation a second time. PostgreSQL data and
+workspace reports must remain present after the reboot.
+
 ## Delivery And Recovery
 
 Hosted execution uses **at-least-once** delivery. It must not claim exactly-once
