@@ -175,6 +175,28 @@ ambiguous consume-on-attempt or irreversible leases are quarantined. It fails
 if a receipt contradicts the operation registry, so a deployment cannot hide a
 replay-policy drift behind a green recovery command.
 
+### TLS-fronted production profile
+
+The standalone VM profile proves the container boundary but publishes only on
+host loopback. Use `docker-compose.hosted-managed-production.example.yml` for a
+remote production SpecSpace connection. This separate profile adds a
+digest-pinned Caddy ingress and keeps PostgreSQL and the Platform HTTP service
+on an internal Docker network. Only the worker receives an egress network for
+read-only GitHub review inspection. The Platform service has no direct host
+port.
+
+Production rollout and sign-off are documented in
+[`hosted-managed-operations.md`](hosted-managed-operations.md#production-rollout-and-sign-off).
+The production contract is checked in CI with:
+
+```bash
+make hosted-managed-production-contract
+```
+
+It fails when images are mutable, the allowlist is absent, the Platform service
+publishes a direct port, TLS ingress is missing, maintenance tooling is enabled
+by default, or service/worker network authority expands.
+
 ## Local Compose Entry Point
 
 The working plan for this phase is maintained in

@@ -1,0 +1,220 @@
+services:
+  managed-operation-postgres:
+    image: "${PLATFORM_MANAGED_OPERATION_POSTGRES_IMAGE:?set a digest-pinned PostgreSQL image}"
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${PLATFORM_MANAGED_OPERATION_DB:-managed_operations}"
+      POSTGRES_USER: "${PLATFORM_MANAGED_OPERATION_DB_USER:-managed_operations}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/managed_operation_db_password
+    volumes:
+      - managed-operation-postgres:/var/lib/postgresql/data
+    secrets:
+      - managed_operation_db_password
+    networks:
+      - managed-backend
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  managed-operation-service:
+    image: "${PLATFORM_MANAGED_OPERATION_IMAGE:?set a digest-pinned Platform image}"
+    restart: unless-stopped
+    command:
+      - python3
+      - scripts/platform.py
+      - managed-operation
+      - serve
+      - --queue-adapter
+      - postgresql
+      - --database-url-file
+      - /run/secrets/managed_operation_database_url
+      - --artifact-root
+      - /workspace/SpecGraph
+      - --state-dir
+      - /data/specspace-state
+      - --specgraph-dir
+      - /workspace/SpecGraph
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8091"
+      - --auth-token-file
+      - /run/secrets/managed_operation_token
+    expose:
+      - "8091"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - "${PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT:?set PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT}:/workspace/SpecGraph:ro"
+      - "${PLATFORM_MANAGED_OPERATION_STATE_DIR:?set PLATFORM_MANAGED_OPERATION_STATE_DIR}:/data/specspace-state:ro"
+    secrets:
+      - managed_operation_token
+      - managed_operation_database_url
+    environment:
+      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:?set PLATFORM_MANAGED_OPERATION_ALLOWLIST}"
+    networks:
+      - managed-backend
+    depends_on:
+      managed-operation-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8091/v1/health', timeout=3).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  managed-operation-worker:
+    image: "${PLATFORM_MANAGED_OPERATION_IMAGE:?set a digest-pinned Platform image}"
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - >-
+        export GH_TOKEN="$$(cat /run/secrets/managed_operation_github_token)";
+        exec python3 scripts/platform.py managed-operation worker
+        --queue-adapter postgresql
+        --database-url-file /run/secrets/managed_operation_database_url
+        --artifact-root /workspace/SpecGraph
+        --state-dir /data/specspace-state
+        --specgraph-dir /workspace/SpecGraph
+        --worker-id "$${HOSTNAME}"
+        --health-file /tmp/managed-operation-worker-health.json
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - "${PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT:?set PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT}:/workspace/SpecGraph"
+      - "${PLATFORM_MANAGED_OPERATION_STATE_DIR:?set PLATFORM_MANAGED_OPERATION_STATE_DIR}:/data/specspace-state:ro"
+    secrets:
+      - managed_operation_database_url
+      - managed_operation_github_token
+    environment:
+      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:?set PLATFORM_MANAGED_OPERATION_ALLOWLIST}"
+    networks:
+      - managed-backend
+      - managed-egress
+    depends_on:
+      managed-operation-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import json,pathlib,time;
+          p=pathlib.Path('/tmp/managed-operation-worker-health.json');
+          d=json.loads(p.read_text());
+          raise SystemExit(0 if d.get('ok') is True and time.time()-p.stat().st_mtime < 15 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  managed-operation-ingress:
+    image: "${PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE:?set a digest-pinned Caddy image}"
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /data
+      - /config
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - caddy
+      - run
+      - --config
+      - /etc/caddy/Caddyfile
+      - --adapter
+      - caddyfile
+    ports:
+      - "${PLATFORM_MANAGED_OPERATION_INGRESS_BIND_IP:-0.0.0.0}:${PLATFORM_MANAGED_OPERATION_INGRESS_PORT:-443}:8443"
+    volumes:
+      - ./deploy/hosted-managed/Caddyfile:/etc/caddy/Caddyfile:ro
+    secrets:
+      - managed_operation_tls_certificate
+      - managed_operation_tls_private_key
+    networks:
+      - managed-backend
+    depends_on:
+      managed-operation-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget --quiet --no-check-certificate --output-document=-
+          https://127.0.0.1:8443/v1/health >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  managed-operation-maintenance:
+    image: "${PLATFORM_MANAGED_OPERATION_IMAGE:?set a digest-pinned Platform image}"
+    profiles:
+      - maintenance
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - python3
+      - scripts/hosted_managed_runtime_backup.py
+      - --help
+    volumes:
+      - "${PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT:?set PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT}:/workspace/SpecGraph:ro"
+      - "${PLATFORM_MANAGED_OPERATION_BACKUP_ROOT:?set PLATFORM_MANAGED_OPERATION_BACKUP_ROOT}:/backups"
+    secrets:
+      - managed_operation_database_url
+    networks:
+      - managed-backend
+    depends_on:
+      managed-operation-postgres:
+        condition: service_healthy
+
+volumes:
+  managed-operation-postgres:
+
+networks:
+  managed-backend:
+    internal: true
+  managed-egress: {}
+
+secrets:
+  managed_operation_token:
+    file: "${PLATFORM_MANAGED_OPERATION_TOKEN_FILE:?set PLATFORM_MANAGED_OPERATION_TOKEN_FILE}"
+  managed_operation_db_password:
+    file: "${PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE:?set PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE}"
+  managed_operation_database_url:
+    file: "${PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE:?set PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE}"
+  managed_operation_github_token:
+    file: "${PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE:?set PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE}"
+  managed_operation_tls_certificate:
+    file: "${PLATFORM_MANAGED_OPERATION_TLS_CERTIFICATE_FILE:?set PLATFORM_MANAGED_OPERATION_TLS_CERTIFICATE_FILE}"
+  managed_operation_tls_private_key:
+    file: "${PLATFORM_MANAGED_OPERATION_TLS_PRIVATE_KEY_FILE:?set PLATFORM_MANAGED_OPERATION_TLS_PRIVATE_KEY_FILE}"

@@ -31,6 +31,9 @@ jobs:
       - name: Validate standalone hosted runtime Compose contract
         run: make hosted-managed-runtime-compose-contract PYTHON=python3
 
+      - name: Validate TLS-fronted production hosted runtime contract
+        run: make hosted-managed-production-contract PYTHON=python3
+
       - name: Build standalone hosted runtime image
         run: >-
           docker build --file Dockerfile.hosted-managed
