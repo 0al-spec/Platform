@@ -204,18 +204,36 @@ def run_smoke() -> dict[str, Any]:
                 platform_image=platform_image,
                 ingress_port=ingress_port,
             )
-            _run(
-                [
-                    *compose,
-                    "up",
-                    "--detach",
-                    "--wait",
-                    "--wait-timeout",
-                    "300",
-                    *SERVICES,
-                ],
-                environment=environment,
-            )
+            try:
+                _run(
+                    [
+                        *compose,
+                        "up",
+                        "--detach",
+                        "--wait",
+                        "--wait-timeout",
+                        "300",
+                        *SERVICES,
+                    ],
+                    environment=environment,
+                )
+            except RuntimeError as exc:
+                try:
+                    logs = _run(
+                        [
+                            *compose,
+                            "logs",
+                            "--no-color",
+                            "--tail",
+                            "80",
+                            "managed-operation-ingress",
+                        ],
+                        environment=environment,
+                        timeout_seconds=30,
+                    )
+                except RuntimeError:
+                    logs = "ingress logs unavailable"
+                raise RuntimeError(f"{exc}; ingress logs: {logs[-1500:]}") from exc
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
