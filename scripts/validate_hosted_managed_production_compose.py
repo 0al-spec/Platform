@@ -266,13 +266,17 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
     for service_name in (
         "managed-operation-postgres",
         "managed-operation-service",
-        "managed-operation-ingress",
     ):
         if set(services[service_name].get("networks", {})) != {backend_name}:
             raise RuntimeError(f"{service_name} must use only the internal network")
     worker_networks = set(worker.get("networks", {}))
     if backend_name not in worker_networks or len(worker_networks) != 2:
         raise RuntimeError("worker must have internal queue access and one egress network")
+    ingress_networks = set(ingress.get("networks", {}))
+    if backend_name not in ingress_networks or len(ingress_networks) != 2:
+        raise RuntimeError("TLS ingress must have internal service access and one ingress network")
+    if worker_networks == ingress_networks:
+        raise RuntimeError("worker egress and public ingress networks must remain separate")
 
     return {
         "artifact_kind": "platform_hosted_managed_production_compose_contract_report",

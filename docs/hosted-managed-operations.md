@@ -289,6 +289,9 @@ The clean-VM runtime is staging evidence. A production deployment uses
 `docker-compose.hosted-managed-production.example.yml` and is not signed off
 until its TLS, backup, reboot, replay, SpecSpace cutover, and rollback evidence
 passes the final audit.
+PostgreSQL and the Platform service use only an internal backend network. The
+worker has a distinct outbound network for GitHub, while Caddy has a distinct
+published ingress network; worker egress and public ingress are never shared.
 
 ### Provisioning boundary
 

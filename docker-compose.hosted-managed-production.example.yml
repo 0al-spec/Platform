@@ -156,6 +156,7 @@ services:
       - managed_operation_tls_private_key
     networks:
       - managed-backend
+      - managed-ingress
     depends_on:
       managed-operation-service:
         condition: service_healthy
@@ -203,6 +204,7 @@ networks:
   managed-backend:
     internal: true
   managed-egress: {}
+  managed-ingress: {}
 
 secrets:
   managed_operation_token:
