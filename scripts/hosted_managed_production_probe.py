@@ -77,6 +77,8 @@ def run_probe(
     if (
         parsed.scheme != "https"
         or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
         or parsed.path not in ("", "/")
         or parsed.query
         or parsed.fragment
@@ -164,13 +166,19 @@ def run_probe(
         diagnostics.append("worker_heartbeat_stale")
 
     diagnostics = sorted(set(diagnostics))
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    origin = f"{parsed.scheme}://{host}"
+    if parsed.port is not None:
+        origin = f"{origin}:{parsed.port}"
     return {
         "artifact_kind": "platform_hosted_managed_production_probe_report",
         "contract_ref": "platform.hosted-managed.production-probe.v1",
         "generated_at": (now or datetime.now(timezone.utc)).isoformat(),
         "ok": not diagnostics,
         "service": {
-            "origin": f"{parsed.scheme}://{parsed.netloc}",
+            "origin": origin,
             "adapter": health.get("adapter"),
             "enabled_operation_ids": enabled if isinstance(enabled, list) else [],
         },

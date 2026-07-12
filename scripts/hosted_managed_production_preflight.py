@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -189,6 +190,7 @@ def run_preflight(
     return {
         "artifact_kind": "platform_hosted_managed_production_preflight_report",
         "contract_ref": "platform.hosted-managed.production-preflight.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "ok": not diagnostics,
         "summary": {
             "status": "ready" if not diagnostics else "blocked",

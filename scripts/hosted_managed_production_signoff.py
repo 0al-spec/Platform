@@ -10,6 +10,7 @@ from typing import Any
 
 
 ACTIVE_QUEUE_STATUSES = {"queued", "leased", "running"}
+DEFAULT_MAX_EVIDENCE_AGE_SECONDS = 86400.0
 EXPECTED_KINDS = {
     "preflight": "platform_hosted_managed_production_preflight_report",
     "probe_before_reboot": "platform_hosted_managed_production_probe_report",
@@ -131,8 +132,73 @@ def _write_authority_findings(value: Any, *, path: str = "$") -> list[str]:
     return findings
 
 
-def build_signoff(reports: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _evidence_timestamps(
+    reports: dict[str, dict[str, Any]],
+    *,
+    now: datetime,
+    max_age_seconds: float,
+) -> tuple[dict[str, datetime], list[str]]:
+    timestamps: dict[str, datetime] = {}
     diagnostics: list[str] = []
+    for label, report in reports.items():
+        value = report.get("generated_at")
+        if not isinstance(value, str):
+            diagnostics.append(f"{label}_generated_at_missing")
+            continue
+        try:
+            timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            diagnostics.append(f"{label}_generated_at_invalid")
+            continue
+        if timestamp.tzinfo is None:
+            diagnostics.append(f"{label}_generated_at_not_utc")
+            continue
+        timestamp = timestamp.astimezone(timezone.utc)
+        age = (now - timestamp).total_seconds()
+        if age < -300:
+            diagnostics.append(f"{label}_generated_at_in_future")
+        elif age > max_age_seconds:
+            diagnostics.append(f"{label}_evidence_stale")
+        timestamps[label] = timestamp
+    return timestamps, diagnostics
+
+
+def _ordering_diagnostics(timestamps: dict[str, datetime]) -> list[str]:
+    ordered_edges = (
+        ("preflight", "probe_before_reboot"),
+        ("probe_before_reboot", "backup"),
+        ("backup", "restore_smoke"),
+        ("restore_smoke", "canary"),
+        ("canary", "recovery"),
+        ("recovery", "probe_after_reboot"),
+        ("probe_after_reboot", "replay_canary"),
+        ("replay_canary", "queue_audit"),
+        ("queue_audit", "rollback_specspace_smoke"),
+        ("preflight", "hosted_specspace_smoke"),
+        ("hosted_specspace_smoke", "rollback_specspace_smoke"),
+    )
+    diagnostics: list[str] = []
+    for earlier, later in ordered_edges:
+        if earlier in timestamps and later in timestamps and timestamps[earlier] > timestamps[later]:
+            diagnostics.append(f"evidence_order_invalid_{earlier}_after_{later}")
+    return diagnostics
+
+
+def build_signoff(
+    reports: dict[str, dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    max_evidence_age_seconds: float = DEFAULT_MAX_EVIDENCE_AGE_SECONDS,
+) -> dict[str, Any]:
+    diagnostics: list[str] = []
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamps, timestamp_diagnostics = _evidence_timestamps(
+        reports,
+        now=current,
+        max_age_seconds=max_evidence_age_seconds,
+    )
+    diagnostics.extend(timestamp_diagnostics)
+    diagnostics.extend(_ordering_diagnostics(timestamps))
     if set(reports) != set(EXPECTED_KINDS):
         diagnostics.append("evidence_set_incomplete")
     for label, expected_kind in EXPECTED_KINDS.items():
@@ -238,7 +304,7 @@ def build_signoff(reports: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {
         "artifact_kind": "platform_hosted_managed_production_canary_signoff_report",
         "contract_ref": "platform.hosted-managed.production-canary-signoff.v1",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": current.isoformat(),
         "ok": not diagnostics,
         "summary": {
             "status": "production_canary_signed_off"
@@ -296,6 +362,11 @@ def main(argv: list[str] | None = None) -> int:
     for label in EXPECTED_KINDS:
         signoff.add_argument(f"--{label.replace('_', '-')}", required=True)
     signoff.add_argument("--output")
+    signoff.add_argument(
+        "--max-evidence-age",
+        type=float,
+        default=DEFAULT_MAX_EVIDENCE_AGE_SECONDS,
+    )
     args = parser.parse_args(argv)
     try:
         if args.command == "queue-audit":
@@ -305,7 +376,10 @@ def main(argv: list[str] | None = None) -> int:
                 label: _load_report(Path(getattr(args, label)), label=label)
                 for label in EXPECTED_KINDS
             }
-            report = build_signoff(reports)
+            report = build_signoff(
+                reports,
+                max_evidence_age_seconds=args.max_evidence_age,
+            )
     except ProductionSignoffError as exc:
         report = {
             "artifact_kind": "platform_hosted_managed_production_canary_signoff_report",

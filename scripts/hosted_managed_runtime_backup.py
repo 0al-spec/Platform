@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -258,6 +259,7 @@ def create_backup(
         report = {
             "artifact_kind": "platform_hosted_managed_runtime_backup_report",
             "contract_ref": "platform.hosted-managed.runtime-backup.v1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "ok": True,
             "backup_id": backup_id,
             "summary": {
@@ -390,6 +392,7 @@ def restore_smoke(
     return {
         "artifact_kind": "platform_hosted_managed_runtime_restore_smoke_report",
         "contract_ref": "platform.hosted-managed.runtime-restore-smoke.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "ok": True,
         "backup_id": backup_id,
         "summary": {

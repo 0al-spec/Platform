@@ -278,11 +278,28 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
         self.assertIn("worker_heartbeat_stale", report["diagnostics"])
         self.assertIn("service_allowlist_not_read_only_canary", report["diagnostics"])
 
+    def test_probe_rejects_url_userinfo_before_fetching(self) -> None:
+        with self.assertRaisesRegex(
+            probe.ProductionProbeError,
+            "clean HTTPS service URL",
+        ):
+            probe.run_probe(
+                service_url="https://user:password@managed.example.test",
+                compose_file=Path("/srv/platform/compose.yml"),
+                project_name="platform-managed",
+                fetch_health=lambda _: self.fail("health must not be fetched"),
+            )
+
 
 class HostedManagedProductionSignoffTests(unittest.TestCase):
     def evidence(self) -> dict[str, dict]:
+        generated_at = "2026-07-13T00:00:00+00:00"
         reports = {
-            label: {"artifact_kind": kind, "ok": True}
+            label: {
+                "artifact_kind": kind,
+                "generated_at": generated_at,
+                "ok": True,
+            }
             for label, kind in signoff.EXPECTED_KINDS.items()
         }
         for label in ("probe_before_reboot", "probe_after_reboot"):
@@ -342,7 +359,10 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
         return reports
 
     def test_signoff_requires_complete_reboot_replay_backup_and_rollback_evidence(self) -> None:
-        report = signoff.build_signoff(self.evidence())
+        report = signoff.build_signoff(
+            self.evidence(),
+            now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
+        )
         self.assertTrue(report["ok"], report["diagnostics"])
         self.assertEqual(report["summary"]["status"], "production_canary_signed_off")
         self.assertTrue(report["summary"]["rollback_verified"])
@@ -354,7 +374,10 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
             "review_status_execute",
             "promotion_execute_dry_run",
         ]
-        report = signoff.build_signoff(evidence)
+        report = signoff.build_signoff(
+            evidence,
+            now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
+        )
         self.assertFalse(report["ok"])
         self.assertIn("replay_canary_attempt_not_one", report["diagnostics"])
         self.assertIn("probe_after_reboot_allowlist_invalid", report["diagnostics"])
@@ -362,9 +385,30 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
     def test_signoff_rejects_write_capable_evidence(self) -> None:
         evidence = self.evidence()
         evidence["canary"]["authority_boundary"] = {"may_execute_platform": True}
-        report = signoff.build_signoff(evidence)
+        report = signoff.build_signoff(
+            evidence,
+            now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
+        )
         self.assertFalse(report["ok"])
         self.assertIn("canary_write_authority_expanded", report["diagnostics"])
+
+    def test_signoff_rejects_stale_and_out_of_order_evidence(self) -> None:
+        evidence = self.evidence()
+        evidence["preflight"]["generated_at"] = "2026-07-10T00:00:00+00:00"
+        evidence["backup"]["generated_at"] = "2026-07-13T00:30:00+00:00"
+        evidence["probe_before_reboot"]["generated_at"] = (
+            "2026-07-13T00:45:00+00:00"
+        )
+        report = signoff.build_signoff(
+            evidence,
+            now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
+        )
+        self.assertFalse(report["ok"])
+        self.assertIn("preflight_evidence_stale", report["diagnostics"])
+        self.assertIn(
+            "evidence_order_invalid_probe_before_reboot_after_backup",
+            report["diagnostics"],
+        )
 
 
 if __name__ == "__main__":

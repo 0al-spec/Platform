@@ -483,7 +483,10 @@ to a local SQLite executor. A consume-on-attempt or irreversible request needs
 new operator intent after rollback.
 
 The final sign-off command requires all evidence rather than trusting a single
-green queue receipt:
+green queue receipt. By default every evidence report must be no older than 24
+hours and must follow the documented causal order from preflight through
+rollback; `--max-evidence-age` may narrow that window but should not be expanded
+to reuse evidence from an earlier deployment:
 
 ```bash
 .venv/bin/python scripts/hosted_managed_production_signoff.py signoff \
