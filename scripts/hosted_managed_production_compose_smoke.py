@@ -70,6 +70,26 @@ def _wait_registry(port: int) -> None:
     raise RuntimeError("temporary image registry did not become ready")
 
 
+def _wait_ingress_health(port: int) -> dict[str, Any]:
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(
+                f"https://127.0.0.1:{port}/v1/health",
+                context=context,
+                timeout=2,
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if isinstance(payload, dict):
+                return payload
+        except (OSError, json.JSONDecodeError):
+            time.sleep(0.25)
+    raise RuntimeError("TLS ingress health did not become reachable on the host")
+
+
 def _fixture(
     root: Path,
     *,
@@ -258,15 +278,14 @@ def run_smoke() -> dict[str, Any]:
                 except RuntimeError:
                     logs = "ingress logs unavailable"
                 raise RuntimeError(f"{exc}; ingress logs: {logs[-1500:]}") from exc
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            with urllib.request.urlopen(
-                f"https://127.0.0.1:{ingress_port}/v1/health",
-                context=context,
-                timeout=5,
-            ) as response:
-                ingress_health = json.loads(response.read().decode("utf-8"))
+            published = _run(
+                [*compose, "port", "managed-operation-ingress", "8443"],
+                environment=environment,
+                timeout_seconds=30,
+            )
+            if published.rsplit(":", 1)[-1] != str(ingress_port):
+                raise RuntimeError("TLS ingress published an unexpected host port")
+            ingress_health = _wait_ingress_health(ingress_port)
             worker_health = json.loads(
                 _run(
                     [
