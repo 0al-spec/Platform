@@ -243,6 +243,9 @@ retain host ownership and mode. For the default image user (`uid=1000`,
 ```bash
 sudo chown root:1000 /srv/0al/secrets/managed-operation-*
 sudo chmod 0440 /srv/0al/secrets/managed-operation-*
+
+# The worker runs as uid/gid 1000 and writes authoritative reports here.
+sudo chown -R 1000:1000 /srv/0al/specgraph
 ```
 
 The HTTP port is published on `127.0.0.1` only. Put TLS or an authenticated

@@ -88,6 +88,19 @@ def _bind_mount(service: dict[str, Any], target: str) -> dict[str, Any]:
     raise RuntimeError(f"service omitted required bind mount {target}")
 
 
+def _ports_publish_only_loopback(ports: object) -> bool:
+    return (
+        isinstance(ports, list)
+        and bool(ports)
+        and all(
+            isinstance(port, dict)
+            and port.get("host_ip") == "127.0.0.1"
+            and port.get("target") == 8091
+            for port in ports
+        )
+    )
+
+
 def validate_hosted_managed_runtime_compose() -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_root = Path(temp_dir)
@@ -155,12 +168,7 @@ def validate_hosted_managed_runtime_compose() -> dict[str, Any]:
         raise RuntimeError("worker artifact mount must allow authoritative reports")
 
     ports = services["managed-operation-service"].get("ports")
-    if not isinstance(ports, list) or not any(
-        isinstance(port, dict)
-        and port.get("host_ip") == "127.0.0.1"
-        and port.get("target") == 8091
-        for port in ports
-    ):
+    if not _ports_publish_only_loopback(ports):
         raise RuntimeError("managed service must publish only on loopback")
 
     worker_command = services["managed-operation-worker"].get("command")
