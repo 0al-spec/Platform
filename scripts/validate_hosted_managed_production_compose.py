@@ -225,6 +225,20 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
         raise RuntimeError("TLS ingress must be the only published production port")
     if ingress.get("user") != "1000:1000":
         raise RuntimeError("TLS ingress must run as the unprivileged runtime user")
+    if ingress.get("entrypoint") != ["/bin/sh", "-ec"]:
+        raise RuntimeError("TLS ingress must strip upstream file capabilities in tmpfs")
+    ingress_command = ingress.get("command")
+    ingress_command_text = (
+        " ".join(ingress_command) if isinstance(ingress_command, list) else ""
+    )
+    if not all(
+        token in ingress_command_text
+        for token in (
+            "cp /usr/bin/caddy /tmp/caddy-runtime",
+            "exec /tmp/caddy-runtime run",
+        )
+    ):
+        raise RuntimeError("TLS ingress runtime command may retain upstream file capabilities")
     caddyfile = _bind_mount(ingress, "/etc/caddy/Caddyfile")
     if caddyfile.get("read_only") is not True:
         raise RuntimeError("TLS ingress Caddyfile must be read-only")

@@ -381,6 +381,9 @@ The bounded Compose smoke starts the real Caddy, PostgreSQL, service, and worker
 profile with a one-day self-signed fixture certificate and a temporary local
 registry so even the test image is addressed by digest. It enqueues no managed
 request and removes containers, registry, and volumes afterward.
+The ingress copies the immutable upstream Caddy binary into tmpfs before exec;
+this deliberately removes its unused low-port file capability so the container
+can keep `cap_drop: ALL` and `no-new-privileges` while listening on port `8443`.
 
 The probe requires all four runtime services to be healthy, PostgreSQL as the
 queue adapter, a fresh worker heartbeat, and exactly
