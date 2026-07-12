@@ -11214,6 +11214,164 @@ workspaces:
         self.assertTrue(payload["ok"], payload["diagnostics"])
         self.assertEqual(payload["review_state"], "merged")
 
+    def test_product_candidate_promotion_review_status_uses_portable_review_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            execution_payload = json.loads(
+                execution_report.read_text(encoding="utf-8")
+            )
+            execution_payload["workspace_dir"] = "/foreign-host/candidate-worktree"
+            execution_payload["git_service_execution"]["report_refs"][
+                "open_review"
+            ] = "/foreign-host/graph_repository_open_review_report.json"
+            execution_payload["git_review"] = {
+                "candidate_branch": execution_payload["candidate_branch"],
+                "review_opened": True,
+                "open_review_dry_run": False,
+                "review_number": 123,
+                "review_url": "https://github.com/example/repo/pull/123",
+            }
+            execution_report.write_text(
+                json.dumps(execution_payload), encoding="utf-8"
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "mergedAt": None,
+                    "mergeCommit": None,
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+            output = (
+                tmp_root
+                / "runs"
+                / "idea-alpha"
+                / "product_candidate_promotion_review_status_report.json"
+            )
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--gh-bin",
+                str(fake_gh),
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            )
+            child_report_written = (
+                output.parent
+                / ".platform"
+                / "graph_repository_review_status_report.json"
+            ).is_file()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"], payload["diagnostics"])
+        self.assertEqual(payload["review_state"], "open")
+        self.assertIn("--review-url", payload["graph_repository_command"])
+        self.assertTrue(child_report_written)
+
+    def test_product_candidate_promotion_review_status_rejects_invalid_portable_url(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            execution_payload = json.loads(
+                execution_report.read_text(encoding="utf-8")
+            )
+            execution_payload["workspace_dir"] = "/foreign-host/candidate-worktree"
+            execution_payload["git_service_execution"]["report_refs"][
+                "open_review"
+            ] = "/foreign-host/graph_repository_open_review_report.json"
+            execution_payload["git_review"] = {
+                "candidate_branch": execution_payload["candidate_branch"],
+                "review_opened": True,
+                "open_review_dry_run": False,
+                "review_number": 123,
+                "review_url": "https://example.invalid/repo/pull/123",
+            }
+            execution_report.write_text(
+                json.dumps(execution_payload), encoding="utf-8"
+            )
+            fake_gh = self.write_fake_gh_view(tmp_root, {})
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn("graph_repository_review_url_invalid", codes)
+        self.assertIn("product_candidate_promotion_workspace_missing", codes)
+        self.assertIsNone(payload["graph_repository_command_result"])
+
+    def test_product_candidate_promotion_review_status_requires_portable_review_number(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            execution_payload = json.loads(
+                execution_report.read_text(encoding="utf-8")
+            )
+            execution_payload["workspace_dir"] = "/foreign-host/candidate-worktree"
+            execution_payload["git_service_execution"]["report_refs"][
+                "open_review"
+            ] = "/foreign-host/graph_repository_open_review_report.json"
+            execution_payload["git_review"] = {
+                "candidate_branch": execution_payload["candidate_branch"],
+                "review_opened": True,
+                "open_review_dry_run": False,
+                "review_url": "https://github.com/example/repo/pull/123",
+            }
+            execution_report.write_text(
+                json.dumps(execution_payload), encoding="utf-8"
+            )
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_promotion_portable_review_number_invalid", codes
+        )
+        self.assertIsNone(payload["graph_repository_command_result"])
+
     def test_product_candidate_promotion_publish_read_model_copies_bundle(
         self,
     ) -> None:
@@ -12225,6 +12383,45 @@ workspaces:
                     / "graph_repository_review_status_report.json"
                 ).is_file()
             )
+
+    def test_graph_repository_review_status_accepts_portable_review_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            report_dir = tmp_root / "runs" / "idea-alpha"
+            report_dir.mkdir(parents=True)
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "mergedAt": None,
+                    "mergeCommit": None,
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "APPROVED",
+                },
+            )
+
+            result = self.run_cli(
+                "graph-repository",
+                "review-status",
+                "--review-url",
+                "https://github.com/example/repo/pull/123",
+                "--worktree-dir",
+                str(report_dir),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"], payload["diagnostics"])
+        self.assertIsNone(payload["open_review_report_ref"])
+        self.assertEqual(payload["review_state"], "open")
 
     def test_graph_repository_review_status_marks_merged_pull_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

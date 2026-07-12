@@ -13400,6 +13400,81 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def product_candidate_promotion_portable_review_diagnostics(
+    execution_report: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    git_review = nested_mapping(execution_report, "git_review")
+    if not git_review:
+        return diagnostics
+    if git_review.get("review_opened") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_portable_review_not_opened",
+                subject="execution_report.git_review.review_opened",
+                message="portable review evidence must declare review_opened as true",
+            )
+        )
+    if git_review.get("open_review_dry_run") is not False:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_portable_review_dry_run",
+                subject="execution_report.git_review.open_review_dry_run",
+                message="portable review evidence must come from a real opened review",
+            )
+        )
+    review_number = git_review.get("review_number")
+    if (
+        isinstance(review_number, bool)
+        or not isinstance(review_number, int)
+        or review_number <= 0
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_portable_review_number_invalid",
+                subject="execution_report.git_review.review_number",
+                message="portable review evidence must include a positive review_number",
+            )
+        )
+    candidate_branch = execution_report.get("candidate_branch")
+    if (
+        not isinstance(candidate_branch, str)
+        or not candidate_branch.strip()
+        or git_review.get("candidate_branch") != candidate_branch
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_portable_review_branch_mismatch",
+                subject="execution_report.git_review.candidate_branch",
+                message="portable review candidate branch must match the execution report",
+            )
+        )
+    diagnostics.extend(
+        github_pull_request_url_diagnostics(
+            git_review.get("review_url"),
+            subject="execution_report.git_review.review_url",
+            expected_number=review_number,
+        )
+    )
+    return diagnostics
+
+
+def product_candidate_promotion_portable_review_url(
+    execution_report: dict[str, Any],
+) -> str | None:
+    git_review = nested_mapping(execution_report, "git_review")
+    if not git_review or product_candidate_promotion_portable_review_diagnostics(
+        execution_report
+    ):
+        return None
+    review_url = git_review.get("review_url")
+    return review_url if isinstance(review_url, str) else None
+
+
 def product_candidate_promotion_execution_report_diagnostics(
     execution_report: dict[str, Any],
     *,
@@ -13466,30 +13541,31 @@ def product_candidate_promotion_execution_report_diagnostics(
                 message="review status requires a previously opened review",
             )
         )
+    local_diagnostics: list[Diagnostic] = []
     workspace_dir = execution_report.get("workspace_dir")
-    if not isinstance(workspace_dir, str) or not workspace_dir.strip():
-        diagnostics.append(
+    workspace_ready = (
+        isinstance(workspace_dir, str)
+        and bool(workspace_dir.strip())
+        and Path(workspace_dir).is_dir()
+    )
+    if not workspace_ready:
+        local_diagnostics.append(
             Diagnostic(
                 level="ERROR",
                 code="product_candidate_promotion_workspace_missing",
                 subject="execution_report.workspace_dir",
-                message="execution report must include candidate workspace_dir",
-            )
-        )
-    elif not Path(workspace_dir).is_dir():
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="product_candidate_promotion_workspace_missing",
-                subject="execution_report.workspace_dir",
-                message="candidate workspace_dir must exist for review status output",
+                message=(
+                    "candidate workspace_dir must exist unless portable Git review "
+                    "evidence is available"
+                ),
             )
         )
     git_service_execution = nested_mapping(execution_report, "git_service_execution")
     report_refs = nested_mapping(git_service_execution, "report_refs")
     open_review_ref = report_refs.get("open_review")
+    open_review_ready = False
     if not isinstance(open_review_ref, str) or not open_review_ref.strip():
-        diagnostics.append(
+        local_diagnostics.append(
             Diagnostic(
                 level="ERROR",
                 code="product_candidate_promotion_open_review_ref_missing",
@@ -13499,8 +13575,11 @@ def product_candidate_promotion_execution_report_diagnostics(
         )
     else:
         open_review_path = resolve_artifact_path(open_review_ref, base_dir=base_dir)
-        if open_review_path is None or not open_review_path.is_file():
-            diagnostics.append(
+        open_review_ready = (
+            open_review_path is not None and open_review_path.is_file()
+        )
+        if not open_review_ready:
+            local_diagnostics.append(
                 Diagnostic(
                     level="ERROR",
                     code="product_candidate_promotion_open_review_report_missing",
@@ -13508,6 +13587,13 @@ def product_candidate_promotion_execution_report_diagnostics(
                     message="open review report ref must point at an existing file",
                 )
             )
+    if not (workspace_ready and open_review_ready):
+        portable_diagnostics = product_candidate_promotion_portable_review_diagnostics(
+            execution_report
+        )
+        if product_candidate_promotion_portable_review_url(execution_report) is None:
+            diagnostics.extend(local_diagnostics)
+            diagnostics.extend(portable_diagnostics)
     authority_boundary = execution_report.get("authority_boundary")
     if not isinstance(authority_boundary, dict):
         diagnostics.append(
@@ -13670,15 +13756,28 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         report_refs.get("open_review"),
         base_dir=execution_report_path.parent,
     )
-    workspace_dir = Path(str(execution_report.get("workspace_dir") or "")).resolve()
+    legacy_workspace_dir = Path(
+        str(execution_report.get("workspace_dir") or "")
+    ).resolve()
     output_path = (
         Path(args.output).resolve()
         if args.output
         else execution_report_path.parent
         / Path(PRODUCT_CANDIDATE_PROMOTION_DEFAULT_OUTPUTS["review_status"]).name
     )
+    legacy_handoff_ready = (
+        legacy_workspace_dir.is_dir()
+        and open_review_report_path is not None
+        and open_review_report_path.is_file()
+    )
+    portable_review_url = product_candidate_promotion_portable_review_url(
+        execution_report
+    )
+    review_status_report_dir = (
+        legacy_workspace_dir if legacy_handoff_ready else output_path.parent
+    )
     expected_graph_repository_report_path = (
-        workspace_dir
+        review_status_report_dir
         / ".platform"
         / "graph_repository_review_status_report.json"
     )
@@ -13686,19 +13785,24 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
     child_result: dict[str, Any] | None = None
     child_diagnostic: Diagnostic | None = None
     command: list[str] = []
-    if preflight_error_count == 0 and open_review_report_path is not None:
+    if preflight_error_count == 0:
+        review_status_report_dir.mkdir(parents=True, exist_ok=True)
         command = [
             "graph-repository",
             "review-status",
-            "--open-review-report",
-            str(open_review_report_path),
             "--worktree-dir",
-            str(workspace_dir),
+            str(review_status_report_dir),
             "--gh-bin",
             args.gh_bin,
             "--format",
             "json",
         ]
+        if legacy_handoff_ready and open_review_report_path is not None:
+            command.extend(
+                ["--open-review-report", str(open_review_report_path)]
+            )
+        elif portable_review_url is not None:
+            command.extend(["--review-url", portable_review_url])
         if args.repo:
             command.extend(["--repo", args.repo])
         child_payload, child_result, child_diagnostic = run_platform_json_command(
@@ -13717,7 +13821,7 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
     )
     graph_repository_report_path = product_candidate_promotion_child_report_path(
         child_payload,
-        base_dir=workspace_dir,
+        base_dir=review_status_report_dir,
     )
     review_merged = review_state == "merged"
     operations = [
@@ -13774,7 +13878,7 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         "workspace_id": execution_report.get("workspace_id"),
         "candidate_id": execution_report.get("candidate_id"),
         "candidate_branch": execution_report.get("candidate_branch"),
-        "workspace_dir": str(workspace_dir),
+        "workspace_dir": str(review_status_report_dir),
         "review_state": review_state,
         "review_decision": child_payload.get("review_decision")
         if isinstance(child_payload, dict)
@@ -14938,40 +15042,109 @@ def graph_repository_open_review(args: argparse.Namespace) -> int:
     return 0 if error_count == 0 else 1
 
 
-def graph_repository_review_status_preflight_diagnostics(
-    open_review_report: dict[str, Any],
+def github_pull_request_url_diagnostics(
+    review_url: object,
     *,
-    worktree_dir: Path,
+    subject: str,
+    expected_number: object = None,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
-    if open_review_report.get("artifact_kind") != (
-        "platform_graph_repository_open_review_report"
+    if not isinstance(review_url, str) or not review_url.strip():
+        return [
+            Diagnostic(
+                level="ERROR",
+                code="graph_repository_review_url_missing",
+                subject=subject,
+                message="review URL must be a non-empty HTTPS GitHub pull request URL",
+            )
+        ]
+    parsed = urllib.parse.urlparse(review_url)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    valid_path = (
+        len(path_parts) == 4
+        and path_parts[2] == "pull"
+        and path_parts[3].isdigit()
+        and int(path_parts[3]) > 0
+    )
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or not valid_path
     ):
         diagnostics.append(
             Diagnostic(
                 level="ERROR",
-                code="graph_repository_open_review_report_kind_mismatch",
-                subject="artifact_kind",
-                message="expected platform_graph_repository_open_review_report",
+                code="graph_repository_review_url_invalid",
+                subject=subject,
+                message=(
+                    "review URL must use https://github.com/<owner>/<repo>/pull/<number> "
+                    "without credentials, port, query, or fragment"
+                ),
             )
         )
-    if open_review_report.get("ok") is not True:
+        return diagnostics
+    if expected_number is not None and (
+        isinstance(expected_number, bool)
+        or not isinstance(expected_number, int)
+        or expected_number <= 0
+        or expected_number != int(path_parts[3])
+    ):
         diagnostics.append(
             Diagnostic(
                 level="ERROR",
-                code="graph_repository_open_review_report_not_ok",
-                subject="ok",
-                message="open review report must be ok before status inspection",
+                code="graph_repository_review_number_mismatch",
+                subject=subject,
+                message="review URL pull request number must match review_number",
             )
         )
-    review_url = open_review_report.get("review_url")
-    if not isinstance(review_url, str) or not review_url:
-        diagnostics.append(
-            Diagnostic(
-                level="ERROR",
-                code="graph_repository_review_url_missing",
+    return diagnostics
+
+
+def graph_repository_review_status_preflight_diagnostics(
+    open_review_report: dict[str, Any] | None,
+    *,
+    worktree_dir: Path,
+    review_url: object = None,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if open_review_report is None:
+        diagnostics.extend(
+            github_pull_request_url_diagnostics(
+                review_url,
                 subject="review_url",
-                message="open review report must include review URL",
+            )
+        )
+    else:
+        if open_review_report.get("artifact_kind") != (
+            "platform_graph_repository_open_review_report"
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_open_review_report_kind_mismatch",
+                    subject="artifact_kind",
+                    message="expected platform_graph_repository_open_review_report",
+                )
+            )
+        if open_review_report.get("ok") is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="graph_repository_open_review_report_not_ok",
+                    subject="ok",
+                    message="open review report must be ok before status inspection",
+                )
+            )
+        diagnostics.extend(
+            github_pull_request_url_diagnostics(
+                open_review_report.get("review_url"),
+                subject="review_url",
             )
         )
     if not worktree_dir.is_dir():
@@ -15000,17 +15173,28 @@ def graph_repository_review_state(pr_payload: dict[str, Any]) -> str:
 
 
 def graph_repository_review_status(args: argparse.Namespace) -> int:
-    open_review_report_path = Path(args.open_review_report)
+    open_review_report_path = (
+        Path(args.open_review_report) if args.open_review_report else None
+    )
     worktree_dir = Path(args.worktree_dir)
-    open_review_report = load_json_mapping(
-        open_review_report_path,
-        label="graph repository open review report",
+    open_review_report = (
+        load_json_mapping(
+            open_review_report_path,
+            label="graph repository open review report",
+        )
+        if open_review_report_path is not None
+        else None
+    )
+    review_url = (
+        open_review_report.get("review_url")
+        if isinstance(open_review_report, dict)
+        else args.review_url
     )
     diagnostics = graph_repository_review_status_preflight_diagnostics(
         open_review_report,
         worktree_dir=worktree_dir,
+        review_url=review_url,
     )
-    review_url = open_review_report.get("review_url")
     gh_command = [
         args.gh_bin,
         "pr",
@@ -15073,7 +15257,9 @@ def graph_repository_review_status(args: argparse.Namespace) -> int:
     report = {
         "schema_version": 1,
         "artifact_kind": "platform_graph_repository_review_status_report",
-        "open_review_report_ref": str(open_review_report_path),
+        "open_review_report_ref": (
+            None if open_review_report_path is None else str(open_review_report_path)
+        ),
         "ok": error_count == 0,
         "review_url": review_url,
         "review_state": review_state,
@@ -21176,10 +21362,19 @@ def build_parser() -> argparse.ArgumentParser:
         "review-status",
         help="Inspect pull request status from an open review report.",
     )
-    graph_repository_status_parser.add_argument(
+    graph_repository_status_source = (
+        graph_repository_status_parser.add_mutually_exclusive_group(required=True)
+    )
+    graph_repository_status_source.add_argument(
         "--open-review-report",
-        required=True,
         help="Path to a graph repository open review report.",
+    )
+    graph_repository_status_source.add_argument(
+        "--review-url",
+        help=(
+            "Portable HTTPS GitHub pull request URL from a validated parent "
+            "execution report."
+        ),
     )
     graph_repository_status_parser.add_argument(
         "--worktree-dir",

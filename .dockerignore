@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+.pytest_cache
+.ruff_cache
+.playwright-mcp
+.platform
+runs
+__pycache__
+*.py[cod]
+.env
+.env.*
+docker-compose.local.yml
+services.local.yaml
+workspaces.local.yaml

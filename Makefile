@@ -1,6 +1,6 @@
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
-.PHONY: python-quality test hosted-managed-contract hosted-managed-compose-contract hosted-managed-postgres-integration hosted-managed-compose-smoke
+.PHONY: python-quality test hosted-managed-contract hosted-managed-compose-contract hosted-managed-runtime-compose-contract hosted-managed-postgres-integration hosted-managed-compose-smoke
 
 python-quality:
 	$(PYTHON) -m unittest discover -s tests
@@ -16,6 +16,9 @@ hosted-managed-contract:
 
 hosted-managed-compose-contract:
 	$(PYTHON) scripts/validate_hosted_managed_compose.py
+
+hosted-managed-runtime-compose-contract:
+	$(PYTHON) scripts/validate_hosted_managed_runtime_compose.py
 
 hosted-managed-postgres-integration:
 	@test -n "$(PLATFORM_TEST_POSTGRES_URL)" || \

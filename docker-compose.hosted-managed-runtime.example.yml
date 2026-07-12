@@ -1,0 +1,141 @@
+services:
+  managed-operation-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${PLATFORM_MANAGED_OPERATION_DB:-managed_operations}"
+      POSTGRES_USER: "${PLATFORM_MANAGED_OPERATION_DB_USER:-managed_operations}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/managed_operation_db_password
+    volumes:
+      - managed-operation-postgres:/var/lib/postgresql/data
+    secrets:
+      - managed_operation_db_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  managed-operation-service:
+    image: "${PLATFORM_MANAGED_OPERATION_IMAGE:-0al/platform-hosted-managed:local}"
+    build:
+      context: .
+      dockerfile: Dockerfile.hosted-managed
+    restart: unless-stopped
+    command:
+      - python3
+      - scripts/platform.py
+      - managed-operation
+      - serve
+      - --queue-adapter
+      - postgresql
+      - --database-url-file
+      - /run/secrets/managed_operation_database_url
+      - --artifact-root
+      - /workspace/SpecGraph
+      - --state-dir
+      - /data/specspace-state
+      - --specgraph-dir
+      - /workspace/SpecGraph
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8091"
+      - --auth-token-file
+      - /run/secrets/managed_operation_token
+    ports:
+      - "127.0.0.1:${PLATFORM_MANAGED_OPERATION_PORT:-8091}:8091"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - "${PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT:?set PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT}:/workspace/SpecGraph:ro"
+      - "${PLATFORM_MANAGED_OPERATION_STATE_DIR:?set PLATFORM_MANAGED_OPERATION_STATE_DIR}:/data/specspace-state:ro"
+    secrets:
+      - managed_operation_token
+      - managed_operation_database_url
+    environment:
+      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:?set PLATFORM_MANAGED_OPERATION_ALLOWLIST}"
+    depends_on:
+      managed-operation-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8091/v1/health', timeout=3).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  managed-operation-worker:
+    image: "${PLATFORM_MANAGED_OPERATION_IMAGE:-0al/platform-hosted-managed:local}"
+    build:
+      context: .
+      dockerfile: Dockerfile.hosted-managed
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - >-
+        export GH_TOKEN="$$(cat /run/secrets/managed_operation_github_token)";
+        exec python3 scripts/platform.py managed-operation worker
+        --queue-adapter postgresql
+        --database-url-file /run/secrets/managed_operation_database_url
+        --artifact-root /workspace/SpecGraph
+        --state-dir /data/specspace-state
+        --specgraph-dir /workspace/SpecGraph
+        --worker-id "$${HOSTNAME}"
+        --health-file /tmp/managed-operation-worker-health.json
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - "${PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT:?set PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT}:/workspace/SpecGraph"
+      - "${PLATFORM_MANAGED_OPERATION_STATE_DIR:?set PLATFORM_MANAGED_OPERATION_STATE_DIR}:/data/specspace-state:ro"
+    secrets:
+      - managed_operation_database_url
+      - managed_operation_github_token
+    environment:
+      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:?set PLATFORM_MANAGED_OPERATION_ALLOWLIST}"
+    depends_on:
+      managed-operation-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import json,pathlib,time;
+          p=pathlib.Path('/tmp/managed-operation-worker-health.json');
+          d=json.loads(p.read_text());
+          raise SystemExit(0 if d.get('ok') is True and time.time()-p.stat().st_mtime < 15 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+volumes:
+  managed-operation-postgres:
+
+secrets:
+  managed_operation_token:
+    file: "${PLATFORM_MANAGED_OPERATION_TOKEN_FILE:?set PLATFORM_MANAGED_OPERATION_TOKEN_FILE}"
+  managed_operation_db_password:
+    file: "${PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE:?set PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE}"
+  managed_operation_database_url:
+    file: "${PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE:?set PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE}"
+  managed_operation_github_token:
+    file: "${PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE:?set PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE}"

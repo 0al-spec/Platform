@@ -8,6 +8,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import unittest
 
+from scripts.validate_hosted_managed_runtime_compose import (
+    _ports_publish_only_loopback,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLI = REPO_ROOT / "scripts" / "platform.py"
@@ -164,6 +168,23 @@ class PlatformDeployTests(unittest.TestCase):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+        )
+
+    def test_hosted_runtime_ports_require_only_loopback_bindings(self) -> None:
+        self.assertTrue(
+            _ports_publish_only_loopback(
+                [{"host_ip": "127.0.0.1", "published": "8091", "target": 8091}]
+            )
+        )
+
+    def test_hosted_runtime_ports_reject_additional_public_binding(self) -> None:
+        self.assertFalse(
+            _ports_publish_only_loopback(
+                [
+                    {"host_ip": "127.0.0.1", "published": "8091", "target": 8091},
+                    {"host_ip": "0.0.0.0", "published": "9091", "target": 8091},
+                ]
+            )
         )
 
     def test_deploy_render_dry_run_json(self) -> None:

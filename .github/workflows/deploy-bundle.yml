@@ -28,6 +28,14 @@ jobs:
       - name: Validate fail-closed hosted Compose contract
         run: make hosted-managed-compose-contract PYTHON=python3
 
+      - name: Validate standalone hosted runtime Compose contract
+        run: make hosted-managed-runtime-compose-contract PYTHON=python3
+
+      - name: Build standalone hosted runtime image
+        run: >-
+          docker build --file Dockerfile.hosted-managed
+          --tag 0al/platform-hosted-managed:ci .
+
   hosted-managed-postgres:
     runs-on: ubuntu-latest
     services:
