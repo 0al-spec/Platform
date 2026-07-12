@@ -248,7 +248,7 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
             fetch_health=lambda _: {
                 "ok": True,
                 "adapter": "postgresql",
-                "operations": {"enabled_operation_ids": ["review_status_execute"]},
+                "enabled_operation_ids": ["review_status_execute"],
             },
         )
         self.assertTrue(report["ok"], report["diagnostics"])
@@ -268,12 +268,10 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
             fetch_health=lambda _: {
                 "ok": True,
                 "adapter": "postgresql",
-                "operations": {
-                    "enabled_operation_ids": [
-                        "review_status_execute",
-                        "promotion_execute_dry_run",
-                    ]
-                },
+                "enabled_operation_ids": [
+                    "review_status_execute",
+                    "promotion_execute_dry_run",
+                ],
             },
         )
         self.assertFalse(report["ok"])

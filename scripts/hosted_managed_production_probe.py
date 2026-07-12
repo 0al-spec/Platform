@@ -140,9 +140,7 @@ def run_probe(
     diagnostics: list[str] = []
     if health.get("ok") is not True or health.get("adapter") != "postgresql":
         diagnostics.append("service_health_not_postgresql_ready")
-    operations = health.get("operations")
-    operations = operations if isinstance(operations, dict) else {}
-    enabled = operations.get("enabled_operation_ids")
+    enabled = health.get("enabled_operation_ids")
     if enabled != [READ_ONLY_CANARY_OPERATION]:
         diagnostics.append("service_allowlist_not_read_only_canary")
     if set(service_states) != EXPECTED_SERVICES:

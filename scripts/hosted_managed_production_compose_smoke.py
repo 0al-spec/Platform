@@ -320,9 +320,7 @@ def run_smoke() -> dict[str, Any]:
 
     if ingress_health.get("ok") is not True or ingress_health.get("adapter") != "postgresql":
         raise RuntimeError("TLS ingress did not expose PostgreSQL-backed service health")
-    operations = ingress_health.get("operations")
-    operations = operations if isinstance(operations, dict) else {}
-    if operations.get("enabled_operation_ids") != ["review_status_execute"]:
+    if ingress_health.get("enabled_operation_ids") != ["review_status_execute"]:
         raise RuntimeError("TLS ingress exposed an expanded operation allowlist")
     if worker_health.get("ok") is not True or worker_health.get("adapter") != "postgresql":
         raise RuntimeError("production worker heartbeat was not PostgreSQL-ready")
