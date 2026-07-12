@@ -20,6 +20,8 @@ import hosted_managed_operation_executor as executor_module
 import hosted_managed_operation_postgres as postgres_module
 import hosted_managed_operation_queue as queue_module
 import hosted_managed_operation_service as service_module
+import hosted_managed_runtime_backup as backup_module
+import hosted_managed_production_signoff as signoff_module
 from tests.test_hosted_managed_operation_executor import (
     ExecutorFixture,
     RecordingRunner,
@@ -78,6 +80,68 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
             [event["status"] for event in events],
             ["queued", "leased", "running", "succeeded"],
         )
+
+    @unittest.skipUnless(
+        os.environ.get("PLATFORM_TEST_POSTGRES_URL"),
+        "set PLATFORM_TEST_POSTGRES_URL for PostgreSQL queue integration",
+    )
+    def test_real_postgresql_backup_and_restore_smoke(self) -> None:
+        database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
+        queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        try:
+            with queue.connection.cursor() as cursor:
+                cursor.execute(
+                    "TRUNCATE managed_operation_events, managed_operation_locks, "
+                    "managed_operation_jobs RESTART IDENTITY CASCADE"
+                )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                request = request_for(root, "review_status_execute")
+                queue.enqueue(
+                    request,
+                    now_epoch=100,
+                    now_iso="2026-07-10T00:00:00Z",
+                )
+                worker = queue_module.HostedManagedOperationWorker(
+                    queue,
+                    SuccessfulExecutor(),
+                    worker_id="postgres-backup-worker",
+                )
+                receipt = worker.run_once(
+                    now_epoch=101,
+                    now_iso="2026-07-10T00:00:01Z",
+                )
+                self.assertEqual(receipt["status"], "succeeded")
+                artifact_root = root / "specgraph"
+                report_dir = artifact_root / "runs" / "workspace-a"
+                report_dir.mkdir(parents=True)
+                (report_dir / "review-status.json").write_text(
+                    '{"ok":true}\n', encoding="utf-8"
+                )
+                database_url_file = root / "database-url"
+                database_url_file.write_text(database_url, encoding="utf-8")
+                backup_root = root / "backups"
+                backup_root.mkdir()
+                backup_report = backup_module.create_backup(
+                    database_url_file=database_url_file,
+                    artifact_root=artifact_root,
+                    backup_root=backup_root,
+                    backup_id="postgres-integration",
+                )
+                restore_report = backup_module.restore_smoke(
+                    database_url_file=database_url_file,
+                    backup_root=backup_root,
+                    backup_id="postgres-integration",
+                )
+                queue_audit_report = signoff_module.queue_audit(database_url_file)
+        finally:
+            queue.close()
+
+        self.assertTrue(backup_report["ok"])
+        self.assertEqual(backup_report["summary"]["artifact_file_count"], 1)
+        self.assertTrue(restore_report["ok"])
+        self.assertTrue(restore_report["summary"]["temporary_database_removed"])
+        self.assertTrue(queue_audit_report["ok"])
 
     @unittest.skipUnless(
         os.environ.get("PLATFORM_TEST_POSTGRES_URL"),

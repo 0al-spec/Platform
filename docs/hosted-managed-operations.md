@@ -283,6 +283,231 @@ terminal receipt with the same `request_id`, `idempotency_key`, and attempt
 number. It must not execute the operation a second time. PostgreSQL data and
 workspace reports must remain present after the reboot.
 
+## Production Rollout And Sign-Off
+
+The clean-VM runtime is staging evidence. A production deployment uses
+`docker-compose.hosted-managed-production.example.yml` and is not signed off
+until its TLS, backup, reboot, replay, SpecSpace cutover, and rollback evidence
+passes the final audit.
+PostgreSQL and the Platform service use only an internal backend network. The
+worker has a distinct outbound network for GitHub, while Caddy has a distinct
+published ingress network; worker egress and public ingress are never shared.
+
+### Provisioning boundary
+
+Provision DNS and a certificate for a dedicated managed-operation origin. Do
+not reuse the public SpecSpace origin or expose port `8091`. The production
+profile publishes only TLS ingress on port `443`; Caddy proxies to the internal
+Platform service, which continues to require its bearer token.
+
+All runtime images must be immutable digest refs:
+
+```bash
+export PLATFORM_MANAGED_OPERATION_IMAGE='ghcr.io/0al-spec/platform@sha256:<digest>'
+export PLATFORM_MANAGED_OPERATION_POSTGRES_IMAGE='postgres@sha256:<digest>'
+export PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE='ghcr.io/0al-spec/platform-hosted-managed-ingress@sha256:<digest>'
+export PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute
+export PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT=/srv/0al/specgraph
+export PLATFORM_MANAGED_OPERATION_STATE_DIR=/srv/0al/specspace-state
+export PLATFORM_MANAGED_OPERATION_BACKUP_ROOT=/srv/0al/backups
+```
+
+`deploy/hosted-managed/production.env.example` contains the complete non-secret
+environment inventory. It may be copied to a root-readable deployment env file,
+but the referenced secret values remain separate files and must never be added
+to that env file.
+
+Create independent service, database, and GitHub credentials. The GitHub token
+for the first canary needs read-only pull-request/repository metadata only. It
+must not have repository write, workflow, administration, package-write, or
+organization authority. Provide a certificate and private key through separate
+files:
+
+```bash
+export PLATFORM_MANAGED_OPERATION_TOKEN_FILE=/srv/0al/secrets/service-token
+export PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE=/srv/0al/secrets/database-password
+export PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE=/srv/0al/secrets/database-url
+export PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE=/srv/0al/secrets/github-token
+export PLATFORM_MANAGED_OPERATION_TLS_CERTIFICATE_FILE=/srv/0al/secrets/tls-certificate.pem
+export PLATFORM_MANAGED_OPERATION_TLS_PRIVATE_KEY_FILE=/srv/0al/secrets/tls-private-key.pem
+
+sudo chown root:1000 /srv/0al/secrets/*
+sudo chmod 0440 /srv/0al/secrets/*
+sudo chown -R 1000:1000 \
+  "$PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT" \
+  "$PLATFORM_MANAGED_OPERATION_STATE_DIR" \
+  "$PLATFORM_MANAGED_OPERATION_BACKUP_ROOT"
+```
+
+Secret values must not appear in `.env`, Compose YAML, shell history, queue
+requests, canary reports, or container image layers. Rotate them by atomically
+replacing the corresponding file and recreating only the consumers that read
+it. Service-token rotation must update SpecSpace and Platform in one bounded
+cutover. Database credential rotation must update PostgreSQL first, then both
+database secret files, then recreate service, worker, and maintenance
+containers. Never reuse the service bearer token as a GitHub or database token.
+
+Run the fail-closed host preflight as root so ownership checks are meaningful:
+
+```bash
+sudo --preserve-env .venv/bin/python \
+  scripts/hosted_managed_production_preflight.py \
+  --service-url https://managed.example.org \
+  --output /srv/0al/evidence/production-preflight.json
+```
+
+The preflight report contains no secret values, paths, or local filesystem
+metadata. It requires exact read-only canary scope, `0440` root/runtime-group
+secret files, digest-pinned images, a clean HTTPS URL, and runtime-owned data
+directories.
+
+### Start and probe
+
+Validate and start the production profile:
+
+```bash
+make hosted-managed-production-contract
+make hosted-managed-production-compose-smoke
+docker compose --project-name platform-managed-production \
+  --file docker-compose.hosted-managed-production.example.yml config >/dev/null
+docker compose --project-name platform-managed-production \
+  --file docker-compose.hosted-managed-production.example.yml up --detach
+
+.venv/bin/python scripts/hosted_managed_production_probe.py \
+  --service-url https://managed.example.org \
+  --compose-file "$PWD/docker-compose.hosted-managed-production.example.yml" \
+  --project-name platform-managed-production \
+  --output /srv/0al/evidence/probe-before-reboot.json
+```
+
+The bounded Compose smoke starts the real Caddy, PostgreSQL, service, and worker
+profile with a one-day self-signed fixture certificate and a temporary local
+registry so even the test image is addressed by digest. It enqueues no managed
+request and removes containers, registry, and volumes afterward.
+Build `Dockerfile.hosted-managed-ingress` from a digest-pinned Caddy base and
+publish that image by digest. The build removes Caddy's unused low-port file
+capability, allowing the non-root ingress container to keep `cap_drop: ALL` and
+`no-new-privileges` while listening on port `8443`.
+
+The probe requires all four runtime services to be healthy, PostgreSQL as the
+queue adapter, a fresh worker heartbeat, and exactly
+`review_status_execute` in service health. The report is public-safe and omits
+Compose paths and credentials.
+
+Initial operational targets are diagnostic objectives, not an external SLA:
+
+- alert immediately on any quarantined request or expanded allowlist;
+- alert after two failed probes or a worker heartbeat older than 30 seconds;
+- alert when a read-only canary does not terminate within its bounded window;
+- run a read-only canary at least daily during rollout and after each deploy;
+- run strict recovery and queue-drain audit after unclean shutdowns;
+- retain private backup reports with the encrypted off-host backup they pin.
+
+### Private backup and restore smoke
+
+Stop new enqueueing and stop the worker after its current lease before backup.
+The backup tool rejects queued/leased/running jobs, active workspace locks,
+symlinks, concurrent artifact changes, and an existing backup id. It stores a
+transaction-consistent versioned export of the three queue tables plus a
+digest-inventoried private archive of `runs/` artifacts. It never includes
+secret files.
+
+Run the isolated maintenance profile explicitly; it is not started by normal
+`up`:
+
+```bash
+backup_id="production-$(date -u +%Y%m%dT%H%M%SZ)"
+docker compose --project-name platform-managed-production \
+  --file docker-compose.hosted-managed-production.example.yml \
+  --profile maintenance run --rm managed-operation-maintenance \
+  python3 scripts/hosted_managed_runtime_backup.py backup \
+    --database-url-file /run/secrets/managed_operation_database_url \
+    --artifact-root /workspace/SpecGraph \
+    --backup-root /backups \
+    --backup-id "$backup_id"
+
+docker compose --project-name platform-managed-production \
+  --file docker-compose.hosted-managed-production.example.yml \
+  --profile maintenance run --rm managed-operation-maintenance \
+  python3 scripts/hosted_managed_runtime_backup.py restore-smoke \
+    --database-url-file /run/secrets/managed_operation_database_url \
+    --backup-root /backups \
+    --backup-id "$backup_id" \
+    --output "/backups/$backup_id/restore-smoke-report.json"
+```
+
+`restore-smoke` creates a temporary PostgreSQL database, restores the versioned
+queue export, compares every table count, verifies every archived artifact
+digest without extracting unsafe paths, then forcibly removes the temporary
+database. It has no authority to restore over production. Copy the entire
+private backup directory to encrypted off-host storage; copying only its public
+summary is not a backup.
+
+### Canary, reboot, replay, and rollback
+
+Use an open review PR and a workspace-bound, queue-safe
+`review_status_execute` request. Run the existing canary through the public TLS
+origin with its bearer token file and with host-local artifact access so output
+bytes are checked against receipt digests:
+
+```bash
+.venv/bin/python scripts/platform.py managed-operation canary \
+  --service-url https://managed.example.org \
+  --auth-token-file "$PLATFORM_MANAGED_OPERATION_TOKEN_FILE" \
+  --request /srv/0al/canary/review-status-request.json \
+  --artifact-root "$PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT" \
+  --output /srv/0al/evidence/canary.json \
+  --format json
+```
+
+Verify SpecSpace in hosted mode with `specspace product-smoke` and
+`--expect-managed-mode backend_managed_ready`. Reboot the host, rerun strict
+recovery, create `probe-after-reboot.json`, and submit the identical canary
+request again as `replay-canary.json`. The replay must preserve request id,
+idempotency key, output refs and `attempt=1`.
+
+Before rollback, audit that no active job or lock remains:
+
+```bash
+docker compose --project-name platform-managed-production \
+  --file docker-compose.hosted-managed-production.example.yml \
+  exec -T managed-operation-worker \
+  python3 scripts/hosted_managed_production_signoff.py queue-audit \
+    --database-url-file /run/secrets/managed_operation_database_url \
+    --output /workspace/SpecGraph/runs/production-queue-audit.json
+```
+
+Then disable hosted enqueueing in SpecSpace, stop the worker after drain, and
+verify SpecSpace with `--expect-managed-mode read_only`. Do not copy queue rows
+to a local SQLite executor. A consume-on-attempt or irreversible request needs
+new operator intent after rollback.
+
+The final sign-off command requires all evidence rather than trusting a single
+green queue receipt. By default every evidence report must be no older than 24
+hours and must follow the documented causal order from preflight through
+rollback; `--max-evidence-age` may narrow that window but should not be expanded
+to reuse evidence from an earlier deployment:
+
+```bash
+.venv/bin/python scripts/hosted_managed_production_signoff.py signoff \
+  --preflight /srv/0al/evidence/production-preflight.json \
+  --probe-before-reboot /srv/0al/evidence/probe-before-reboot.json \
+  --probe-after-reboot /srv/0al/evidence/probe-after-reboot.json \
+  --canary /srv/0al/evidence/canary.json \
+  --replay-canary /srv/0al/evidence/replay-canary.json \
+  --recovery /srv/0al/evidence/recovery.json \
+  --backup "/srv/0al/backups/$backup_id/backup-report.json" \
+  --restore-smoke "/srv/0al/backups/$backup_id/restore-smoke-report.json" \
+  --queue-audit /srv/0al/evidence/queue-audit.json \
+  --hosted-specspace-smoke /srv/0al/evidence/specspace-hosted-smoke.json \
+  --rollback-specspace-smoke /srv/0al/evidence/specspace-rollback-smoke.json \
+  --output /srv/0al/evidence/production-canary-signoff.json
+```
+
+Only `production_canary_signed_off` permits a later, separate rollout proposal
+for `promotion_execute_dry_run`. This sign-off does not enable that operation,
+consume-on-attempt work, non-dry-run Git review, or read-model publication.
+
 ## Delivery And Recovery
 
 Hosted execution uses **at-least-once** delivery. It must not claim exactly-once

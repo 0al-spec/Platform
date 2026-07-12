@@ -282,12 +282,17 @@ The current execution order is:
    arbitrary execution parameters. SpecSpace hosted mode and execution-backed
    browser coverage use this boundary, while Platform Compose smoke validates
    PostgreSQL service/worker health. Existing Platform reports remain lifecycle
-   authority; queue status remains transport telemetry. Remaining operations
-   work is deployment recovery rehearsal and SLO/alert definition, not another
-   execution contract.
-5. **Human-friendly candidate aliases.** SpecGraph should keep stable machine
-   ids for refs and promotion paths, but expose readable aliases for candidate
-   overview, topology, PR artifacts, and operator-facing diagnostics.
+   authority; queue status remains transport telemetry. The portable single-node
+   runtime and clean-VM canary are complete. The tracked production profile now
+   adds digest-pinned images, TLS-only ingress, host preflight, private
+   backup/restore verification, runtime probes, queue-drain audit, reboot/replay
+   evidence, and a fail-closed final sign-off contract. Actual production
+   sign-off still requires deployment-owned DNS, certificates, secrets, a real
+   workspace request, and the resulting evidence reports.
+5. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
+   machine ids for refs and promotion paths while exposing deterministic,
+   privacy-checked display aliases in candidate overview and topology artifacts;
+   SpecSpace uses them as presentation metadata without changing identity.
 6. **Ontology applicability in product review.** Continue compiler-backed
    layers, `modelApplicability`, and change classification so product
    candidates can explain which ontology layer and applicability frame each

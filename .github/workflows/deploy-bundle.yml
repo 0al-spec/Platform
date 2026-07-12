@@ -31,10 +31,21 @@ jobs:
       - name: Validate standalone hosted runtime Compose contract
         run: make hosted-managed-runtime-compose-contract PYTHON=python3
 
+      - name: Validate TLS-fronted production hosted runtime contract
+        run: make hosted-managed-production-contract PYTHON=python3
+
       - name: Build standalone hosted runtime image
         run: >-
           docker build --file Dockerfile.hosted-managed
           --tag 0al/platform-hosted-managed:ci .
+
+      - name: Build capability-free hosted ingress image
+        run: |
+          docker pull caddy:2-alpine
+          caddy_base="$(docker image inspect --format '{{index .RepoDigests 0}}' caddy:2-alpine)"
+          docker build --file Dockerfile.hosted-managed-ingress \
+            --build-arg "CADDY_BASE_IMAGE=${caddy_base}" \
+            --tag 0al/platform-hosted-managed-ingress:ci .
 
   hosted-managed-postgres:
     runs-on: ubuntu-latest
@@ -84,6 +95,9 @@ jobs:
 
       - name: Start hosted service and worker profile
         run: make hosted-managed-compose-smoke PYTHON=python3
+
+      - name: Start TLS-fronted production hosted profile
+        run: make hosted-managed-production-compose-smoke PYTHON=python3
 
   platform-deploy-bundle:
     runs-on: ubuntu-latest
