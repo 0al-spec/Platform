@@ -141,16 +141,12 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    entrypoint:
-      - /bin/sh
-      - -ec
     command:
-      - >-
-        cp /usr/bin/caddy /tmp/caddy-runtime;
-        chmod 0500 /tmp/caddy-runtime;
-        exec /tmp/caddy-runtime run
-        --config /etc/caddy/Caddyfile
-        --adapter caddyfile
+      - run
+      - --config
+      - /etc/caddy/Caddyfile
+      - --adapter
+      - caddyfile
     ports:
       - "${PLATFORM_MANAGED_OPERATION_INGRESS_BIND_IP:-0.0.0.0}:${PLATFORM_MANAGED_OPERATION_INGRESS_PORT:-443}:8443"
     volumes:

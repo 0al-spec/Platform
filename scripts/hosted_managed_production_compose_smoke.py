@@ -70,7 +70,13 @@ def _wait_registry(port: int) -> None:
     raise RuntimeError("temporary image registry did not become ready")
 
 
-def _fixture(root: Path, *, platform_image: str, ingress_port: int) -> dict[str, str]:
+def _fixture(
+    root: Path,
+    *,
+    platform_image: str,
+    ingress_image: str,
+    ingress_port: int,
+) -> dict[str, str]:
     artifact_root = root / "specgraph"
     state_dir = root / "state"
     backup_root = root / "backups"
@@ -126,7 +132,7 @@ def _fixture(root: Path, *, platform_image: str, ingress_port: int) -> dict[str,
             "PLATFORM_MANAGED_OPERATION_POSTGRES_IMAGE": _repo_digest(
                 "postgres:16-alpine"
             ),
-            "PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE": _repo_digest("caddy:2-alpine"),
+            "PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE": ingress_image,
             "PLATFORM_MANAGED_OPERATION_ALLOWLIST": "review_status_execute",
             "PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT": str(artifact_root),
             "PLATFORM_MANAGED_OPERATION_STATE_DIR": str(state_dir),
@@ -156,6 +162,7 @@ def run_smoke() -> dict[str, Any]:
     registry_name = f"platform-production-smoke-registry-{os.getpid()}"
     project_name = f"platform-production-smoke-{os.getpid()}"
     registry_image = f"127.0.0.1:{registry_port}/platform:smoke"
+    ingress_registry_image = f"127.0.0.1:{registry_port}/ingress:smoke"
     compose = [
         "docker",
         "compose",
@@ -195,6 +202,22 @@ def run_smoke() -> dict[str, Any]:
         )
         _run(["docker", "push", registry_image])
         platform_image = _repo_digest(registry_image)
+        caddy_base_image = _repo_digest("caddy:2-alpine")
+        _run(
+            [
+                "docker",
+                "build",
+                "--file",
+                str(REPO_ROOT / "Dockerfile.hosted-managed-ingress"),
+                "--build-arg",
+                f"CADDY_BASE_IMAGE={caddy_base_image}",
+                "--tag",
+                ingress_registry_image,
+                ".",
+            ]
+        )
+        _run(["docker", "push", ingress_registry_image])
+        ingress_image = _repo_digest(ingress_registry_image)
 
         with tempfile.TemporaryDirectory(
             prefix=".hosted-managed-production-smoke-", dir=REPO_ROOT
@@ -202,6 +225,7 @@ def run_smoke() -> dict[str, Any]:
             environment = _fixture(
                 Path(temp_dir),
                 platform_image=platform_image,
+                ingress_image=ingress_image,
                 ingress_port=ingress_port,
             )
             try:

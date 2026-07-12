@@ -302,7 +302,7 @@ All runtime images must be immutable digest refs:
 ```bash
 export PLATFORM_MANAGED_OPERATION_IMAGE='ghcr.io/0al-spec/platform@sha256:<digest>'
 export PLATFORM_MANAGED_OPERATION_POSTGRES_IMAGE='postgres@sha256:<digest>'
-export PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE='caddy@sha256:<digest>'
+export PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE='ghcr.io/0al-spec/platform-hosted-managed-ingress@sha256:<digest>'
 export PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute
 export PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT=/srv/0al/specgraph
 export PLATFORM_MANAGED_OPERATION_STATE_DIR=/srv/0al/specspace-state
@@ -381,9 +381,10 @@ The bounded Compose smoke starts the real Caddy, PostgreSQL, service, and worker
 profile with a one-day self-signed fixture certificate and a temporary local
 registry so even the test image is addressed by digest. It enqueues no managed
 request and removes containers, registry, and volumes afterward.
-The ingress copies the immutable upstream Caddy binary into tmpfs before exec;
-this deliberately removes its unused low-port file capability so the container
-can keep `cap_drop: ALL` and `no-new-privileges` while listening on port `8443`.
+Build `Dockerfile.hosted-managed-ingress` from a digest-pinned Caddy base and
+publish that image by digest. The build removes Caddy's unused low-port file
+capability, allowing the non-root ingress container to keep `cap_drop: ALL` and
+`no-new-privileges` while listening on port `8443`.
 
 The probe requires all four runtime services to be healthy, PostgreSQL as the
 queue adapter, a fresh worker heartbeat, and exactly

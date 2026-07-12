@@ -39,6 +39,14 @@ jobs:
           docker build --file Dockerfile.hosted-managed
           --tag 0al/platform-hosted-managed:ci .
 
+      - name: Build capability-free hosted ingress image
+        run: |
+          docker pull caddy:2-alpine
+          caddy_base="$(docker image inspect --format '{{index .RepoDigests 0}}' caddy:2-alpine)"
+          docker build --file Dockerfile.hosted-managed-ingress \
+            --build-arg "CADDY_BASE_IMAGE=${caddy_base}" \
+            --tag 0al/platform-hosted-managed-ingress:ci .
+
   hosted-managed-postgres:
     runs-on: ubuntu-latest
     services:

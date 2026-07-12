@@ -1,0 +1,11 @@
+ARG CADDY_BASE_IMAGE
+FROM ${CADDY_BASE_IMAGE}
+
+USER root
+RUN apk add --no-cache libcap \
+    && setcap -r /usr/bin/caddy \
+    && apk del libcap
+
+USER 1000:1000
+ENTRYPOINT ["caddy"]
+CMD ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

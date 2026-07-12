@@ -12,6 +12,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = REPO_ROOT / "docker-compose.hosted-managed-production.example.yml"
+INGRESS_DOCKERFILE = REPO_ROOT / "Dockerfile.hosted-managed-ingress"
 ALLOWLIST_ENV = "PLATFORM_MANAGED_OPERATION_ALLOWLIST"
 READ_ONLY_CANARY_OPERATION = "review_status_execute"
 RUNTIME_SERVICES = {
@@ -122,6 +123,13 @@ def _assert_digest_pinned(service_name: str, service: dict[str, Any]) -> None:
 
 
 def validate_hosted_managed_production_compose() -> dict[str, Any]:
+    ingress_dockerfile = INGRESS_DOCKERFILE.read_text(encoding="utf-8")
+    if "ARG CADDY_BASE_IMAGE\n" not in ingress_dockerfile or (
+        "ARG CADDY_BASE_IMAGE=" in ingress_dockerfile
+    ):
+        raise RuntimeError("ingress build must require an explicit Caddy base image")
+    if "setcap -r /usr/bin/caddy" not in ingress_dockerfile:
+        raise RuntimeError("ingress build must remove the upstream file capability")
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_root = Path(temp_dir)
         missing = subprocess.run(
@@ -225,20 +233,15 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
         raise RuntimeError("TLS ingress must be the only published production port")
     if ingress.get("user") != "1000:1000":
         raise RuntimeError("TLS ingress must run as the unprivileged runtime user")
-    if ingress.get("entrypoint") != ["/bin/sh", "-ec"]:
-        raise RuntimeError("TLS ingress must strip upstream file capabilities in tmpfs")
     ingress_command = ingress.get("command")
-    ingress_command_text = (
-        " ".join(ingress_command) if isinstance(ingress_command, list) else ""
-    )
-    if not all(
-        token in ingress_command_text
-        for token in (
-            "cp /usr/bin/caddy /tmp/caddy-runtime",
-            "exec /tmp/caddy-runtime run",
-        )
-    ):
-        raise RuntimeError("TLS ingress runtime command may retain upstream file capabilities")
+    if ingress_command != [
+        "run",
+        "--config",
+        "/etc/caddy/Caddyfile",
+        "--adapter",
+        "caddyfile",
+    ]:
+        raise RuntimeError("TLS ingress must use the fixed Caddy entrypoint contract")
     caddyfile = _bind_mount(ingress, "/etc/caddy/Caddyfile")
     if caddyfile.get("read_only") is not True:
         raise RuntimeError("TLS ingress Caddyfile must be read-only")
