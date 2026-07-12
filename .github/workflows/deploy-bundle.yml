@@ -88,6 +88,9 @@ jobs:
       - name: Start hosted service and worker profile
         run: make hosted-managed-compose-smoke PYTHON=python3
 
+      - name: Start TLS-fronted production hosted profile
+        run: make hosted-managed-production-compose-smoke PYTHON=python3
+
   platform-deploy-bundle:
     runs-on: ubuntu-latest
     steps:

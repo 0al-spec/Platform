@@ -364,6 +364,7 @@ Validate and start the production profile:
 
 ```bash
 make hosted-managed-production-contract
+make hosted-managed-production-compose-smoke
 docker compose --project-name platform-managed-production \
   --file docker-compose.hosted-managed-production.example.yml config >/dev/null
 docker compose --project-name platform-managed-production \
@@ -375,6 +376,11 @@ docker compose --project-name platform-managed-production \
   --project-name platform-managed-production \
   --output /srv/0al/evidence/probe-before-reboot.json
 ```
+
+The bounded Compose smoke starts the real Caddy, PostgreSQL, service, and worker
+profile with a one-day self-signed fixture certificate and a temporary local
+registry so even the test image is addressed by digest. It enqueues no managed
+request and removes containers, registry, and volumes afterward.
 
 The probe requires all four runtime services to be healthy, PostgreSQL as the
 queue adapter, a fresh worker heartbeat, and exactly
