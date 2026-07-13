@@ -7,6 +7,7 @@ services.local.yaml
 docker-compose.local.yml
 
 .platform/
+.playwright-mcp/
 .venv/
 .DS_Store
 
