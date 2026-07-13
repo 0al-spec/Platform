@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any, Callable
@@ -47,6 +48,8 @@ DEFAULT_SERVICE_URL = "https://managed.specgraph.tech"
 DEFAULT_PROJECT_NAME = "platform-managed-production"
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
+MINIMUM_HOST_PYTHON = (3, 12)
+MAXIMUM_HOST_PYTHON = (3, 15)
 RELEASE_IMAGE_KEYS = {
     "PLATFORM_MANAGED_OPERATION_IMAGE",
     "PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE",
@@ -59,6 +62,14 @@ class ProductionDeployError(RuntimeError):
     def __init__(self, message: str, *, status: str = "blocked") -> None:
         super().__init__(message)
         self.status = status
+
+
+def _require_supported_python(version_info: tuple[int, ...] | Any) -> None:
+    version = tuple(version_info[:2])
+    if not MINIMUM_HOST_PYTHON <= version < MAXIMUM_HOST_PYTHON:
+        raise ProductionDeployError(
+            "host deployment requires Python 3.12, 3.13, or 3.14"
+        )
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -566,7 +577,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--drain-attempts", type=int, default=12)
     parser.add_argument("--drain-interval", type=float, default=5.0)
     args = parser.parse_args(argv)
-    if os.geteuid() != 0:
+    python_error: ProductionDeployError | None = None
+    try:
+        _require_supported_python(sys.version_info)
+    except ProductionDeployError as exc:
+        python_error = exc
+    if python_error is not None:
+        report = {
+            "artifact_kind": "platform_hosted_managed_production_deployment_report",
+            "ok": False,
+            "summary": {"status": "blocked"},
+            "diagnostics": [str(python_error)],
+        }
+    elif os.geteuid() != 0:
         report = {
             "artifact_kind": "platform_hosted_managed_production_deployment_report",
             "ok": False,
