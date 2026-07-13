@@ -317,6 +317,22 @@ ssh root@<host> 'docker compose version && sudo ufw status verbose && \
   stat -c "%U:%G %a %n" /srv/0al/{platform,specgraph,specspace-state,backups,evidence,secrets}'
 ```
 
+Install the bounded checkout helper before updating either host checkout:
+
+```bash
+sudo deploy/hosted-managed/hosted-managed-checkout.sh install
+sudo /usr/local/sbin/0al-hosted-managed-checkout status --repository platform
+sudo /usr/local/sbin/0al-hosted-managed-checkout status --repository specgraph
+```
+
+For an update, pass the full reviewed commit explicitly with `sync`. The helper
+accepts only the fixed Platform and SpecGraph repository contracts, requires a
+clean worktree and exact detached commit, and executes Git through numeric
+runtime uid/gid `1000:1000` with a dedicated host-local HOME. It does not add a
+global `safe.directory`, create a login account, accept an arbitrary remote, or
+discard local changes. Numeric execution avoids assuming that uid 1000 has the
+same account name across Ubuntu/cloud-provider images.
+
 Use the rendered environment and secret-file procedure below only after that
 host-level check succeeds. A Cloud-init bootstrap is not deployment evidence
 and does not enable managed operations.

@@ -20,6 +20,7 @@ packages:
   - docker-compose-v2
   - dnsutils
   - unattended-upgrades
+  - util-linux
 
 write_files:
   - path: /etc/ssh/sshd_config.d/99-0al-hosted-managed.conf
@@ -42,8 +43,11 @@ runcmd:
     install -d -m 0750 /srv/0al/backups
     install -d -m 0750 /srv/0al/evidence
     install -d -m 0750 /srv/0al/secrets
+    install -d -m 0700 /srv/0al/.runtime-home
     chown 1000:1000 /srv/0al /srv/0al/platform /srv/0al/specgraph \
       /srv/0al/specspace-state /srv/0al/backups /srv/0al/evidence
+    chown 1000:1000 /srv/0al/.runtime-home
+    chmod 0700 /srv/0al/.runtime-home
     chown root:1000 /srv/0al/secrets
     ufw default deny incoming
     ufw default allow outgoing

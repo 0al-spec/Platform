@@ -1,6 +1,6 @@
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
-.PHONY: python-quality test hosted-managed-contract hosted-managed-compose-contract hosted-managed-runtime-compose-contract hosted-managed-production-compose-contract hosted-managed-production-contract hosted-managed-tls-contract hosted-managed-secrets-contract hosted-managed-image-lock-contract hosted-managed-postgres-integration hosted-managed-compose-smoke hosted-managed-production-compose-smoke
+.PHONY: python-quality test hosted-managed-contract hosted-managed-compose-contract hosted-managed-runtime-compose-contract hosted-managed-production-compose-contract hosted-managed-production-contract hosted-managed-tls-contract hosted-managed-secrets-contract hosted-managed-checkout-contract hosted-managed-image-lock-contract hosted-managed-postgres-integration hosted-managed-compose-smoke hosted-managed-production-compose-smoke
 
 python-quality:
 	$(PYTHON) -m unittest discover -s tests
@@ -23,7 +23,7 @@ hosted-managed-runtime-compose-contract:
 hosted-managed-production-compose-contract:
 	$(PYTHON) scripts/validate_hosted_managed_production_compose.py
 
-hosted-managed-production-contract: hosted-managed-production-compose-contract hosted-managed-tls-contract hosted-managed-secrets-contract
+hosted-managed-production-contract: hosted-managed-production-compose-contract hosted-managed-tls-contract hosted-managed-secrets-contract hosted-managed-checkout-contract
 	$(PYTHON) -m unittest tests.test_hosted_managed_production
 
 hosted-managed-tls-contract:
@@ -31,6 +31,9 @@ hosted-managed-tls-contract:
 
 hosted-managed-secrets-contract:
 	$(PYTHON) -m unittest tests.test_hosted_managed_secrets
+
+hosted-managed-checkout-contract:
+	$(PYTHON) -m unittest tests.test_hosted_managed_checkout
 
 hosted-managed-image-lock-contract:
 	$(PYTHON) -m unittest tests.test_hosted_managed_image_lock
