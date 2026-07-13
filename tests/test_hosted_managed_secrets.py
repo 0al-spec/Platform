@@ -20,13 +20,19 @@ class HostedManagedSecretsContractTests(unittest.TestCase):
         subprocess.run(["bash", "-n", self.script_path], check=True)
 
     def test_provisioning_uses_hidden_tty_input_and_bounded_paths(self) -> None:
-        self.assertTrue(self.script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n"))
+        self.assertTrue(
+            self.script.startswith("#!/usr/bin/env bash\nset +x\nset -euo pipefail\n")
+        )
         self.assertIn('readonly SECRET_ROOT="/srv/0al/secrets"', self.script)
         self.assertIn('[[ -t 0 && -t 1 ]]', self.script)
         self.assertIn("IFS= read -r -s -p", self.script)
         self.assertNotIn("--service-token", self.script)
         self.assertNotIn("--database-password", self.script)
         self.assertNotIn("--github-token", self.script)
+
+    def test_xtrace_is_disabled_before_any_secret_state_is_declared(self) -> None:
+        self.assertLess(self.script.index("set +x"), self.script.index("SECRET_ROOT"))
+        self.assertLess(self.script.index("set +x"), self.script.index("read_hidden"))
 
     def test_provisioning_is_fail_closed_and_derives_database_url(self) -> None:
         self.assertIn("refusing to overwrite existing", self.script)

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set +x
 set -euo pipefail
 
 readonly SECRET_ROOT="/srv/0al/secrets"
