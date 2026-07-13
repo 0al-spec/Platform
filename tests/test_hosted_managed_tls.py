@@ -41,7 +41,10 @@ class HostedManagedTlsContractTests(unittest.TestCase):
             / "docs"
             / "hosted-managed-operations.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("certbot renew --dry-run", runbook)
+        self.assertIn(
+            "certbot renew --dry-run --no-random-sleep-on-renew",
+            runbook,
+        )
         self.assertIn("RENEWED_LINEAGE=/etc/letsencrypt/live/managed.example.org", runbook)
         self.assertIn("RENEWED_DOMAINS=managed.example.org", runbook)
         self.assertIn("renewal-hooks/deploy/0al-hosted-managed-tls", runbook)
