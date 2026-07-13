@@ -23,6 +23,7 @@ class HostedManagedCloudInitTests(unittest.TestCase):
             "ufw",
             "docker.io",
             "docker-compose-v2",
+            "python3",
             "unattended-upgrades",
             "util-linux",
         ):
@@ -41,7 +42,9 @@ class HostedManagedCloudInitTests(unittest.TestCase):
         self.assertIn("chown root:1000 /srv/0al/secrets", self.cloud_init)
         self.assertLess(
             self.cloud_init.index("chown 1000:1000"),
-            self.cloud_init.index("touch /var/lib/0al-hosted-managed-bootstrap-complete"),
+            self.cloud_init.index(
+                "touch /var/lib/0al-hosted-managed-bootstrap-complete"
+            ),
         )
         self.assertNotIn("install -d -o 1000", self.cloud_init)
         self.assertIn("/srv/0al/.runtime-home", self.cloud_init)

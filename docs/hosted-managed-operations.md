@@ -400,7 +400,7 @@ provenance and SBOM attestations, and uploads
 the downloaded lock before using either ref:
 
 ```bash
-.venv/bin/python scripts/validate_hosted_managed_image_lock.py \
+/usr/bin/python3 scripts/validate_hosted_managed_image_lock.py \
   hosted-managed-image-lock.json
 ```
 
@@ -414,7 +414,7 @@ Prefer rendering the non-secret deployment environment directly from that
 validated lock instead of transcribing image refs by hand:
 
 ```bash
-sudo .venv/bin/python scripts/render_hosted_managed_production_env.py \
+sudo /usr/bin/python3 scripts/render_hosted_managed_production_env.py \
   --image-lock hosted-managed-image-lock.json \
   --output /etc/0al/hosted-managed-production.env \
   --artifact-root /srv/0al/specgraph \
@@ -481,7 +481,7 @@ containers. Never reuse the service bearer token as a GitHub or database token.
 Run the fail-closed host preflight as root so ownership checks are meaningful:
 
 ```bash
-sudo --preserve-env .venv/bin/python \
+sudo --preserve-env /usr/bin/python3 \
   scripts/hosted_managed_production_preflight.py \
   --service-url https://managed.example.org \
   --output /srv/0al/evidence/production-preflight.json
@@ -506,9 +506,17 @@ sudo /usr/local/sbin/0al-hosted-managed-checkout sync \
   --repository platform \
   --commit "$(jq -r .source_commit /srv/0al/evidence/hosted-managed-image-lock.json)"
 
-sudo /srv/0al/platform/.venv/bin/python \
+sudo /usr/bin/python3 \
   /srv/0al/platform/scripts/hosted_managed_production_deploy.py
 ```
+
+The cloud-init contract installs the distribution `python3` package. These
+host-side validation/deployment tools are stdlib-only and are CI-tested on
+Python 3.12 and 3.14; the deployment entry point fails closed outside Python
+3.12-3.14. Do not create an untracked repository `.venv` solely for host
+orchestration. Developer commands and dependency-bearing Platform CLI commands
+continue to use the repository virtual environment or the pinned Platform
+container image.
 
 Hosts created from an older cloud-init revision may not yet have
 `/usr/local/sbin/0al-hosted-managed-checkout`. Bootstrap it once from a trusted
@@ -544,7 +552,7 @@ docker compose --project-name platform-managed-production \
 docker compose --project-name platform-managed-production \
   --file docker-compose.hosted-managed-production.example.yml up --detach
 
-.venv/bin/python scripts/hosted_managed_production_probe.py \
+/usr/bin/python3 scripts/hosted_managed_production_probe.py \
   --service-url https://managed.example.org \
   --compose-file "$PWD/docker-compose.hosted-managed-production.example.yml" \
   --env-file /etc/0al/hosted-managed-production.env \

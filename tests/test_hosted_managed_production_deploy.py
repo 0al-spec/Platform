@@ -42,6 +42,15 @@ def image_lock(
 
 
 class HostedManagedProductionDeployTests(unittest.TestCase):
+    def test_host_python_contract_covers_supported_ubuntu_runtime(self) -> None:
+        for version in ((3, 12, 0), (3, 13, 7), (3, 14, 4)):
+            deployment._require_supported_python(version)
+        for version in ((3, 11, 9), (3, 15, 0), (4, 0, 0)):
+            with self.assertRaisesRegex(
+                deployment.ProductionDeployError, "requires Python"
+            ):
+                deployment._require_supported_python(version)
+
     def fixture(self, root: Path) -> dict:
         lock = image_lock()
         lock_path = root / "image-lock.json"
