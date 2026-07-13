@@ -109,6 +109,18 @@ def _directory_diagnostics(
     return diagnostics
 
 
+def _required_regular_file_diagnostics(*, label: str, path: Path) -> list[str]:
+    if path.is_symlink():
+        return [f"{label}_is_symlink"]
+    try:
+        metadata = path.stat()
+    except OSError:
+        return [f"{label}_missing"]
+    if not stat.S_ISREG(metadata.st_mode):
+        return [f"{label}_not_regular_file"]
+    return []
+
+
 def run_preflight(
     *,
     service_url: str,
@@ -174,6 +186,12 @@ def run_preflight(
             expected_uid=runtime_uid,
             expected_gid=runtime_gid,
             require_owner_write=True,
+        )
+    )
+    diagnostics.extend(
+        _required_regular_file_diagnostics(
+            label="artifact_root_makefile",
+            path=artifact_root / "Makefile",
         )
     )
     diagnostics.extend(
