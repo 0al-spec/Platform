@@ -202,6 +202,10 @@ Production images are published separately by the manual
 validated `platform_hosted_managed_image_lock`; workflow commit tags are build
 discovery aids and are not deployment inputs. The same lock also pins the
 third-party PostgreSQL runtime image used by the production Compose profile.
+Render the non-secret production environment from that lock with
+`scripts/render_hosted_managed_production_env.py`; this avoids manually
+transcribing image digests and keeps the initial allowlist fixed to the
+read-only canary operation.
 
 ## Local Compose Entry Point
 
