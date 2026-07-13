@@ -73,7 +73,9 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
             fixture = self.fixture(Path(temp_dir))
             report = preflight.run_preflight(**fixture)
         self.assertTrue(report["ok"], report["diagnostics"])
-        self.assertEqual(report["summary"]["enabled_operations"], ["review_status_execute"])
+        self.assertEqual(
+            report["summary"]["enabled_operations"], ["review_status_execute"]
+        )
         rendered = str(report)
         self.assertNotIn(temp_dir, rendered)
         self.assertNotIn("service-token", rendered)
@@ -87,7 +89,9 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
             report = preflight.run_preflight(**fixture)
         self.assertFalse(report["ok"])
         self.assertIn("service_url_not_private_https_endpoint", report["diagnostics"])
-        self.assertIn("deployment_allowlist_not_exact_canary_scope", report["diagnostics"])
+        self.assertIn(
+            "deployment_allowlist_not_exact_canary_scope", report["diagnostics"]
+        )
         self.assertIn("service_token_mode_not_0440", report["diagnostics"])
 
     def test_preflight_requires_distinct_secret_values_and_digest_images(self) -> None:
@@ -129,9 +133,7 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
     def test_dry_run_requires_explicit_preflight_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             fixture = self.fixture(Path(temp_dir))
-            fixture["allowlist"] = (
-                "review_status_execute,promotion_execute_dry_run"
-            )
+            fixture["allowlist"] = "review_status_execute,promotion_execute_dry_run"
             blocked = preflight.run_preflight(**fixture)
             fixture["allow_dry_run"] = True
             ready = preflight.run_preflight(**fixture)
@@ -173,12 +175,15 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
                 "schema_version": 1,
                 "tables": {table: [] for table in backup.QUEUE_TABLES},
             }
-            with mock.patch.object(
-                backup, "_database_export", return_value=database_export
-            ), mock.patch.object(
-                backup,
-                "_row_counts",
-                return_value={table: 0 for table in backup.QUEUE_TABLES},
+            with (
+                mock.patch.object(
+                    backup, "_database_export", return_value=database_export
+                ),
+                mock.patch.object(
+                    backup,
+                    "_row_counts",
+                    return_value={table: 0 for table in backup.QUEUE_TABLES},
+                ),
             ):
                 report = backup.create_backup(
                     database_url_file=database_url,
@@ -208,7 +213,9 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
             with self.assertRaisesRegex(backup.HostedBackupError, "symbolic links"):
                 backup._artifact_inventory(root)
 
-    def test_restore_smoke_rejects_tampered_database_export_before_connecting(self) -> None:
+    def test_restore_smoke_rejects_tampered_database_export_before_connecting(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             artifact_root = root / "specgraph"
@@ -225,12 +232,15 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
                 "schema_version": 1,
                 "tables": {table: [] for table in backup.QUEUE_TABLES},
             }
-            with mock.patch.object(
-                backup, "_database_export", return_value=database_export
-            ), mock.patch.object(
-                backup,
-                "_row_counts",
-                return_value={table: 0 for table in backup.QUEUE_TABLES},
+            with (
+                mock.patch.object(
+                    backup, "_database_export", return_value=database_export
+                ),
+                mock.patch.object(
+                    backup,
+                    "_row_counts",
+                    return_value={table: 0 for table in backup.QUEUE_TABLES},
+                ),
             ):
                 backup.create_backup(
                     database_url_file=database_url,
@@ -241,7 +251,9 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
             export_path = backup_root / "tampered" / "managed-operations.json"
             export_path.write_text("{}\n", encoding="utf-8")
             with mock.patch.object(backup, "_driver") as driver:
-                with self.assertRaisesRegex(backup.HostedBackupError, "digest mismatch"):
+                with self.assertRaisesRegex(
+                    backup.HostedBackupError, "digest mismatch"
+                ):
                     backup.restore_smoke(
                         database_url_file=database_url,
                         backup_root=backup_root,
@@ -328,6 +340,37 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
                 fetch_health=lambda _: self.fail("health must not be fetched"),
             )
 
+    def test_probe_passes_explicit_environment_file_to_compose(self) -> None:
+        now = datetime(2026, 7, 13, tzinfo=timezone.utc)
+        commands: list[list[str]] = []
+        delegate = self.fixture_runner(heartbeat_generated_at=now.isoformat())
+
+        def runner(command, **kwargs):
+            commands.append(command)
+            return delegate(command, **kwargs)
+
+        report = probe.run_probe(
+            service_url="https://managed.example.test",
+            compose_file=Path("/srv/platform/compose.yml"),
+            env_file=Path("/etc/0al/production.env"),
+            project_name="platform-managed",
+            now=now,
+            runner=runner,
+            fetch_health=lambda _: {
+                "ok": True,
+                "adapter": "postgresql",
+                "enabled_operation_ids": ["review_status_execute"],
+            },
+        )
+        self.assertTrue(report["ok"])
+        self.assertTrue(commands)
+        self.assertTrue(
+            all(
+                command[2:4] == ["--env-file", "/etc/0al/production.env"]
+                for command in commands
+            )
+        )
+
 
 class HostedManagedProductionSignoffTests(unittest.TestCase):
     def evidence(self) -> dict[str, dict]:
@@ -396,7 +439,9 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
         }
         return reports
 
-    def test_signoff_requires_complete_reboot_replay_backup_and_rollback_evidence(self) -> None:
+    def test_signoff_requires_complete_reboot_replay_backup_and_rollback_evidence(
+        self,
+    ) -> None:
         report = signoff.build_signoff(
             self.evidence(),
             now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
@@ -434,9 +479,7 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
         evidence = self.evidence()
         evidence["preflight"]["generated_at"] = "2026-07-10T00:00:00+00:00"
         evidence["backup"]["generated_at"] = "2026-07-13T00:30:00+00:00"
-        evidence["probe_before_reboot"]["generated_at"] = (
-            "2026-07-13T00:45:00+00:00"
-        )
+        evidence["probe_before_reboot"]["generated_at"] = "2026-07-13T00:45:00+00:00"
         report = signoff.build_signoff(
             evidence,
             now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
