@@ -628,17 +628,49 @@ summary is not a backup.
 Use an open review PR and a workspace-bound, queue-safe
 `review_status_execute` request. Run the existing canary through the public TLS
 origin with its bearer token file and with host-local artifact access so output
-bytes are checked against receipt digests:
+bytes are checked against receipt digests. Copy only the queue request, the
+digest-pinned workspace initialization report, and the portable promotion
+execution report into the workspace-scoped artifact directory. Do not copy the
+whole developer `runs/` directory because it may contain local-only raw input.
+
+The production host does not need a Platform virtual environment. Run the
+dependency-bearing canary client from the same digest-pinned Platform image as
+the service and worker. The canary container gets no Docker socket, mounts the
+service token and request read-only, mounts artifacts read-only, and can write
+only its public-safe evidence report:
 
 ```bash
-.venv/bin/python scripts/platform.py managed-operation canary \
-  --service-url https://managed.example.org \
-  --auth-token-file "$PLATFORM_MANAGED_OPERATION_TOKEN_FILE" \
-  --request /srv/0al/canary/review-status-request.json \
-  --artifact-root "$PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT" \
-  --output /srv/0al/evidence/canary.json \
-  --format json
+set -a
+. /etc/0al/hosted-managed-production.env
+set +a
+
+docker run --rm \
+  --network host \
+  --user 1000:1000 \
+  --read-only \
+  --tmpfs /tmp:rw,nosuid,nodev,noexec,size=16m \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --mount \
+    type=bind,src="$PLATFORM_MANAGED_OPERATION_TOKEN_FILE",dst=/run/secrets/managed_operation_token,readonly \
+  --mount type=bind,src=/srv/0al/canary,dst=/canary,readonly \
+  --mount \
+    type=bind,src="$PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT",dst=/workspace/SpecGraph,readonly \
+  --mount type=bind,src=/srv/0al/evidence,dst=/evidence \
+  "$PLATFORM_MANAGED_OPERATION_IMAGE" \
+  python3 scripts/platform.py managed-operation canary \
+    --service-url https://managed.example.org \
+    --auth-token-file /run/secrets/managed_operation_token \
+    --request /canary/review-status-request.json \
+    --artifact-root /workspace/SpecGraph \
+    --output /evidence/canary.json \
+    --format json
 ```
+
+Install transferred artifacts with fixed modes, then apply numeric ownership
+with `chown 1000:1000`. A hardened host may intentionally have no passwd entry
+for runtime UID 1000, in which case `install -o 1000` can interpret `1000` as a
+missing user name and fail even though numeric container ownership is correct.
 
 Verify SpecSpace in hosted mode with `specspace product-smoke` and
 `--expect-managed-mode backend_managed_ready`. Reboot the host, rerun strict

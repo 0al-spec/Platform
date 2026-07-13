@@ -108,3 +108,46 @@ Exit criteria:
 - Operator sees whether a workspace is core, product, or private registry backed.
 - Platform does not claim Feature Passport receipt authority until a dedicated
   follow-up defines the role, trust keys, chain scope, and verification contract.
+
+## Phase 7: Hosted Managed Execution Production Sign-Off
+
+Completed rollout evidence:
+
+- [x] Provision a clean host from tracked cloud-init and verify SSH, Docker,
+  firewall, and `/srv/0al` ownership.
+- [x] Configure dedicated DNS and TLS without storing secrets in Git.
+- [x] Install file-backed runtime credentials with least-privilege ownership.
+- [x] Publish a commit-bound image lock and deploy digest-pinned Platform,
+  ingress, and PostgreSQL images through the fail-closed production
+  orchestrator.
+- [x] Transfer only the workspace binding, portable promotion execution report,
+  and queue-safe request for `hosted-operation-canary`.
+- [x] Run the public-TLS `review_status_execute` canary, verify the authoritative
+  report digest, and prove immediate replay preserves attempt `1`.
+
+Remaining sign-off sequence:
+
+1. Capture a fresh pre-reboot probe, reboot the host, and verify all four
+   services, PostgreSQL queue state, worker heartbeat, strict recovery, and the
+   authoritative report after restart.
+2. Replay the identical read-only request after reboot and require the same
+   request id, idempotency key, output refs, and attempt `1`.
+3. Produce a private PostgreSQL/artifact backup, copy it to encrypted off-host
+   storage, and pass isolated restore smoke without restoring over production.
+4. Point a controlled SpecSpace hosted profile at the service and pass product
+   smoke with `backend_managed_ready`, while keeping the deployment allowlist at
+   `review_status_execute` only.
+5. Exercise rollback to SpecSpace read-only mode after a drained queue, verify
+   no active jobs or locks, and retain rollback evidence.
+6. Run the combined production sign-off gate over preflight, probes, canary,
+   replay, recovery, backup/restore, queue audit, hosted SpecSpace smoke, and
+   rollback smoke.
+
+Exit criteria:
+
+- `production_canary_signed_off` is emitted from fresh, causally ordered
+  evidence.
+- No secrets, raw idea text, local developer paths, or private backup payloads
+  are published.
+- The production allowlist remains exactly `review_status_execute` until a
+  separate rollout proposal approves any expansion.
