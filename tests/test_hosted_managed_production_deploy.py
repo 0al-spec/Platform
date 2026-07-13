@@ -234,6 +234,50 @@ class HostedManagedProductionDeployTests(unittest.TestCase):
             self.assertEqual(up_count, 2)
             self.assertEqual(fixture["env_file"].read_text(encoding="utf-8"), previous)
 
+    def test_environment_write_failure_after_quiesce_restarts_previous_runtime(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.fixture(Path(temp_dir))
+            fixture.pop("commands")
+            fixture.pop("rendered")
+            up_count = 0
+
+            def runner(command, **kwargs):
+                nonlocal up_count
+                if command[0].endswith("checkout-helper"):
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        stdout=f"repository=platform\ncommit={'b' * 40}\nworktree=clean\n",
+                        stderr="",
+                    )
+                if "up" in command:
+                    up_count += 1
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            fixture["runner"] = runner
+            with (
+                mock.patch.object(deployment, "_preflight", return_value={"ok": True}),
+                mock.patch.object(
+                    deployment, "_queue_audit", return_value=self.queue_report()
+                ),
+                mock.patch.object(
+                    deployment,
+                    "_probe_until_healthy",
+                    return_value=(self.successful_probe(), 1),
+                ),
+                mock.patch.object(
+                    deployment, "_write_atomic", side_effect=OSError("disk full")
+                ),
+                self.assertRaisesRegex(
+                    deployment.ProductionDeployError, "previous runtime was restored"
+                ) as raised,
+            ):
+                deployment.deploy(**fixture)
+            self.assertEqual(raised.exception.status, "rolled_back")
+            self.assertEqual(up_count, 1)
+
     def test_pull_failure_is_blocked_without_rollback_or_environment_change(
         self,
     ) -> None:

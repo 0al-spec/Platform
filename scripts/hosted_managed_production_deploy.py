@@ -451,7 +451,12 @@ def deploy(
             interval_seconds=health_interval_seconds,
             sleeper=sleeper,
         )
-    except (ProductionDeployError, ProductionEnvRenderError, ValueError) as exc:
+    except (
+        OSError,
+        ProductionDeployError,
+        ProductionEnvRenderError,
+        ValueError,
+    ) as exc:
         if not runtime_quiesced:
             raise ProductionDeployError(
                 "deployment blocked before runtime mutation"
@@ -480,7 +485,7 @@ def deploy(
                 sleeper=sleeper,
             )
             rollback_ok = True
-        except ProductionDeployError:
+        except (OSError, ProductionDeployError):
             rollback_ok = False
         raise ProductionDeployError(
             "deployment failed and previous runtime was restored"
@@ -581,7 +586,12 @@ def main(argv: list[str] | None = None) -> int:
                 drain_attempts=args.drain_attempts,
                 drain_interval_seconds=args.drain_interval,
             )
-        except (ProductionDeployError, ProductionEnvRenderError, ValueError) as exc:
+        except (
+            OSError,
+            ProductionDeployError,
+            ProductionEnvRenderError,
+            ValueError,
+        ) as exc:
             report = {
                 "artifact_kind": "platform_hosted_managed_production_deployment_report",
                 "contract_ref": "platform.hosted-managed.production-deployment.v1",
