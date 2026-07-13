@@ -49,6 +49,18 @@ class HostedManagedCheckoutContractTests(unittest.TestCase):
         self.assertNotIn("reset --hard", self.script)
         self.assertNotIn("git clean", self.script)
 
+    def test_first_clone_reaches_checkout_before_clean_status_is_required(self) -> None:
+        clone_index = self.script.index('clone --no-checkout "${REPOSITORY_URL}"')
+        fresh_clone_index = self.script.index('fresh_clone="true"', clone_index)
+        conditional_guard_index = self.script.index(
+            'if [[ "${fresh_clone}" != "true" ]]', fresh_clone_index
+        )
+        checkout_index = self.script.index('checkout --detach "${commit}"')
+        final_status_index = self.script.index("checkout_status", checkout_index)
+        self.assertLess(fresh_clone_index, conditional_guard_index)
+        self.assertLess(conditional_guard_index, checkout_index)
+        self.assertLess(checkout_index, final_status_index)
+
     def test_cloud_init_prepares_runtime_home_and_setpriv(self) -> None:
         self.assertIn("  - util-linux\n", self.cloud_init)
         self.assertIn("/srv/0al/.runtime-home", self.cloud_init)

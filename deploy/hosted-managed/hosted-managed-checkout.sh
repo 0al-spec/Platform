@@ -95,13 +95,17 @@ sync_checkout() {
   require_root
   [[ "${commit}" =~ ^[0-9a-f]{40}$ ]] || fail "commit must be a full lowercase SHA-1"
   require_runtime_boundary
+  local fresh_clone="false"
   if [[ ! -d "${REPOSITORY_ROOT}/.git" ]]; then
     [[ -z "$(find "${REPOSITORY_ROOT}" -mindepth 1 -maxdepth 1 -print -quit)" ]] || \
       fail "refusing to initialize a non-empty repository root"
     git_as_runtime clone --no-checkout "${REPOSITORY_URL}" "${REPOSITORY_ROOT}"
+    fresh_clone="true"
   fi
   require_checkout_contract
-  require_clean_checkout
+  if [[ "${fresh_clone}" != "true" ]]; then
+    require_clean_checkout
+  fi
   git_as_runtime -C "${REPOSITORY_ROOT}" fetch --no-tags origin main
   git_as_runtime -C "${REPOSITORY_ROOT}" cat-file -e "${commit}^{commit}"
   git_as_runtime -C "${REPOSITORY_ROOT}" checkout --detach "${commit}"
