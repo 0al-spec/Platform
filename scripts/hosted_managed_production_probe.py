@@ -30,7 +30,9 @@ def _load_json_response(url: str, *, timeout: float) -> dict[str, Any]:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ProductionProbeError("hosted HTTPS health endpoint is unavailable") from exc
+        raise ProductionProbeError(
+            "hosted HTTPS health endpoint is unavailable"
+        ) from exc
     if not isinstance(payload, dict):
         raise ProductionProbeError("hosted HTTPS health response must be an object")
     return payload
@@ -46,7 +48,9 @@ def _compose_rows(output: str) -> list[dict[str, Any]]:
         payload = [json.loads(line) for line in stripped.splitlines()]
     if isinstance(payload, dict):
         payload = [payload]
-    if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+    if not isinstance(payload, list) or not all(
+        isinstance(item, dict) for item in payload
+    ):
         raise ProductionProbeError("docker compose ps returned an invalid payload")
     return payload
 
@@ -67,6 +71,7 @@ def run_probe(
     service_url: str,
     compose_file: Path,
     project_name: str,
+    env_file: Path | None = None,
     timeout_seconds: float = 10.0,
     max_heartbeat_age_seconds: float = 30.0,
     now: datetime | None = None,
@@ -83,9 +88,17 @@ def run_probe(
         or parsed.query
         or parsed.fragment
     ):
-        raise ProductionProbeError("production probe requires a clean HTTPS service URL")
+        raise ProductionProbeError(
+            "production probe requires a clean HTTPS service URL"
+        )
     if not compose_file.is_absolute():
         raise ProductionProbeError("production Compose path must be absolute")
+    if env_file is not None and not env_file.is_absolute():
+        raise ProductionProbeError("production environment path must be absolute")
+    compose_prefix = ["docker", "compose"]
+    if env_file is not None:
+        compose_prefix.extend(["--env-file", str(env_file)])
+    compose_prefix.extend(["--project-name", project_name, "--file", str(compose_file)])
     health_url = f"{service_url.rstrip('/')}/v1/health"
     health = (
         fetch_health(health_url)
@@ -94,12 +107,7 @@ def run_probe(
     )
     ps_output = _run(
         [
-            "docker",
-            "compose",
-            "--project-name",
-            project_name,
-            "--file",
-            str(compose_file),
+            *compose_prefix,
             "ps",
             "--format",
             "json",
@@ -118,12 +126,7 @@ def run_probe(
         }
     heartbeat_output = _run(
         [
-            "docker",
-            "compose",
-            "--project-name",
-            project_name,
-            "--file",
-            str(compose_file),
+            *compose_prefix,
             "exec",
             "-T",
             "managed-operation-worker",
@@ -224,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--project-name", default="platform-managed-production")
+    parser.add_argument("--env-file")
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--max-heartbeat-age", type=float, default=30.0)
     parser.add_argument("--output")
@@ -233,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             service_url=args.service_url,
             compose_file=Path(args.compose_file).resolve(),
             project_name=args.project_name,
+            env_file=Path(args.env_file).resolve() if args.env_file else None,
             timeout_seconds=args.timeout,
             max_heartbeat_age_seconds=args.max_heartbeat_age,
         )

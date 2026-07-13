@@ -496,6 +496,44 @@ directory blocks deployment before the worker enters a restart loop.
 
 ### Start and probe
 
+For routine updates of an already running production profile, first synchronize
+the Platform checkout to the exact `source_commit` from a newly published image
+lock. Then use the bounded deployment orchestrator instead of repeating Compose
+commands manually:
+
+```bash
+sudo /usr/local/sbin/0al-hosted-managed-checkout sync \
+  --repository platform \
+  --commit "$(jq -r .source_commit /srv/0al/evidence/hosted-managed-image-lock.json)"
+
+sudo /srv/0al/platform/.venv/bin/python \
+  /srv/0al/platform/scripts/hosted_managed_production_deploy.py
+```
+
+Hosts created from an older cloud-init revision may not yet have
+`/usr/local/sbin/0al-hosted-managed-checkout`. Bootstrap it once from a trusted
+copy of the tracked script, run its `install` command as root, and remove the
+temporary copy. Verify the script commit before transfer. Do not replace this
+bounded bootstrap with a global Git `safe.directory` exception. New hosts use
+the versioned cloud-init installation path and do not need this compatibility
+step.
+
+The orchestrator requires the image-lock commit to equal the clean Platform
+checkout `HEAD`. Before changing containers it validates the lock, renders and
+preflights a candidate environment, requires a drained queue with no workspace
+locks, rejects an implicit PostgreSQL image change, validates Compose, and pulls
+all digest-pinned images. It atomically installs the environment, recreates the
+runtime while preserving the PostgreSQL volume, and waits for the HTTPS
+production probe. A failed update restores the previous environment and attempts
+to verify the previous runtime. Its public-safe deployment report is written to
+`/srv/0al/evidence/hosted-managed-deployment.json`.
+
+This operation does not transfer canary artifacts, enqueue a request, expand the
+deployment allowlist, migrate PostgreSQL, create a Git review, or publish a read
+model. Initial host bootstrap and database image upgrades remain separate
+procedures. Do not retry after an unverified rollback; inspect the deployment
+report and container state first.
+
 Validate and start the production profile:
 
 ```bash
@@ -509,6 +547,7 @@ docker compose --project-name platform-managed-production \
 .venv/bin/python scripts/hosted_managed_production_probe.py \
   --service-url https://managed.example.org \
   --compose-file "$PWD/docker-compose.hosted-managed-production.example.yml" \
+  --env-file /etc/0al/hosted-managed-production.env \
   --project-name platform-managed-production \
   --output /srv/0al/evidence/probe-before-reboot.json
 ```
