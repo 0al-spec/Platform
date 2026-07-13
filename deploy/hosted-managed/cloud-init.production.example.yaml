@@ -18,6 +18,7 @@ packages:
   - ufw
   - docker.io
   - docker-compose-v2
+  - dnsutils
   - unattended-upgrades
 
 write_files:

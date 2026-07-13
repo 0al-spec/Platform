@@ -110,7 +110,7 @@ sync_certificate() {
 
 provision_certificate() {
   require_root
-  local domain="" email="" expected_ip="" resolved
+  local domain="" email="" expected_ip="" resolved_ipv4 resolved_ipv6
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
       --domain) domain="${2:-}"; shift 2 ;;
@@ -123,9 +123,13 @@ provision_certificate() {
   [[ "${email}" == *@*.* ]] || fail "a valid contact email is required"
   [[ "${expected_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || fail "expected IPv4 is required"
   command -v certbot >/dev/null || fail "certbot is not installed"
+  command -v dig >/dev/null || fail "dig is not installed"
 
-  resolved="$(getent ahostsv4 "${domain}" | awk '{print $1}' | sort -u)"
-  grep -Fxq "${expected_ip}" <<<"${resolved}" || fail "domain does not resolve to expected IPv4"
+  resolved_ipv4="$(dig +short A "${domain}" | sort -u)"
+  resolved_ipv6="$(dig +short AAAA "${domain}" | sort -u)"
+  [[ "${resolved_ipv4}" == "${expected_ip}" ]] || \
+    fail "domain must resolve to the expected IPv4 only"
+  [[ -z "${resolved_ipv6}" ]] || fail "domain must not publish IPv6 before IPv6 ingress is enabled"
 
   install_domain_config "${domain}"
   install_renewal_hook
