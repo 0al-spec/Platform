@@ -312,6 +312,22 @@ export PLATFORM_MANAGED_OPERATION_STATE_DIR=/srv/0al/specspace-state
 export PLATFORM_MANAGED_OPERATION_BACKUP_ROOT=/srv/0al/backups
 ```
 
+Publish the two Platform-owned images through the manual **Publish Hosted
+Managed Images** workflow. It builds `linux/amd64` and `linux/arm64`, emits
+provenance and SBOM attestations, and uploads
+`hosted-managed-image-lock-<commit>/hosted-managed-image-lock.json`. Validate
+the downloaded lock before using either ref:
+
+```bash
+.venv/bin/python scripts/validate_hosted_managed_image_lock.py \
+  hosted-managed-image-lock.json
+```
+
+Set `PLATFORM_MANAGED_OPERATION_IMAGE` and
+`PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE` from the validated `image_ref`
+values, not from the workflow's commit tags. The lock is public-safe evidence;
+it does not deploy, change the allowlist, or grant managed-operation authority.
+
 `deploy/hosted-managed/production.env.example` contains the complete non-secret
 environment inventory. It may be copied to a root-readable deployment env file,
 but the referenced secret values remain separate files and must never be added
