@@ -176,6 +176,21 @@ class HostedManagedProductionDeployTests(unittest.TestCase):
             ):
                 deployment.deploy(**fixture)
 
+    def test_environment_inventory_drift_is_not_silently_dropped(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.fixture(Path(temp_dir))
+            fixture.pop("commands")
+            fixture.pop("rendered")
+            content = fixture["env_file"].read_text(encoding="utf-8")
+            fixture["env_file"].write_text(
+                content + "PLATFORM_MANAGED_OPERATION_FUTURE_SETTING=enabled\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                deployment.ProductionDeployError, "inventory drift"
+            ):
+                deployment.deploy(**fixture)
+
     def test_failed_recreation_restores_previous_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             fixture = self.fixture(Path(temp_dir))

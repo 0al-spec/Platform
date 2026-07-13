@@ -47,6 +47,10 @@ DEFAULT_SERVICE_URL = "https://managed.specgraph.tech"
 DEFAULT_PROJECT_NAME = "platform-managed-production"
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
+RELEASE_IMAGE_KEYS = {
+    "PLATFORM_MANAGED_OPERATION_IMAGE",
+    "PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE",
+}
 
 
 class ProductionDeployError(RuntimeError):
@@ -108,6 +112,20 @@ def _required(values: dict[str, str], key: str) -> str:
     if not value:
         raise ProductionDeployError(f"production environment is missing {key}")
     return value
+
+
+def _require_release_only_environment_change(
+    *, current: dict[str, str], candidate: dict[str, str]
+) -> None:
+    if set(current) != set(candidate):
+        raise ProductionDeployError(
+            "production environment inventory drift requires a separate procedure"
+        )
+    changed = {key for key in current if current.get(key) != candidate.get(key)}
+    if not changed.issubset(RELEASE_IMAGE_KEYS):
+        raise ProductionDeployError(
+            "non-image production configuration drift requires a separate procedure"
+        )
 
 
 def _checkout_commit(*, runner: Runner, helper: Path) -> str:
@@ -340,6 +358,10 @@ def deploy(
         raise ProductionDeployError(
             "PostgreSQL image changes require the separate database migration procedure"
         )
+    _require_release_only_environment_change(
+        current=current_values,
+        candidate=candidate_values,
+    )
     preflight_report = _preflight(values=candidate_values, service_url=service_url)
 
     env_file.parent.mkdir(parents=True, exist_ok=True)
