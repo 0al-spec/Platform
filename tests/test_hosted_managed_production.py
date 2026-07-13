@@ -116,6 +116,20 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
 
 
 class HostedManagedRuntimeBackupTests(unittest.TestCase):
+    def test_runbook_backup_id_matches_runtime_contract(self) -> None:
+        runbook = (
+            Path(__file__).resolve().parents[1]
+            / "docs"
+            / "hosted-managed-operations.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'backup_id="production-$(date -u +%Y%m%dt%H%M%Sz)"',
+            runbook,
+        )
+        self.assertIsNotNone(
+            backup.BACKUP_ID_PATTERN.fullmatch("production-20260713t002228z")
+        )
+
     def test_backup_archives_workspace_artifacts_without_paths_in_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
