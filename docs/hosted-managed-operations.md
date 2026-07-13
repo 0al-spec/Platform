@@ -473,8 +473,10 @@ sudo --preserve-env .venv/bin/python \
 
 The preflight report contains no secret values, paths, or local filesystem
 metadata. It requires exact read-only canary scope, `0440` root/runtime-group
-secret files, digest-pinned images, a clean HTTPS URL, and runtime-owned data
-directories.
+secret files, digest-pinned images, a clean HTTPS URL, runtime-owned data
+directories, and a regular non-symlink SpecGraph `Makefile` beneath the artifact
+root. The last check mirrors the worker startup contract so an empty artifact
+directory blocks deployment before the worker enters a restart loop.
 
 ### Start and probe
 

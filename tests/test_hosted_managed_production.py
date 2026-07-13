@@ -23,6 +23,7 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
         artifact_root = root / "artifacts"
         state_dir = root / "state"
         artifact_root.mkdir()
+        (artifact_root / "Makefile").write_text("test:\n\t@true\n", encoding="utf-8")
         state_dir.mkdir()
         secrets = root / "secrets"
         secrets.mkdir()
@@ -101,6 +102,29 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("secret_values_not_distinct", report["diagnostics"])
         self.assertIn("platform_image_not_digest_pinned", report["diagnostics"])
+
+    def test_preflight_requires_a_specgraph_makefile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.fixture(Path(temp_dir))
+            (fixture["artifact_root"] / "Makefile").unlink()
+            report = preflight.run_preflight(**fixture)
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["summary"]["artifact_root_ready"])
+        self.assertIn("artifact_root_makefile_missing", report["diagnostics"])
+
+    def test_preflight_rejects_a_symlinked_specgraph_makefile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture = self.fixture(root)
+            makefile = fixture["artifact_root"] / "Makefile"
+            makefile.unlink()
+            foreign_makefile = root / "foreign-makefile"
+            foreign_makefile.write_text("test:\n\t@true\n", encoding="utf-8")
+            makefile.symlink_to(foreign_makefile)
+            report = preflight.run_preflight(**fixture)
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["summary"]["artifact_root_ready"])
+        self.assertIn("artifact_root_makefile_is_symlink", report["diagnostics"])
 
     def test_dry_run_requires_explicit_preflight_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
