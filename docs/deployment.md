@@ -191,6 +191,10 @@ For reproducible initial VPS provisioning, use the versioned
 [`cloud-init.production.example.yaml`](../deploy/hosted-managed/cloud-init.production.example.yaml)
 from that runbook. It is host bootstrap only: it contains no deployment images,
 repository checkout, SSH key, or runtime secret.
+Issue and renew the dedicated HTTPS certificate with the tracked
+`deploy/hosted-managed/hosted-managed-tls.sh` helper described in the same
+runbook. The helper pins issuance to the expected IPv4 and synchronizes only
+the configured certificate lineage into the runtime secret files.
 The production contract is checked in CI with:
 
 ```bash
