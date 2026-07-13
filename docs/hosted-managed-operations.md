@@ -300,7 +300,7 @@ not reuse the public SpecSpace origin or expose port `8091`. The production
 profile publishes only TLS ingress on port `443`; Caddy proxies to the internal
 Platform service, which continues to require its bearer token.
 
-For a disposable VPS experiment, start from Ubuntu 24.04 and paste the
+For a disposable VPS experiment, start from Ubuntu 24.04 or Ubuntu 26.04 and paste the
 versioned [`cloud-init.production.example.yaml`](../deploy/hosted-managed/cloud-init.production.example.yaml)
 into the provider's Cloud-init field. The provider applies the selected SSH
 public key separately. This bootstrap installs Docker/Compose, creates the

@@ -35,6 +35,14 @@ class HostedManagedCloudInitTests(unittest.TestCase):
             "/srv/0al/secrets",
         ):
             self.assertIn(directory, self.cloud_init)
+        self.assertIn("set -eu", self.cloud_init)
+        self.assertIn("chown 1000:1000", self.cloud_init)
+        self.assertIn("chown root:1000 /srv/0al/secrets", self.cloud_init)
+        self.assertLess(
+            self.cloud_init.index("chown 1000:1000"),
+            self.cloud_init.index("touch /var/lib/0al-hosted-managed-bootstrap-complete"),
+        )
+        self.assertNotIn("install -d -o 1000", self.cloud_init)
         self.assertIn("systemctl enable --now docker", self.cloud_init)
 
     def test_bootstrap_hardens_ssh_and_only_opens_ingress_ports(self) -> None:
@@ -64,4 +72,3 @@ class HostedManagedCloudInitTests(unittest.TestCase):
             self.assertNotIn(value, self.cloud_init)
         self.assertIn("no SSH key", self.cloud_init)
         self.assertIn("no SSH key, deployment image", self.cloud_init)
-
