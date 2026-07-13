@@ -348,7 +348,7 @@ Verify both the live certificate and the renewal path:
 
 ```bash
 sudo /usr/local/sbin/0al-hosted-managed-tls status
-sudo certbot renew --dry-run
+sudo certbot renew --dry-run --no-random-sleep-on-renew
 sudo env \
   RENEWED_DOMAINS=managed.example.org \
   RENEWED_LINEAGE=/etc/letsencrypt/live/managed.example.org \
@@ -359,9 +359,11 @@ sudo /usr/local/sbin/0al-hosted-managed-tls status
 `status` fails when the runtime certificate is absent or has less than 30 days
 remaining. The explicit hook invocation tests permissions, the live lineage
 sync, and ingress reload without copying a staging certificate into the runtime
-secret files. The contact email is stored by Certbot under `/etc/letsencrypt`;
-it must not be added to Git, the production environment file, or evidence
-reports.
+secret files. The explicit dry-run disables Certbot's normal randomized renewal
+delay so an operator receives a bounded verification result; the systemd timer
+retains its randomized schedule for routine renewal. The contact email is stored
+by Certbot under `/etc/letsencrypt`; it must not be added to Git, the production
+environment file, or evidence reports.
 
 All runtime images must be immutable digest refs:
 
