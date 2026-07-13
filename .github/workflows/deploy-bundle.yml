@@ -34,6 +34,9 @@ jobs:
       - name: Validate TLS-fronted production hosted runtime contract
         run: make hosted-managed-production-contract PYTHON=python3
 
+      - name: Validate hosted managed image publication contract
+        run: make hosted-managed-image-lock-contract PYTHON=python3
+
       - name: Build standalone hosted runtime image
         run: >-
           docker build --file Dockerfile.hosted-managed

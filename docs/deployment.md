@@ -197,6 +197,11 @@ It fails when images are mutable, the allowlist is absent, the Platform service
 publishes a direct port, TLS ingress is missing, maintenance tooling is enabled
 by default, or service/worker network authority expands.
 
+Production images are published separately by the manual
+`publish-hosted-managed-images.yml` workflow. Consume only refs from its
+validated `platform_hosted_managed_image_lock`; workflow commit tags are build
+discovery aids and are not deployment inputs.
+
 ## Local Compose Entry Point
 
 The working plan for this phase is maintained in
