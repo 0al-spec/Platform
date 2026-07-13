@@ -24,6 +24,7 @@ class HostedManagedCloudInitTests(unittest.TestCase):
             "docker.io",
             "docker-compose-v2",
             "unattended-upgrades",
+            "util-linux",
         ):
             self.assertIn(f"  - {package}\n", self.cloud_init)
         for directory in (
@@ -43,6 +44,8 @@ class HostedManagedCloudInitTests(unittest.TestCase):
             self.cloud_init.index("touch /var/lib/0al-hosted-managed-bootstrap-complete"),
         )
         self.assertNotIn("install -d -o 1000", self.cloud_init)
+        self.assertIn("/srv/0al/.runtime-home", self.cloud_init)
+        self.assertIn("chmod 0700 /srv/0al/.runtime-home", self.cloud_init)
         self.assertIn("systemctl enable --now docker", self.cloud_init)
 
     def test_bootstrap_hardens_ssh_and_only_opens_ingress_ports(self) -> None:
