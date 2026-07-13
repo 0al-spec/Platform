@@ -43,11 +43,11 @@ class HostedManagedTlsContractTests(unittest.TestCase):
 
     def test_script_contains_no_deployment_identity_or_credentials(self) -> None:
         for forbidden in (
-            "managed.specgraph.tech",
-            "46.229.214.241",
             "@specgraph",
             "service-token",
             "github-token",
             "database-password",
         ):
             self.assertNotIn(forbidden, self.script)
+        self.assertNotRegex(self.script, r"readonly [A-Z_]*DOMAIN=.*\.[a-z]{2,}")
+        self.assertNotRegex(self.script, r"readonly [A-Z_]*IP=[0-9]")
