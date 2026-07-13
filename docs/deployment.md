@@ -187,6 +187,10 @@ port.
 
 Production rollout and sign-off are documented in
 [`hosted-managed-operations.md`](hosted-managed-operations.md#production-rollout-and-sign-off).
+For reproducible initial VPS provisioning, use the versioned
+[`cloud-init.production.example.yaml`](../deploy/hosted-managed/cloud-init.production.example.yaml)
+from that runbook. It is host bootstrap only: it contains no deployment images,
+repository checkout, SSH key, or runtime secret.
 The production contract is checked in CI with:
 
 ```bash

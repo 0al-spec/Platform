@@ -300,6 +300,27 @@ not reuse the public SpecSpace origin or expose port `8091`. The production
 profile publishes only TLS ingress on port `443`; Caddy proxies to the internal
 Platform service, which continues to require its bearer token.
 
+For a disposable VPS experiment, start from Ubuntu 24.04 and paste the
+versioned [`cloud-init.production.example.yaml`](../deploy/hosted-managed/cloud-init.production.example.yaml)
+into the provider's Cloud-init field. The provider applies the selected SSH
+public key separately. This bootstrap installs Docker/Compose, creates the
+runtime directories with the expected ownership, hardens SSH, and opens only
+SSH plus HTTP/HTTPS. It intentionally does **not** deploy Platform, set image
+refs, clone a repository, or contain a key, token, TLS material, or database
+credential.
+
+After the host is reachable, validate the bootstrap before transferring any
+runtime inputs:
+
+```bash
+ssh root@<host> 'docker compose version && sudo ufw status verbose && \
+  stat -c "%U:%G %a %n" /srv/0al/{platform,specgraph,specspace-state,backups,evidence,secrets}'
+```
+
+Use the rendered environment and secret-file procedure below only after that
+host-level check succeeds. A Cloud-init bootstrap is not deployment evidence
+and does not enable managed operations.
+
 All runtime images must be immutable digest refs:
 
 ```bash

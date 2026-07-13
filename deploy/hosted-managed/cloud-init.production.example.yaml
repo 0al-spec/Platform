@@ -1,0 +1,46 @@
+#cloud-config
+#
+# Initial host bootstrap for the single-node hosted managed-operation profile.
+# Tested on Ubuntu 24.04. Timeweb applies the selected SSH public key separately.
+# This file intentionally contains no SSH key, deployment image, repository ref,
+# TLS material, service token, database credential, or GitHub credential.
+
+package_update: true
+ssh_pwauth: false
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - jq
+  - ufw
+  - docker.io
+  - docker-compose-v2
+  - unattended-upgrades
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-0al-hosted-managed.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+
+runcmd:
+  - systemctl enable --now docker
+  - systemctl restart ssh
+  - install -d -o 1000 -g 1000 -m 0750 /srv/0al
+  - install -d -o 1000 -g 1000 -m 0750 /srv/0al/platform
+  - install -d -o 1000 -g 1000 -m 0750 /srv/0al/specgraph
+  - install -d -o 1000 -g 1000 -m 0750 /srv/0al/specspace-state
+  - install -d -o 1000 -g 1000 -m 0750 /srv/0al/backups
+  - install -d -o 1000 -g 1000 -m 0750 /srv/0al/evidence
+  - install -d -o root -g 1000 -m 0750 /srv/0al/secrets
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow OpenSSH
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - touch /var/lib/0al-hosted-managed-bootstrap-complete
