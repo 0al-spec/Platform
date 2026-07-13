@@ -13,6 +13,7 @@ from typing import Any
 EXPECTED_PLATFORMS = ["linux/amd64", "linux/arm64"]
 EXPECTED_IMAGES = {
     "platform": "ghcr.io/0al-spec/platform-hosted-managed",
+    "postgresql": "postgres",
     "ingress": "ghcr.io/0al-spec/platform-hosted-managed-ingress",
 }
 DIGEST_REF = re.compile(r"^(?P<name>[^@]+)@sha256:(?P<digest>[0-9a-f]{64})$")
@@ -72,7 +73,10 @@ def validate_image_lock(payload: dict[str, Any]) -> list[str]:
             diagnostics.append(f"{label}_image_invalid")
             continue
         match = DIGEST_REF.fullmatch(str(image.get("image_ref") or ""))
-        if match is None or match.group("name") != expected_name:
+        names = {expected_name}
+        if label == "postgresql":
+            names.add("docker.io/library/postgres")
+        if match is None or match.group("name") not in names:
             diagnostics.append(f"{label}_image_ref_invalid")
     ingress = images.get("ingress")
     ingress = ingress if isinstance(ingress, dict) else {}

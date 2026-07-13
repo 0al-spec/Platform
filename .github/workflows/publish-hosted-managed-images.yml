@@ -36,6 +36,14 @@ jobs:
           test -n "${ref}"
           echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
 
+      - name: Resolve digest-pinned PostgreSQL runtime
+        id: postgres
+        run: |
+          docker pull postgres:16-alpine
+          ref="$(docker image inspect --format '{{index .RepoDigests 0}}' postgres:16-alpine)"
+          test -n "${ref}"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+
       - name: Publish Platform hosted runtime
         id: platform
         uses: docker/build-push-action@v6
@@ -70,6 +78,7 @@ jobs:
           PLATFORM_DIGEST: ${{ steps.platform.outputs.digest }}
           INGRESS_DIGEST: ${{ steps.ingress.outputs.digest }}
           CADDY_BASE_REF: ${{ steps.caddy.outputs.ref }}
+          POSTGRES_IMAGE_REF: ${{ steps.postgres.outputs.ref }}
         run: |
           generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n \
@@ -78,6 +87,7 @@ jobs:
             --arg platform_ref "ghcr.io/0al-spec/platform-hosted-managed@${PLATFORM_DIGEST}" \
             --arg ingress_ref "ghcr.io/0al-spec/platform-hosted-managed-ingress@${INGRESS_DIGEST}" \
             --arg caddy_base_ref "${CADDY_BASE_REF}" \
+            --arg postgres_ref "${POSTGRES_IMAGE_REF}" \
             '{
               artifact_kind: "platform_hosted_managed_image_lock",
               schema_version: 1,
@@ -86,6 +96,7 @@ jobs:
               platforms: ["linux/amd64", "linux/arm64"],
               images: {
                 platform: {image_ref: $platform_ref},
+                postgresql: {image_ref: $postgres_ref},
                 ingress: {
                   image_ref: $ingress_ref,
                   base_image_ref: $caddy_base_ref,

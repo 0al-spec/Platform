@@ -25,6 +25,7 @@ def image_lock() -> dict:
                     "ghcr.io/0al-spec/platform-hosted-managed@sha256:" + digest
                 )
             },
+            "postgresql": {"image_ref": "postgres@sha256:" + digest},
             "ingress": {
                 "image_ref": (
                     "ghcr.io/0al-spec/platform-hosted-managed-ingress@sha256:" + digest
@@ -59,6 +60,12 @@ class HostedManagedImageLockTests(unittest.TestCase):
         diagnostics = validator.validate_image_lock(payload)
         self.assertIn("platform_image_ref_invalid", diagnostics)
         self.assertIn("authority_boundary_expanded", diagnostics)
+
+    def test_lock_requires_digest_pinned_postgresql(self) -> None:
+        payload = image_lock()
+        payload["images"]["postgresql"]["image_ref"] = "postgres:16-alpine"
+        diagnostics = validator.validate_image_lock(payload)
+        self.assertIn("postgresql_image_ref_invalid", diagnostics)
 
     def test_publish_workflow_is_manual_multi_arch_and_attested(self) -> None:
         workflow_path = (
