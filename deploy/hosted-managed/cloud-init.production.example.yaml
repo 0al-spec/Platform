@@ -12,6 +12,7 @@ ssh_pwauth: false
 packages:
   - ca-certificates
   - curl
+  - certbot
   - git
   - jq
   - ufw

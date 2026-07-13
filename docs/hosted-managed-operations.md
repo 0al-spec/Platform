@@ -321,6 +321,38 @@ Use the rendered environment and secret-file procedure below only after that
 host-level check succeeds. A Cloud-init bootstrap is not deployment evidence
 and does not enable managed operations.
 
+### TLS provisioning and renewal
+
+The Cloud-init baseline installs Certbot but does not request a certificate.
+After the dedicated hostname has an IPv4 `A` record pointing at the host, run
+the tracked provisioning helper from the Platform checkout:
+
+```bash
+sudo deploy/hosted-managed/hosted-managed-tls.sh provision \
+  --domain managed.example.org \
+  --email operator@example.org \
+  --expected-ip 203.0.113.10
+```
+
+The helper refuses a DNS mismatch, requires a contact email, uses the standalone
+HTTP-01 challenge on port `80`, and installs a domain-pinned Certbot deploy hook.
+It copies only that lineage into the production secret files with mode `0440`
+and ownership `root:1000`. Certbot's systemd timer performs renewal; after a
+successful renewal the hook atomically replaces the two runtime files and
+recreates only `managed-operation-ingress` when that container is already
+running. No Platform service, queue, Git, or ontology authority is granted.
+
+Verify both the live certificate and the renewal path:
+
+```bash
+sudo /usr/local/sbin/0al-hosted-managed-tls status
+sudo certbot renew --dry-run
+```
+
+`status` fails when the runtime certificate is absent or has less than 30 days
+remaining. The contact email is stored by Certbot under `/etc/letsencrypt`; it
+must not be added to Git, the production environment file, or evidence reports.
+
 All runtime images must be immutable digest refs:
 
 ```bash
