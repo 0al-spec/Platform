@@ -303,7 +303,7 @@ Platform service, which continues to require its bearer token.
 All runtime images must be immutable digest refs:
 
 ```bash
-export PLATFORM_MANAGED_OPERATION_IMAGE='ghcr.io/0al-spec/platform@sha256:<digest>'
+export PLATFORM_MANAGED_OPERATION_IMAGE='ghcr.io/0al-spec/platform-hosted-managed@sha256:<digest>'
 export PLATFORM_MANAGED_OPERATION_POSTGRES_IMAGE='postgres@sha256:<digest>'
 export PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE='ghcr.io/0al-spec/platform-hosted-managed-ingress@sha256:<digest>'
 export PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute
@@ -328,6 +328,27 @@ Set `PLATFORM_MANAGED_OPERATION_IMAGE`,
 `PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE` from the validated `image_ref`
 values, not from mutable tags. The lock is public-safe evidence;
 it does not deploy, change the allowlist, or grant managed-operation authority.
+
+Prefer rendering the non-secret deployment environment directly from that
+validated lock instead of transcribing image refs by hand:
+
+```bash
+sudo .venv/bin/python scripts/render_hosted_managed_production_env.py \
+  --image-lock hosted-managed-image-lock.json \
+  --output /etc/0al/hosted-managed-production.env \
+  --artifact-root /srv/0al/specgraph \
+  --state-dir /srv/0al/specspace-state \
+  --backup-root /srv/0al/backups \
+  --secret-root /srv/0al/secrets \
+  --ingress-bind-ip 0.0.0.0 \
+  --ingress-port 443
+```
+
+The renderer validates the complete image lock, fixes the initial allowlist to
+`review_status_execute`, rejects overlapping runtime/secret roots, writes the
+environment atomically with mode `0440`, and never reads secret values. Run it
+as root so the resulting file has the ownership expected by production
+operations. Existing output is preserved unless `--overwrite` is explicit.
 
 `deploy/hosted-managed/production.env.example` contains the complete non-secret
 environment inventory. It may be copied to a root-readable deployment env file,
