@@ -433,7 +433,7 @@ Run the isolated maintenance profile explicitly; it is not started by normal
 `up`:
 
 ```bash
-backup_id="production-$(date -u +%Y%m%dT%H%M%SZ)"
+backup_id="production-$(date -u +%Y%m%dt%H%M%Sz)"
 docker compose --project-name platform-managed-production \
   --file docker-compose.hosted-managed-production.example.yml \
   --profile maintenance run --rm managed-operation-maintenance \
