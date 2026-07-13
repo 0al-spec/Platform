@@ -323,9 +323,10 @@ the downloaded lock before using either ref:
   hosted-managed-image-lock.json
 ```
 
-Set `PLATFORM_MANAGED_OPERATION_IMAGE` and
+Set `PLATFORM_MANAGED_OPERATION_IMAGE`,
+`PLATFORM_MANAGED_OPERATION_POSTGRES_IMAGE`, and
 `PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE` from the validated `image_ref`
-values, not from the workflow's commit tags. The lock is public-safe evidence;
+values, not from mutable tags. The lock is public-safe evidence;
 it does not deploy, change the allowlist, or grant managed-operation authority.
 
 `deploy/hosted-managed/production.env.example` contains the complete non-secret
