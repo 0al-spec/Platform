@@ -423,8 +423,22 @@ to that env file.
 Create independent service, database, and GitHub credentials. The GitHub token
 for the first canary needs read-only pull-request/repository metadata only. It
 must not have repository write, workflow, administration, package-write, or
-organization authority. Provide a certificate and private key through separate
-files:
+organization authority. Store recovery copies in an end-to-end encrypted
+password manager, then provision the runtime copies from a controlling terminal:
+
+```bash
+sudo deploy/hosted-managed/hosted-managed-secrets.sh provision
+sudo deploy/hosted-managed/hosted-managed-secrets.sh status
+```
+
+The helper accepts no credential arguments or environment values. It prompts
+with terminal echo disabled, requires independently generated 64-character hex
+database and service credentials plus a fine-grained GitHub token, derives the
+container-internal PostgreSQL URL, and atomically creates the four runtime files.
+It refuses to overwrite an existing credential. `status` verifies file shape,
+ownership, mode, credential independence, and database URL consistency, but
+never prints credential values. Provide a certificate and private key through
+the separate TLS helper described above. The resulting file inventory is:
 
 ```bash
 export PLATFORM_MANAGED_OPERATION_TOKEN_FILE=/srv/0al/secrets/service-token
@@ -434,8 +448,6 @@ export PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE=/srv/0al/secrets/github-toke
 export PLATFORM_MANAGED_OPERATION_TLS_CERTIFICATE_FILE=/srv/0al/secrets/tls-certificate.pem
 export PLATFORM_MANAGED_OPERATION_TLS_PRIVATE_KEY_FILE=/srv/0al/secrets/tls-private-key.pem
 
-sudo chown root:1000 /srv/0al/secrets/*
-sudo chmod 0440 /srv/0al/secrets/*
 sudo chown -R 1000:1000 \
   "$PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT" \
   "$PLATFORM_MANAGED_OPERATION_STATE_DIR" \
