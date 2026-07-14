@@ -19946,7 +19946,11 @@ def specspace_product_workspace_smoke_report(
     workspace_mapping = workspace_payload if isinstance(workspace_payload, dict) else {}
     workspace_meta = workspace_mapping.get("workspace")
     workspace_meta = workspace_meta if isinstance(workspace_meta, dict) else {}
-    selected_workspace = workspace_meta.get("id") or workspace_mapping.get("workspace_id")
+    selected_workspace = (
+        workspace_meta.get("id")
+        or workspace_mapping.get("workspace_id")
+        or workspace_mapping.get("selected_workspace_id")
+    )
     record_check(
         "specspace_product_workspace_selected",
         selected_workspace == workspace,
@@ -19986,16 +19990,29 @@ def specspace_product_workspace_smoke_report(
     readiness = readiness if isinstance(readiness, dict) else {}
     readiness_status = readiness.get("status")
     readiness_mode = readiness.get("mode")
+    expected_readiness = {
+        "read_only": ("read_only", "read_only"),
+        "backend_managed_ready": ("backend_managed_ready", "backend_managed"),
+        "backend_managed_misconfigured": (
+            "backend_managed_misconfigured",
+            "backend_managed",
+        ),
+        "hosted_managed_ready": ("hosted_managed_ready", "hosted_managed"),
+        "hosted_managed_misconfigured": (
+            "hosted_managed_misconfigured",
+            "hosted_managed",
+        ),
+    }[expect_managed_mode]
     record_check(
         "specspace_managed_mode_status",
-        readiness_status == expect_managed_mode,
-        f"managed mode readiness status must be {expect_managed_mode}",
+        readiness_status == expected_readiness[0],
+        f"managed mode readiness status must be {expected_readiness[0]}",
         evidence={"actual": readiness_status},
     )
     record_check(
         "specspace_managed_mode_mode",
-        readiness_mode == expect_managed_mode,
-        f"managed mode readiness mode must be {expect_managed_mode}",
+        readiness_mode == expected_readiness[1],
+        f"managed mode readiness mode must be {expected_readiness[1]}",
         evidence={"actual": readiness_mode},
     )
     executor = readiness.get("executor")
@@ -20018,6 +20035,42 @@ def specspace_product_workspace_smoke_report(
             enabled_operation_count == 0,
             "production read-only smoke requires zero enabled managed operations",
             evidence={"enabled_operation_count": enabled_operation_count},
+        )
+    elif expect_managed_mode == "hosted_managed_ready":
+        hosted_operation_ids = executor.get("hosted_enabled_operation_ids")
+        hosted_operation_ids = (
+            hosted_operation_ids
+            if isinstance(hosted_operation_ids, list)
+            and hosted_operation_ids
+            and all(isinstance(item, str) and item for item in hosted_operation_ids)
+            and len(hosted_operation_ids) == len(set(hosted_operation_ids))
+            else None
+        )
+        record_check(
+            "specspace_hosted_executor_ready",
+            executor.get("enabled") is True
+            and executor.get("configured") is True
+            and executor.get("transport") == "hosted_queue"
+            and executor.get("hosted_enabled") is True
+            and executor.get("hosted_service_configured") is True
+            and executor.get("hosted_service_reachable") is True,
+            "hosted managed smoke requires a configured reachable queue executor",
+            evidence={
+                "enabled": executor.get("enabled"),
+                "configured": executor.get("configured"),
+                "transport": executor.get("transport"),
+                "hosted_service_reachable": executor.get(
+                    "hosted_service_reachable"
+                ),
+            },
+        )
+        record_check(
+            "specspace_hosted_operation_allowlist_enabled",
+            hosted_operation_ids is not None,
+            "hosted managed smoke requires a non-empty validated operation allowlist",
+            evidence={
+                "enabled_operation_count": len(hosted_operation_ids or []),
+            },
         )
 
     managed_operations = workspace_mapping.get("managed_operations_observability")
@@ -22852,9 +22905,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     product_smoke_parser.add_argument(
         "--expect-managed-mode",
-        choices=["read_only", "backend_managed_ready", "backend_managed_misconfigured"],
+        choices=[
+            "read_only",
+            "backend_managed_ready",
+            "backend_managed_misconfigured",
+            "hosted_managed_ready",
+            "hosted_managed_misconfigured",
+        ],
         default="read_only",
-        help="Expected SpecSpace managed mode readiness status/mode.",
+        help="Expected SpecSpace managed execution profile.",
     )
     product_smoke_parser.add_argument(
         "--timeout",

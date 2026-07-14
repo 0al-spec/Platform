@@ -394,7 +394,11 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
                 }
             )
         canary = {
-            "summary": {"profile": "read_only"},
+            "summary": {
+                "ok": True,
+                "status": "hosted_managed_canary_passed",
+                "profile": "read_only",
+            },
             "queue": {"status": "succeeded", "attempt": 1},
             "request": {
                 "request_id": "managed-operation://request-1",
@@ -410,11 +414,15 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
         }
         reports["canary"].update(copy.deepcopy(canary))
         reports["replay_canary"].update(copy.deepcopy(canary))
+        reports["canary"].pop("ok")
+        reports["replay_canary"].pop("ok")
         reports["recovery"]["summary"] = {
+            "status": "hosted_managed_operation_queue_recovered",
             "strict": True,
             "policy_safe": True,
             "preflight_blocked": False,
         }
+        reports["recovery"].pop("ok")
         reports["preflight"]["summary"] = {
             "status": "ready",
             "enabled_operations": ["review_status_execute"],
@@ -432,11 +440,19 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
         }
         reports["queue_audit"]["summary"] = {"rollback_ready": True}
         reports["hosted_specspace_smoke"]["summary"] = {
-            "expected_managed_mode": "backend_managed_ready"
+            "ok": True,
+            "failed_check_count": 0,
+            "diagnostic_count": 0,
+            "expected_managed_mode": "hosted_managed_ready",
         }
         reports["rollback_specspace_smoke"]["summary"] = {
-            "expected_managed_mode": "read_only"
+            "ok": True,
+            "failed_check_count": 0,
+            "diagnostic_count": 0,
+            "expected_managed_mode": "read_only",
         }
+        reports["hosted_specspace_smoke"].pop("ok")
+        reports["rollback_specspace_smoke"].pop("ok")
         return reports
 
     def test_signoff_requires_complete_reboot_replay_backup_and_rollback_evidence(
@@ -464,6 +480,30 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("replay_canary_attempt_not_one", report["diagnostics"])
         self.assertIn("probe_after_reboot_allowlist_invalid", report["diagnostics"])
+
+    def test_signoff_rejects_local_backend_specspace_profile(self) -> None:
+        evidence = self.evidence()
+        evidence["hosted_specspace_smoke"]["summary"][
+            "expected_managed_mode"
+        ] = "backend_managed_ready"
+        report = signoff.build_signoff(
+            evidence,
+            now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
+        )
+        self.assertFalse(report["ok"])
+        self.assertIn("hosted_specspace_mode_not_ready", report["diagnostics"])
+
+    def test_signoff_rejects_spoofed_top_level_smoke_readiness(self) -> None:
+        evidence = self.evidence()
+        evidence["hosted_specspace_smoke"]["ok"] = True
+        evidence["hosted_specspace_smoke"]["summary"]["ok"] = False
+        evidence["hosted_specspace_smoke"]["summary"]["failed_check_count"] = 1
+        report = signoff.build_signoff(
+            evidence,
+            now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
+        )
+        self.assertFalse(report["ok"])
+        self.assertIn("hosted_specspace_smoke_not_ready", report["diagnostics"])
 
     def test_signoff_rejects_write_capable_evidence(self) -> None:
         evidence = self.evidence()
