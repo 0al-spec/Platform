@@ -556,6 +556,16 @@ or publish a read model. Those actions remain under the later
 `graph-repository promotion-request` and `git-service execute-promotion`
 contracts.
 
+The materialized decision conforms to the SpecGraph
+`specgraph.idea-to-spec.candidate-approval-decision.v0.1` producer contract.
+It pins the selected active-candidate and promotion-gate artifacts by
+public-safe source ref and SHA-256 digest, uses proposal `0157`, and records the
+`promotion_request_approved` review state. Legacy `operator://<name>` intent
+references are normalized to the canonical public-safe `operator:<name>` form;
+private or path-like operator references are rejected. Downstream promotion
+planning also requires every selected decision source ref to identify an
+existing file, so an incomplete review packet fails before Git execution.
+
 ## Product Promotion Request Handoff
 
 After `candidate_approval_decision.json` exists, Platform can build the
@@ -586,6 +596,7 @@ The wrapper rejects the handoff when:
 - approval-decision authority flags are missing or not literally `false`;
 - the workflow lane or repository role is not product-scoped;
 - approved paths are unsafe or outside the supported promotion roots;
+- a decision source artifact is missing from the selected review packet;
 - the derived request would not match the approval decision expected by the
   Git Service validator.
 
