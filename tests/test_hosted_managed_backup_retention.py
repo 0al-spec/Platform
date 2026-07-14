@@ -40,6 +40,13 @@ class HostedManagedBackupRetentionTests(unittest.TestCase):
         self.assertIn("deletion_policy_unsafe", report["findings"])
         self.assertIn("authority_boundary_expanded", report["findings"])
 
+    def test_policy_rejects_missing_authority_flag(self) -> None:
+        policy = copy.deepcopy(self.policy())
+        del policy["authority_boundary"]["may_delete_backups"]
+        report = retention.validate_policy(policy)
+        self.assertFalse(report["ok"])
+        self.assertIn("authority_boundary_missing", report["findings"])
+
     def test_runbook_references_versioned_policy_and_prune_rule(self) -> None:
         runbook = (
             Path(__file__).resolve().parents[1]

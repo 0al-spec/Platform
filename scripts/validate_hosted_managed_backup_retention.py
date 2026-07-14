@@ -32,6 +32,11 @@ EXPECTED_PROTECTED_STATES = {
     "latest_verified_backup",
     "only_recovery_copy",
 }
+EXPECTED_AUTHORITY_BOUNDARY = {
+    "may_delete_backups",
+    "may_decrypt_backups",
+    "may_restore_production_database",
+}
 
 
 class RetentionPolicyError(RuntimeError):
@@ -101,7 +106,10 @@ def validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
         findings.append("deletion_policy_unsafe")
 
     boundary = policy.get("authority_boundary")
-    if not isinstance(boundary, dict):
+    if (
+        not isinstance(boundary, dict)
+        or set(boundary) != EXPECTED_AUTHORITY_BOUNDARY
+    ):
         findings.append("authority_boundary_missing")
     else:
         for key, value in boundary.items():
