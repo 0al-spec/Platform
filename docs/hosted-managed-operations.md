@@ -662,6 +662,40 @@ Do not commit the encrypted payload or its private export report to this public
 repository. Keep at least one encrypted copy outside the VPS. Deleting the VPS
 before this step leaves no independent recovery copy.
 
+#### Backup retention policy
+
+The versioned policy is
+[`backup-retention-policy.json`](../deploy/hosted-managed/backup-retention-policy.json).
+Validate it before applying retention decisions:
+
+```bash
+make hosted-managed-backup-retention-contract
+```
+
+The current canary policy retains:
+
+- at least 3 successful private VPS backups, with a target maximum age of 7
+  days;
+- at least 7 successful encrypted operator-local backups, with a target maximum
+  age of 30 days;
+- at least 7 successful encrypted cloud/off-site backups, with a target maximum
+  age of 30 days.
+
+A backup becomes a prune candidate only when it is older than the tier's
+`maximum_age_days` **and** deleting it would leave at least
+`minimum_successful_copies` in that tier. Never prune the backup referenced by
+the current production sign-off, the latest verified backup, or the only
+remaining recovery copy. A copy is successful only after restore-smoke evidence
+and digest verification; a cloud placeholder or an unverified transfer does not
+count.
+
+The policy is audit-only: automatic deletion remains disabled. Before manual
+deletion, inventory all three tiers, identify the protected backup ids, verify
+the second failure-domain copy, and record the selected ids. Delete only those
+ids that satisfy both age and count rules. This repository intentionally does
+not include a timer or unattended prune command while the production canary is
+the only hosted deployment.
+
 ### Canary, reboot, replay, and rollback
 
 Host reboot remains an explicit operator-confirmed action rather than part of

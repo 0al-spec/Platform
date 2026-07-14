@@ -1,0 +1,47 @@
+{
+  "artifact_kind": "platform_hosted_managed_backup_retention_policy",
+  "contract_ref": "platform.hosted-managed.backup-retention.v1",
+  "schema_version": 1,
+  "selection": {
+    "prune_rule": "older_than_maximum_age_and_exceeds_minimum_successful_copies",
+    "timestamp_source": "backup_id_utc"
+  },
+  "tiers": {
+    "cloud_offsite_encrypted": {
+      "encrypted": true,
+      "maximum_age_days": 30,
+      "minimum_successful_copies": 7,
+      "requires_digest_verification": true,
+      "requires_restore_smoke": true
+    },
+    "operator_offsite_encrypted": {
+      "encrypted": true,
+      "maximum_age_days": 30,
+      "minimum_successful_copies": 7,
+      "requires_digest_verification": true,
+      "requires_restore_smoke": true
+    },
+    "vps_private": {
+      "encrypted": false,
+      "maximum_age_days": 7,
+      "minimum_successful_copies": 3,
+      "requires_digest_verification": true,
+      "requires_restore_smoke": true
+    }
+  },
+  "protected_states": [
+    "current_production_signoff",
+    "latest_verified_backup",
+    "only_recovery_copy"
+  ],
+  "deletion": {
+    "automatic": false,
+    "manual_confirmation_required": true,
+    "requires_second_failure_domain": true
+  },
+  "authority_boundary": {
+    "may_delete_backups": false,
+    "may_decrypt_backups": false,
+    "may_restore_production_database": false
+  }
+}
