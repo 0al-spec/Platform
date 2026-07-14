@@ -10122,6 +10122,8 @@ workspaces:
                 workspace_id="idea-alpha",
                 display_name="Idea Alpha",
             )
+            gate_path = bound_dir / "platform_candidate_approval_intent_gate_report.json"
+            decision_path = bound_dir / "candidate_approval_decision.json"
 
             result = self.run_cli(
                 "product-candidate-approval",
@@ -10148,13 +10150,53 @@ workspaces:
                 str(bound_dir / "platform_product_repair_rerun_publication_report.json"),
                 "--path",
                 "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--output",
+                str(gate_path),
                 "--format",
                 "json",
             )
 
-        self.assertEqual(result.returncode, 0, result.stdout)
-        payload = json.loads(result.stdout)
-        self.assertTrue(payload["ready_to_materialize"])
+            self.assertEqual(result.returncode, 0, result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ready_to_materialize"])
+            self.assertEqual(
+                payload["source_refs"]["repair_execution"],
+                "runs/idea-alpha/platform_product_repair_rerun_execution_report.json",
+            )
+            self.assertEqual(
+                payload["source_refs"]["repair_publication"],
+                "runs/idea-alpha/platform_product_repair_rerun_publication_report.json",
+            )
+
+            materialize_result = self.run_cli(
+                "product-candidate-approval",
+                "materialize",
+                "--gate-report",
+                str(gate_path),
+                "--output",
+                str(decision_path),
+                "--format",
+                "json",
+            )
+            decision = json.loads(decision_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(materialize_result.returncode, 0, materialize_result.stdout)
+        self.assertEqual(
+            decision["gate_report_ref"],
+            "runs/idea-alpha/platform_candidate_approval_intent_gate_report.json",
+        )
+        self.assertEqual(
+            decision["source_artifacts"]["candidate_approval_gate"],
+            "runs/idea-alpha/platform_candidate_approval_intent_gate_report.json",
+        )
+        self.assertEqual(
+            decision["source_artifacts"]["platform_repair_execution"],
+            "runs/idea-alpha/platform_product_repair_rerun_execution_report.json",
+        )
+        self.assertEqual(
+            decision["source_artifacts"]["platform_repair_publication"],
+            "runs/idea-alpha/platform_product_repair_rerun_publication_report.json",
+        )
         codes = {item["code"] for item in payload["diagnostics"]}
         self.assertNotIn("graph_repository_repair_session_source_ref_stale", codes)
 
