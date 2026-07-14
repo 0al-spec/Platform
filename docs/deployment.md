@@ -69,10 +69,12 @@ SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL=team-decision-log=https://specgrap
 ```
 
 If `SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL` is omitted, Platform renders
-the Team Decision Log demo route with a derived product artifact base:
+the tracked Team Decision Log and Hosted Operation Canary routes with derived
+product artifact bases:
 
 ```text
 https://specgraph.tech/workspaces/team-decision-log
+https://specgraph.tech/workspaces/hosted-operation-canary
 ```
 
 The root SpecGraph showcase continues to use `SPECSPACE_ARTIFACT_BASE_URL`.

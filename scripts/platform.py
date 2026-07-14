@@ -57,6 +57,10 @@ DEFAULT_TIMEWEB_HYPERPROMPT_MAX_INPUT_BYTES = "1048576"
 DEFAULT_TIMEWEB_HYPERPROMPT_MAX_OUTPUT_BYTES = "2097152"
 DEFAULT_TIMEWEB_HYPERPROMPT_BUNDLE_RETENTION_COUNT = "20"
 DEFAULT_PRODUCT_WORKSPACE_ID = "team-decision-log"
+DEFAULT_DEPLOYED_PRODUCT_WORKSPACE_IDS = (
+    DEFAULT_PRODUCT_WORKSPACE_ID,
+    "hosted-operation-canary",
+)
 DEFAULT_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL = (
     "https://specgraph.tech/workspaces/team-decision-log"
 )
@@ -19308,11 +19312,11 @@ def product_workspace_artifact_base_urls_from_args(args: argparse.Namespace) -> 
         values = [legacy_url]
     if not values:
         values = [
-            "team-decision-log="
+            f"{workspace_id}="
             + default_product_workspace_artifact_base_url(
-                str(args.artifact_base_url),
-                "team-decision-log",
+                str(args.artifact_base_url), workspace_id
             )
+            for workspace_id in DEFAULT_DEPLOYED_PRODUCT_WORKSPACE_IDS
         ]
 
     bindings: dict[str, str] = {}

@@ -31,7 +31,7 @@ on:
         default: https://specgraph.tech
         type: string
       product_workspace_artifact_base_url:
-        description: Static active product workspace artifact base URL. Defaults to artifact_base_url/workspaces/team-decision-log when empty.
+        description: Optional explicit product workspace artifact binding. Empty uses the tracked Team Decision Log and Hosted Operation Canary workspace bundles.
         required: false
         type: string
       specpm_registry_url:
