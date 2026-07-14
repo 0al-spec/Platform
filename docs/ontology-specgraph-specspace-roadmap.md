@@ -287,8 +287,15 @@ The current execution order is:
    adds digest-pinned images, TLS-only ingress, host preflight, private
    backup/restore verification, runtime probes, queue-drain audit, reboot/replay
    evidence, and a fail-closed final sign-off contract. Actual production
-   sign-off still requires deployment-owned DNS, certificates, secrets, a real
-   workspace request, and the resulting evidence reports.
+   deployment now has deployment-owned DNS, TLS, file-backed secrets,
+   digest-pinned images, a workspace-scoped `hosted-operation-canary` request,
+   and a successful public-TLS `review_status_execute` canary. The authoritative
+   review-status report was digest-verified, replay preserved attempt `1`, and
+   the queue drained without active locks. Full production sign-off remains
+   pending until reboot persistence, private backup/restore smoke, hosted
+   SpecSpace smoke, rollback-to-read-only verification, and the final combined
+   evidence gate are complete. Do not expand the production allowlist before
+   that sign-off.
 5. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
    machine ids for refs and promotion paths while exposing deterministic,
    privacy-checked display aliases in candidate overview and topology artifacts;
