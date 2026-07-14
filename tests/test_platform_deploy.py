@@ -833,11 +833,18 @@ class PlatformDeployTests(unittest.TestCase):
                 '"team-decision-log=https://specgraph.tech/workspaces/team-decision-log"',
                 compose,
             )
+            self.assertIn(
+                '"hosted-operation-canary=https://specgraph.tech/workspaces/hosted-operation-canary"',
+                compose,
+            )
             self.assertEqual(manifest["artifact_kind"], "platform_timeweb_deploy_manifest")
             self.assertEqual(manifest["release_commit"], "abc123")
             self.assertEqual(
                 manifest["product_workspace_artifact_base_urls"],
                 {
+                    "hosted-operation-canary": (
+                        "https://specgraph.tech/workspaces/hosted-operation-canary"
+                    ),
                     "team-decision-log": (
                         "https://specgraph.tech/workspaces/team-decision-log"
                     )
@@ -1001,9 +1008,14 @@ class PlatformDeployTests(unittest.TestCase):
             '${artifact_base_url%/}/workspaces/team-decision-log"',
             publish_script,
         )
-        self.assertEqual(
-            publish_script.count("--product-workspace-artifact-base-url"),
-            2,
+        self.assertIn(
+            'default_hosted_operation_canary_artifact_base_url="'
+            '${artifact_base_url%/}/workspaces/hosted-operation-canary"',
+            publish_script,
+        )
+        self.assertIn(
+            '"hosted-operation-canary=$default_hosted_operation_canary_artifact_base_url"',
+            publish_script,
         )
 
     def test_timeweb_render_rejects_mutable_image_ref(self) -> None:
