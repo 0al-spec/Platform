@@ -10,11 +10,12 @@
   "hyperprompt_work_dir": "/tmp",
   "image_lock": "dist/platform-service-images.json",
   "product_workspace_artifact_base_urls": {
+    "hosted-operation-canary": "https://specgraph.tech/workspaces/hosted-operation-canary",
     "team-decision-log": "https://specgraph.tech/workspaces/team-decision-log"
   },
   "readme": "README.md",
-  "release_commit": "c2323faeb1029dc07fc26419bd633c752d8f6c92",
-  "release_created_at": "2026-07-11T10:31:43Z",
+  "release_commit": "036c31861dfff35c2e73dc5bd5a6dc0d8f19be61",
+  "release_created_at": "2026-07-14T23:17:54Z",
   "schema_version": 1,
   "specpm_registry_url": "https://specpm.dev",
   "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:f1af7e5488222f6d303bc033513060860482e377c3d703b9b9d95afdbb1e4bf6",
