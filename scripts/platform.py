@@ -10499,6 +10499,16 @@ def build_product_candidate_approval_gate_report(
             key="repaired_candidate_promotion_handoff_report",
             specgraph_dir=specgraph_dir,
         ),
+        "repair_execution": product_candidate_approval_loaded_source_ref(
+            source_artifacts,
+            key="platform_product_repair_rerun_execution_report",
+            specgraph_dir=specgraph_dir,
+        ),
+        "repair_publication": product_candidate_approval_loaded_source_ref(
+            source_artifacts,
+            key="platform_product_repair_rerun_publication_report",
+            specgraph_dir=specgraph_dir,
+        ),
     }
     operations = [
         product_repair_operation(
@@ -10925,6 +10935,36 @@ def product_candidate_approval_gate_report_diagnostics(
     return diagnostics
 
 
+def product_candidate_approval_gate_report_ref(
+    *,
+    gate_report_path: Path,
+    gate_report: dict[str, Any],
+) -> str:
+    binding_context = nested_mapping(gate_report, "workspace_binding")
+    run_dir_ref = binding_context.get("platform_default_run_dir_ref")
+    specgraph_dir_raw = gate_report.get("specgraph_dir")
+    if not isinstance(run_dir_ref, str) or not isinstance(specgraph_dir_raw, str):
+        return str(gate_report_path)
+    if not safe_metadata_ref(run_dir_ref):
+        return str(gate_report_path)
+    run_dir_path = Path(run_dir_ref)
+    if (
+        run_dir_path.is_absolute()
+        or not run_dir_path.parts
+        or run_dir_path.parts[0] != "runs"
+    ):
+        return str(gate_report_path)
+    try:
+        relative_gate_path = gate_report_path.resolve().relative_to(
+            Path(specgraph_dir_raw).resolve()
+        )
+    except ValueError:
+        return str(gate_report_path)
+    if relative_gate_path.parent != run_dir_path:
+        return str(gate_report_path)
+    return relative_gate_path.as_posix()
+
+
 def build_candidate_approval_decision(
     *,
     gate_report_path: Path,
@@ -10940,8 +10980,12 @@ def build_candidate_approval_decision(
         selected_intent.get("workspace_id") or summary.get("workspace_id") or candidate_id
     )
     paths = string_list(gate_report.get("approved_paths"))
+    gate_report_ref = product_candidate_approval_gate_report_ref(
+        gate_report_path=gate_report_path,
+        gate_report=gate_report,
+    )
     source_artifacts = {
-        "candidate_approval_gate": str(gate_report_path),
+        "candidate_approval_gate": gate_report_ref,
         "candidate_approval_intent": selected_intent.get("id"),
         "repair_session": gate_source_refs.get("repair_session")
         or selected_intent.get("repair_session_ref")
@@ -10950,19 +10994,17 @@ def build_candidate_approval_decision(
         or selected_intent.get("promotion_gate_ref")
         or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
         "repaired_handoff": gate_source_refs.get("repaired_handoff"),
-        "platform_repair_execution": (
-            PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_execution"]
-        ),
-        "platform_repair_publication": (
-            PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_publication"]
-        ),
+        "platform_repair_execution": gate_source_refs.get("repair_execution")
+        or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_execution"],
+        "platform_repair_publication": gate_source_refs.get("repair_publication")
+        or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_publication"],
     }
     return {
         "artifact_kind": PRODUCT_CANDIDATE_APPROVAL_DECISION_KIND,
         "schema_version": 1,
         "contract_ref": PRODUCT_CANDIDATE_APPROVAL_DECISION_CONTRACT_REF,
         "generated_at": utc_now_iso(),
-        "gate_report_ref": str(gate_report_path),
+        "gate_report_ref": gate_report_ref,
         "canonical_mutations_allowed": False,
         "ontology_writes_allowed": False,
         "tracked_artifacts_written": False,
