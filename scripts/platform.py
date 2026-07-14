@@ -644,6 +644,12 @@ PRODUCT_CANDIDATE_APPROVAL_PRIVACY_BOUNDARY = {
     "raw_prompt_published": False,
     "local_paths_published": False,
 }
+PRODUCT_CANDIDATE_APPROVAL_DECISION_TRUE_FIELDS = (
+    "agent_may_recommend",
+    "git_service_execution_remains_separate",
+    "review_merge_required_for_canonical_acceptance",
+    "read_model_publish_requires_merged_review",
+)
 PRODUCT_CANDIDATE_PROMOTION_AUTHORITY_FALSE_FIELDS = (
     "may_execute_prompt_agent",
     "may_mutate_candidate_source_artifacts",
@@ -2048,16 +2054,28 @@ def git_service_candidate_approval_diagnostics(
                     message=f"{field} must be false before Git Service execution",
                 )
             )
-    for key, value in sorted(
-        nested_mapping(approval_decision, "authority_boundary").items()
-    ):
-        if value is True:
+    approval_authority = nested_mapping(approval_decision, "authority_boundary")
+    for key, value in sorted(approval_authority.items()):
+        if (
+            value is True
+            and key not in PRODUCT_CANDIDATE_APPROVAL_DECISION_TRUE_FIELDS
+        ):
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
                     code="git_service_candidate_approval_authority_expanded",
                     subject=f"approval_decision.authority_boundary.{key}",
                     message="candidate approval must not execute write actions itself",
+                )
+            )
+    for key in PRODUCT_CANDIDATE_APPROVAL_DECISION_TRUE_FIELDS:
+        if key in approval_authority and approval_authority.get(key) is not True:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="git_service_candidate_approval_contract_invalid",
+                    subject=f"approval_decision.authority_boundary.{key}",
+                    message=f"canonical candidate approval field {key} must be true",
                 )
             )
 

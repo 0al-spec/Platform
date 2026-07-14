@@ -3189,13 +3189,17 @@ real-idea-intake-from-entry-request:
                     "decision": {
                         "requested_state": decision_state,
                         "state": decision_state,
-                        "operator_ref": "operator://workspace-owner",
+                        "approved_transition": (
+                            "candidate_review_requested -> "
+                            "promotion_request_approved"
+                        ),
+                        "operator_ref": "operator:workspace-owner",
                         "reason": "Approve review-ready candidate promotion.",
                         "conditions": [],
                     },
                     "readiness": {
                         "ready": ready,
-                        "review_state": "candidate_approval_ready"
+                        "review_state": "promotion_request_approved"
                         if ready
                         else "candidate_approval_blocked",
                         "blocked_by": [] if ready else ["decision_not_approved"],
@@ -3242,6 +3246,10 @@ real-idea-intake-from-entry-request:
                         "may_open_pull_request": False,
                         "may_publish_read_model": False,
                         "may_execute_git_service_operation": False,
+                        "agent_may_recommend": True,
+                        "git_service_execution_remains_separate": True,
+                        "review_merge_required_for_canonical_acceptance": True,
+                        "read_model_publish_requires_merged_review": True,
                     },
                 }
             ),
@@ -10843,6 +10851,34 @@ workspaces:
             codes,
         )
         self.assertFalse(payload["ok"])
+
+    def test_product_candidate_promotion_request_rejects_unknown_true_authority(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(tmp_root)
+            payload = json.loads(approval_decision.read_text(encoding="utf-8"))
+            payload["authority_boundary"]["may_skip_repository_review"] = True
+            approval_decision.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        response = json.loads(result.stdout)
+        codes = {diagnostic["code"] for diagnostic in response["diagnostics"]}
+        self.assertIn("git_service_candidate_approval_authority_expanded", codes)
+        self.assertFalse(response["ok"])
 
     def test_product_candidate_promotion_execute_dry_run_plans_git_service(
         self,
