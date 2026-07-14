@@ -585,45 +585,92 @@ Initial operational targets are diagnostic objectives, not an external SLA:
 
 ### Private backup and restore smoke
 
-Stop new enqueueing and stop the worker after its current lease before backup.
-The backup tool rejects queued/leased/running jobs, active workspace locks,
-symlinks, concurrent artifact changes, and an existing backup id. It stores a
-transaction-consistent versioned export of the three queue tables plus a
-digest-inventoried private archive of `runs/` artifacts. It never includes
-secret files.
+Use the bounded production backup-cycle orchestrator as the primary operator
+entry point. It probes the runtime, requires a drained queue, stops the public
+enqueue boundary, audits the queue again, stops the worker, creates the private
+backup, runs an isolated restore smoke, verifies the complete output set, and
+then restarts and probes the runtime. Once quiescing starts, runtime restart is
+attempted from a `finally` path even when backup or restore verification fails.
 
-Run the isolated maintenance profile explicitly; it is not started by normal
-`up`:
+On the production host, from the commit-pinned Platform checkout, run:
 
 ```bash
-backup_id="production-$(date -u +%Y%m%dt%H%M%Sz)"
-docker compose --project-name platform-managed-production \
-  --file docker-compose.hosted-managed-production.example.yml \
-  --profile maintenance run --rm managed-operation-maintenance \
-  python3 scripts/hosted_managed_runtime_backup.py backup \
-    --database-url-file /run/secrets/managed_operation_database_url \
-    --artifact-root /workspace/SpecGraph \
-    --backup-root /backups \
-    --backup-id "$backup_id"
+sudo /usr/bin/python3 \
+  /srv/0al/platform/scripts/hosted_managed_production_backup_cycle.py \
+  --service-url https://managed.example.org
 
-docker compose --project-name platform-managed-production \
-  --file docker-compose.hosted-managed-production.example.yml \
-  --profile maintenance run --rm managed-operation-maintenance \
-  python3 scripts/hosted_managed_runtime_backup.py restore-smoke \
-    --database-url-file /run/secrets/managed_operation_database_url \
-    --backup-root /backups \
-    --backup-id "$backup_id" \
-    --output "/backups/$backup_id/restore-smoke-report.json"
+backup_id="$(sudo cat /srv/0al/evidence/current-backup-id.txt)"
+sudo cat /srv/0al/evidence/hosted-managed-backup-cycle.json
 ```
 
-`restore-smoke` creates a temporary PostgreSQL database, restores the versioned
-queue export, compares every table count, verifies every archived artifact
-digest without extracting unsafe paths, then forcibly removes the temporary
-database. It has no authority to restore over production. Copy the entire
-private backup directory to encrypted off-host storage; copying only its public
-summary is not a backup.
+The generated backup remains private under
+`/srv/0al/backups/<backup-id>/`. The cycle report and pre-backup probe are
+public-safe summaries under `/srv/0al/evidence/`; they are evidence, not the
+backup payload. A failed cycle must not be retried until the final runtime probe
+passes or the service state has been diagnosed manually.
+
+The lower-level `hosted_managed_runtime_backup.py backup` and `restore-smoke`
+commands remain available for diagnostics and tests, but operators should not
+manually reproduce the stop/start sequence. `restore-smoke` creates a temporary
+PostgreSQL database, restores the versioned queue export, compares every table
+count, verifies every archived artifact digest without extracting unsafe paths,
+and forcibly removes the temporary database. Neither tool has authority to
+restore over production.
+
+#### Encrypted off-host copy
+
+Copy the entire private backup to a different failure domain. From an operator
+machine with `ssh` and `age`, stream the remote archive directly into `age`:
+
+```bash
+backup_id="$(ssh -o IdentitiesOnly=yes \
+  -i "$HOME/.ssh/0al-platform-canary" \
+  root@managed.example.org \
+  cat /srv/0al/evidence/current-backup-id.txt)"
+
+.venv/bin/python scripts/hosted_managed_offsite_backup.py \
+  --backup-id "$backup_id" \
+  --ssh-target root@managed.example.org \
+  --ssh-identity "$HOME/.ssh/0al-platform-canary" \
+  --age-recipient-file "$HOME/.ssh/0al-platform-canary.pub" \
+  --output-dir "$HOME/Backups/0AL/Platform" \
+  --output "$HOME/Backups/0AL/Platform/$backup_id-export-report.json"
+```
+
+The script requires both backup and restore-smoke reports on the host, refuses
+unsafe backup ids and existing output files, and writes the encrypted archive
+atomically with mode `0600`. The plaintext tar stream exists only in the pipe
+from SSH to `age`; no plaintext tar is written to the operator machine. The
+public-safe export report contains only the backup id, archive basename, sizes,
+and plaintext/encrypted SHA-256 digests. It does not contain the remote host,
+local paths, credentials, private key, or backup payload.
+
+The recipient file is public material. The corresponding private SSH key stays
+outside the repository and may remain passphrase-protected in the OS keychain or
+SSH agent. Platform passes its filename to `ssh`/`age`; it does not read or
+publish the private key. Verify that the encrypted archive can be listed without
+writing plaintext to disk:
+
+```bash
+age --decrypt \
+  --identity "$HOME/.ssh/0al-platform-canary" \
+  "$HOME/Backups/0AL/Platform/$backup_id.tar.age" |
+  tar --list --gzip --file -
+```
+
+Do not commit the encrypted payload or its private export report to this public
+repository. Keep at least one encrypted copy outside the VPS. Deleting the VPS
+before this step leaves no independent recovery copy.
 
 ### Canary, reboot, replay, and rollback
+
+Host reboot remains an explicit operator-confirmed action rather than part of
+the backup script. This prevents a successful backup command from unexpectedly
+rebooting production. The reproducible sequence is: complete the bounded backup
+cycle and encrypted off-host copy, run a fresh canary, explicitly reboot, then
+run strict recovery, the post-reboot probe, and replay the identical canary.
+Retain the canonical evidence filenames shown below so the combined sign-off
+gate can verify causal order.
 
 Use an open review PR and a workspace-bound, queue-safe
 `review_status_execute` request. Run the existing canary through the public TLS

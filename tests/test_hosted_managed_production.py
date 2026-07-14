@@ -142,14 +142,14 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
 
 
 class HostedManagedRuntimeBackupTests(unittest.TestCase):
-    def test_runbook_backup_id_matches_runtime_contract(self) -> None:
+    def test_runbook_uses_bounded_backup_cycle_with_valid_id_contract(self) -> None:
         runbook = (
             Path(__file__).resolve().parents[1]
             / "docs"
             / "hosted-managed-operations.md"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            'backup_id="production-$(date -u +%Y%m%dt%H%M%Sz)"',
+            "scripts/hosted_managed_production_backup_cycle.py",
             runbook,
         )
         self.assertIsNotNone(

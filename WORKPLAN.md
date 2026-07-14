@@ -125,12 +125,17 @@ Completed rollout evidence:
 - [x] Run an initial public-TLS `review_status_execute` rollout canary, verify
   the authoritative report digest, and prove immediate replay preserves attempt
   `1`. This checkpoint is not reused as the causally ordered sign-off canary.
+- [x] Automate the fail-closed production backup/isolated restore-smoke cycle
+  with guaranteed runtime restart, and add streaming `age` off-host export that
+  never writes a plaintext archive to the operator machine.
 
 Remaining sign-off sequence:
 
 1. Capture a fresh preflight and pre-reboot probe while the queue is drained.
-2. Produce a private PostgreSQL/artifact backup, copy it to encrypted off-host
-   storage, and pass isolated restore smoke without restoring over production.
+2. Use `hosted_managed_production_backup_cycle.py`, then
+   `hosted_managed_offsite_backup.py`, to produce a private
+   PostgreSQL/artifact backup, pass isolated restore smoke without restoring
+   over production, and retain an encrypted copy outside the VPS.
 3. Run a fresh public-TLS canary after restore smoke, then reboot the host.
 4. After reboot, verify all four services, PostgreSQL queue state, and worker
    heartbeat; run strict recovery and capture the post-reboot probe.

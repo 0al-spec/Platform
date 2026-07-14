@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import io
+from pathlib import Path
+import tempfile
+import textwrap
+import unittest
+
+from scripts import hosted_managed_offsite_backup as offsite
+
+
+PLAINTEXT_ARCHIVE = b"private hosted backup stream"
+
+
+class OffsiteBackupTests(unittest.TestCase):
+    def executable(self, root: Path, name: str, source: str) -> Path:
+        path = root / name
+        path.write_text(textwrap.dedent(source).lstrip(), encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def fixture(self, root: Path) -> dict:
+        identity = root / "identity"
+        identity.write_text("not-a-real-private-key", encoding="utf-8")
+        identity.chmod(0o600)
+        recipient = root / "recipient.pub"
+        recipient.write_text("ssh-ed25519 public-test", encoding="utf-8")
+        ssh = self.executable(
+            root,
+            "fake-ssh",
+            f"""
+            #!/usr/bin/env python3
+            import sys
+            if "tar" in sys.argv:
+                sys.stdout.buffer.write({PLAINTEXT_ARCHIVE!r})
+            """,
+        )
+        age = self.executable(
+            root,
+            "fake-age",
+            """
+            #!/usr/bin/env python3
+            from pathlib import Path
+            import sys
+            output = Path(sys.argv[sys.argv.index("--output") + 1])
+            output.write_bytes(b"age-encryption.org/v1" + sys.stdin.buffer.read()[::-1])
+            """,
+        )
+        return {
+            "backup_id": "production-20260714t120000z",
+            "ssh_target": "root@managed.example.test",
+            "ssh_identity": identity,
+            "age_recipient_file": recipient,
+            "output_dir": root / "encrypted",
+            "ssh_bin": str(ssh),
+            "age_bin": str(age),
+        }
+
+    def test_streams_directly_to_age_and_writes_public_safe_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            report = offsite.export_offsite_backup(**self.fixture(root))
+
+            output = root / "encrypted" / "production-20260714t120000z.tar.age"
+            self.assertTrue(report["ok"])
+            self.assertEqual(
+                report["plaintext_tar_stream_sha256"],
+                hashlib.sha256(PLAINTEXT_ARCHIVE).hexdigest(),
+            )
+            self.assertTrue(output.read_bytes().startswith(b"age-encryption.org/v1"))
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(any(path.suffix == ".tar" for path in root.rglob("*")))
+            self.assertNotIn(temp_dir, str(report))
+            self.assertNotIn("managed.example.test", str(report))
+
+    def test_ssh_option_terminator_precedes_destination(self) -> None:
+        prefix = offsite._ssh_prefix(
+            ssh_bin="ssh",
+            ssh_target="root@managed.example.test",
+            ssh_identity=Path("/private/key"),
+        )
+        self.assertEqual(prefix[-2:], ["--", "root@managed.example.test"])
+
+    def test_cli_refuses_report_path_that_would_overwrite_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            archive = output_dir / "production-20260714t120000z.tar.age"
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+                SystemExit
+            ) as raised:
+                offsite.main(
+                    [
+                        "--backup-id",
+                        "production-20260714t120000z",
+                        "--ssh-target",
+                        "root@managed.example.test",
+                        "--ssh-identity",
+                        "/private/key",
+                        "--age-recipient-file",
+                        "/public/key",
+                        "--output-dir",
+                        str(output_dir),
+                        "--output",
+                        str(archive),
+                    ]
+                )
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_refuses_overwrite_and_unsafe_identifiers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture = self.fixture(root)
+            offsite.export_offsite_backup(**fixture)
+            with self.assertRaisesRegex(
+                offsite.OffsiteBackupError, "already exists"
+            ):
+                offsite.export_offsite_backup(**fixture)
+            fixture["backup_id"] = "../backup"
+            with self.assertRaisesRegex(offsite.OffsiteBackupError, "invalid"):
+                offsite.export_offsite_backup(**fixture)
+
+    def test_failed_age_removes_partial_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture = self.fixture(root)
+            fixture["age_bin"] = str(
+                self.executable(
+                    root,
+                    "failing-age",
+                    """
+                    #!/usr/bin/env python3
+                    from pathlib import Path
+                    import sys
+                    output = Path(sys.argv[sys.argv.index("--output") + 1])
+                    output.write_bytes(b"partial")
+                    raise SystemExit(1)
+                    """,
+                )
+            )
+            with self.assertRaisesRegex(offsite.OffsiteBackupError, "age encryption"):
+                offsite.export_offsite_backup(**fixture)
+            self.assertEqual(list((root / "encrypted").iterdir()), [])
+
+
+if __name__ == "__main__":
+    unittest.main()
