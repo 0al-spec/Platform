@@ -32,8 +32,36 @@ class OffsiteBackupTests(unittest.TestCase):
             "fake-ssh",
             f"""
             #!/usr/bin/env python3
+            import json
             import sys
-            if "tar" in sys.argv:
+            if any(value.endswith("backup-report.json") for value in sys.argv):
+                print(json.dumps({{
+                    "artifact_kind": "platform_hosted_managed_runtime_backup_report",
+                    "contract_ref": "platform.hosted-managed.runtime-backup.v1",
+                    "ok": True,
+                    "backup_id": "production-20260714t120000z",
+                    "summary": {{"status": "backup_ready"}},
+                }}))
+            elif any(
+                value.endswith("restore-smoke-report.json") for value in sys.argv
+            ):
+                print(json.dumps({{
+                    "artifact_kind": (
+                        "platform_hosted_managed_runtime_restore_smoke_report"
+                    ),
+                    "contract_ref": (
+                        "platform.hosted-managed.runtime-restore-smoke.v1"
+                    ),
+                    "ok": True,
+                    "backup_id": "production-20260714t120000z",
+                    "summary": {{
+                        "status": "restore_smoke_passed",
+                        "database_row_counts_verified": True,
+                        "artifact_inventory_verified": True,
+                        "temporary_database_removed": True,
+                    }},
+                }}))
+            elif "tar" in sys.argv:
                 sys.stdout.buffer.write({PLAINTEXT_ARCHIVE!r})
             """,
         )
@@ -140,6 +168,56 @@ class OffsiteBackupTests(unittest.TestCase):
                 )
             )
             with self.assertRaisesRegex(offsite.OffsiteBackupError, "age encryption"):
+                offsite.export_offsite_backup(**fixture)
+            self.assertEqual(list((root / "encrypted").iterdir()), [])
+
+    def test_failed_restore_smoke_report_blocks_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture = self.fixture(root)
+            fixture["ssh_bin"] = str(
+                self.executable(
+                    root,
+                    "failed-restore-ssh",
+                    """
+                    #!/usr/bin/env python3
+                    import json
+                    import sys
+                    if any(
+                        value.endswith("backup-report.json") for value in sys.argv
+                    ):
+                        print(json.dumps({
+                            "artifact_kind": (
+                                "platform_hosted_managed_runtime_backup_report"
+                            ),
+                            "contract_ref": (
+                                "platform.hosted-managed.runtime-backup.v1"
+                            ),
+                            "ok": True,
+                            "backup_id": "production-20260714t120000z",
+                            "summary": {"status": "backup_ready"},
+                        }))
+                    elif any(
+                        value.endswith("restore-smoke-report.json")
+                        for value in sys.argv
+                    ):
+                        print(json.dumps({
+                            "artifact_kind": (
+                                "platform_hosted_managed_runtime_restore_smoke_report"
+                            ),
+                            "contract_ref": (
+                                "platform.hosted-managed.runtime-restore-smoke.v1"
+                            ),
+                            "ok": False,
+                            "backup_id": "production-20260714t120000z",
+                            "summary": {"status": "restore_smoke_failed"},
+                        }))
+                    """,
+                )
+            )
+            with self.assertRaisesRegex(
+                offsite.OffsiteBackupError, "restore-smoke report is not ready"
+            ):
                 offsite.export_offsite_backup(**fixture)
             self.assertEqual(list((root / "encrypted").iterdir()), [])
 

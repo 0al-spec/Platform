@@ -27,6 +27,7 @@ SSH_TARGET_PATTERN = re.compile(
 )
 MINIMUM_HOST_PYTHON = (3, 12)
 MAXIMUM_HOST_PYTHON = (3, 15)
+MAXIMUM_REMOTE_REPORT_BYTES = 16 * 1024 * 1024
 
 
 class OffsiteBackupError(RuntimeError):
@@ -84,17 +85,98 @@ def _preflight_remote_backup(
         "-d",
         backup_dir,
         "-a",
+        "!",
+        "-L",
+        backup_dir,
+        "-a",
         "-f",
+        f"{backup_dir}/backup-report.json",
+        "-a",
+        "!",
+        "-L",
         f"{backup_dir}/backup-report.json",
         "-a",
         "-f",
         f"{backup_dir}/restore-smoke-report.json",
+        "-a",
+        "!",
+        "-L",
+        f"{backup_dir}/restore-smoke-report.json",
     ]
-    completed = runner(command, capture_output=True, text=True, check=False)
+    completed = runner(
+        command, capture_output=True, text=True, check=False, timeout=30
+    )
     if completed.returncode != 0:
         raise OffsiteBackupError(
             "remote backup or isolated restore-smoke evidence is unavailable"
         )
+    backup_report = _load_remote_report(
+        ssh_prefix=ssh_prefix,
+        report_path=f"{backup_dir}/backup-report.json",
+        runner=runner,
+        label="backup",
+    )
+    restore_report = _load_remote_report(
+        ssh_prefix=ssh_prefix,
+        report_path=f"{backup_dir}/restore-smoke-report.json",
+        runner=runner,
+        label="restore smoke",
+    )
+    backup_summary = backup_report.get("summary")
+    if (
+        backup_report.get("artifact_kind")
+        != "platform_hosted_managed_runtime_backup_report"
+        or backup_report.get("contract_ref")
+        != "platform.hosted-managed.runtime-backup.v1"
+        or backup_report.get("ok") is not True
+        or backup_report.get("backup_id") != backup_id
+        or not isinstance(backup_summary, dict)
+        or backup_summary.get("status") != "backup_ready"
+    ):
+        raise OffsiteBackupError("remote backup report is not ready")
+    restore_summary = restore_report.get("summary")
+    if (
+        restore_report.get("artifact_kind")
+        != "platform_hosted_managed_runtime_restore_smoke_report"
+        or restore_report.get("contract_ref")
+        != "platform.hosted-managed.runtime-restore-smoke.v1"
+        or restore_report.get("ok") is not True
+        or restore_report.get("backup_id") != backup_id
+        or not isinstance(restore_summary, dict)
+        or restore_summary.get("status") != "restore_smoke_passed"
+        or restore_summary.get("database_row_counts_verified") is not True
+        or restore_summary.get("artifact_inventory_verified") is not True
+        or restore_summary.get("temporary_database_removed") is not True
+    ):
+        raise OffsiteBackupError("remote restore-smoke report is not ready")
+
+
+def _load_remote_report(
+    *,
+    ssh_prefix: list[str],
+    report_path: str,
+    runner: Runner,
+    label: str,
+) -> dict[str, Any]:
+    completed = runner(
+        [*ssh_prefix, "cat", report_path],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if (
+        completed.returncode != 0
+        or len(completed.stdout.encode("utf-8")) > MAXIMUM_REMOTE_REPORT_BYTES
+    ):
+        raise OffsiteBackupError(f"remote {label} report is unavailable")
+    try:
+        report = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise OffsiteBackupError(f"remote {label} report is invalid") from exc
+    if not isinstance(report, dict):
+        raise OffsiteBackupError(f"remote {label} report must be an object")
+    return report
 
 
 def _stream_encrypted_archive(
