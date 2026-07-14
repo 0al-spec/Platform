@@ -138,16 +138,17 @@ Completed rollout evidence:
   recovery and the post-reboot probe, then replay the identical read-only
   request with the same identity, output refs, and attempt `1`.
 
-Remaining sign-off sequence:
+Completed sign-off sequence:
 
-1. Point a controlled SpecSpace hosted profile at the service and pass product
-   smoke with `backend_managed_ready`, while keeping the deployment allowlist at
-   `review_status_execute` only.
-2. Audit a drained queue, exercise rollback to SpecSpace read-only mode, verify
-   no active jobs or locks, and retain rollback evidence.
-3. Run the combined production sign-off gate over the causally ordered
-   preflight, probes, backup/restore, canary, recovery, replay, queue audit,
-   hosted SpecSpace smoke, and rollback smoke evidence.
+- [x] Point a controlled SpecSpace hosted profile at the service and pass
+  product smoke with `hosted_managed_ready`, while keeping the deployment
+  allowlist at `review_status_execute` only.
+- [x] Audit a drained queue, exercise rollback to SpecSpace read-only mode,
+  verify no active jobs or locks, stop the worker, and retain rollback evidence.
+- [x] Run the combined production sign-off gate over the causally ordered
+  preflight, probes, backup/restore, canary, recovery, replay, queue audit,
+  hosted SpecSpace smoke, and rollback smoke evidence. The resulting status is
+  `production_canary_signed_off` with no diagnostics.
 
 Exit criteria:
 

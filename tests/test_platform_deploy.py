@@ -36,6 +36,7 @@ def _specspace_smoke_workspace_payload(
         if enabled_operation_count is not None
         else (0 if readiness_status == "read_only" else 1)
     )
+    hosted = readiness_status.startswith("hosted_managed")
     return {
         "workspace": {"id": "team-decision-log"},
         "source": {
@@ -48,6 +49,17 @@ def _specspace_smoke_workspace_payload(
             "executor": {
                 "enabled": readiness_status != "read_only",
                 "configured": readiness_status != "read_only",
+                "transport": "hosted_queue"
+                if hosted
+                else "local_subprocess"
+                if readiness_status != "read_only"
+                else "none",
+                "hosted_enabled": hosted,
+                "hosted_service_configured": hosted,
+                "hosted_service_reachable": hosted,
+                "hosted_enabled_operation_ids": ["review_status_execute"]
+                if hosted
+                else None,
             },
             "operations": {
                 "registered": 12,
@@ -297,6 +309,95 @@ class PlatformDeployTests(unittest.TestCase):
             "specspace_managed_mode_status",
             {diagnostic["code"] for diagnostic in payload["diagnostics"]},
         )
+
+    def test_specspace_product_smoke_cli_accepts_hosted_managed_profile(self) -> None:
+        workspace_payload = _specspace_smoke_workspace_payload(
+            readiness_status="hosted_managed_ready",
+            readiness_mode="hosted_managed",
+        )
+        with _SmokeServer(workspace_payload) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--expect-managed-mode",
+                "hosted_managed_ready",
+                "--format",
+                "json",
+                "--no-write-report",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["summary"]["ok"])
+        checks = {item["id"]: item for item in payload["checks"]}
+        self.assertEqual(checks["specspace_managed_mode_status"]["status"], "passed")
+        self.assertEqual(checks["specspace_managed_mode_mode"]["status"], "passed")
+
+    def test_specspace_product_smoke_cli_accepts_selected_workspace_id(self) -> None:
+        workspace_payload = _specspace_smoke_workspace_payload()
+        workspace_payload.pop("workspace")
+        workspace_payload["selected_workspace_id"] = "team-decision-log"
+        with _SmokeServer(workspace_payload) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--format",
+                "json",
+                "--no-write-report",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["summary"]["ok"])
+
+    def test_specspace_product_smoke_cli_rejects_spoofed_hosted_ready_label(
+        self,
+    ) -> None:
+        workspace_payload = _specspace_smoke_workspace_payload(
+            readiness_status="hosted_managed_ready",
+            readiness_mode="hosted_managed",
+        )
+        workspace_payload["managed_mode_readiness"]["executor"].update(
+            {
+                "configured": False,
+                "hosted_service_reachable": False,
+                "hosted_enabled_operation_ids": [],
+            }
+        )
+        with _SmokeServer(workspace_payload) as base_url:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                base_url,
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--expect-managed-mode",
+                "hosted_managed_ready",
+                "--format",
+                "json",
+                "--no-write-report",
+            )
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        diagnostic_ids = {item["code"] for item in payload["diagnostics"]}
+        self.assertIn("specspace_hosted_executor_ready", diagnostic_ids)
+        self.assertIn("specspace_hosted_operation_allowlist_enabled", diagnostic_ids)
 
     def test_specspace_product_smoke_cli_blocks_enabled_operations_in_read_only(
         self,

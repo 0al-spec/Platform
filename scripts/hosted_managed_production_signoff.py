@@ -132,6 +132,30 @@ def _write_authority_findings(value: Any, *, path: str = "$") -> list[str]:
     return findings
 
 
+def _report_ready(label: str, report: dict[str, Any]) -> bool:
+    summary = report.get("summary")
+    summary = summary if isinstance(summary, dict) else {}
+    if label in {"canary", "replay_canary"}:
+        return (
+            summary.get("ok") is True
+            and summary.get("status") == "hosted_managed_canary_passed"
+        )
+    if label == "recovery":
+        return (
+            summary.get("status") == "hosted_managed_operation_queue_recovered"
+            and summary.get("strict") is True
+            and summary.get("policy_safe") is True
+            and summary.get("preflight_blocked") is False
+        )
+    if label in {"hosted_specspace_smoke", "rollback_specspace_smoke"}:
+        return (
+            summary.get("ok") is True
+            and summary.get("failed_check_count") == 0
+            and summary.get("diagnostic_count") == 0
+        )
+    return report.get("ok") is True
+
+
 def _evidence_timestamps(
     reports: dict[str, dict[str, Any]],
     *,
@@ -205,7 +229,7 @@ def build_signoff(
         report = reports.get(label, {})
         if report.get("artifact_kind") != expected_kind:
             diagnostics.append(f"{label}_artifact_kind_invalid")
-        if report.get("ok") is not True:
+        if not _report_ready(label, report):
             diagnostics.append(f"{label}_not_ready")
         if _write_authority_findings(report):
             diagnostics.append(f"{label}_write_authority_expanded")
@@ -291,7 +315,7 @@ def build_signoff(
 
     hosted_smoke = reports.get("hosted_specspace_smoke", {}).get("summary")
     hosted_smoke = hosted_smoke if isinstance(hosted_smoke, dict) else {}
-    if hosted_smoke.get("expected_managed_mode") != "backend_managed_ready":
+    if hosted_smoke.get("expected_managed_mode") != "hosted_managed_ready":
         diagnostics.append("hosted_specspace_mode_not_ready")
     rollback_smoke = reports.get("rollback_specspace_smoke", {}).get("summary")
     rollback_smoke = rollback_smoke if isinstance(rollback_smoke, dict) else {}
@@ -332,7 +356,7 @@ def build_signoff(
         "evidence": {
             label: {
                 "artifact_kind": report.get("artifact_kind"),
-                "ok": report.get("ok"),
+                "ok": _report_ready(label, report),
             }
             for label, report in sorted(reports.items())
         },

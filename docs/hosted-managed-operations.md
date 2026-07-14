@@ -754,7 +754,10 @@ for runtime UID 1000, in which case `install -o 1000` can interpret `1000` as a
 missing user name and fail even though numeric container ownership is correct.
 
 Verify SpecSpace in hosted mode with `specspace product-smoke` and
-`--expect-managed-mode backend_managed_ready`. Reboot the host, rerun strict
+`--expect-managed-mode hosted_managed_ready`. This expects the SpecSpace
+readiness pair `status=hosted_managed_ready` and `mode=hosted_managed`; the
+separate `backend_managed_ready` profile is reserved for the local subprocess
+executor. Reboot the host, rerun strict
 recovery, create `probe-after-reboot.json`, and submit the identical canary
 request again as `replay-canary.json`. The replay must preserve request id,
 idempotency key, output refs and `attempt=1`.
