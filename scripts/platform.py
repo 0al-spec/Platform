@@ -512,6 +512,10 @@ PRODUCT_CANDIDATE_APPROVAL_DECISION_KIND = "candidate_approval_decision"
 PRODUCT_CANDIDATE_APPROVAL_DECISION_CONTRACT_REF = (
     "specgraph.idea-to-spec.candidate-approval-decision.v0.1"
 )
+PRODUCT_CANDIDATE_APPROVAL_DECISION_PROPOSAL_ID = "0157"
+PRODUCT_CANDIDATE_APPROVAL_OPERATOR_REF_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.:@-]{2,119}$"
+)
 PRODUCT_CANDIDATE_APPROVAL_EXECUTION_REPORT_KIND = (
     "platform_candidate_approval_execution_report"
 )
@@ -622,6 +626,23 @@ PRODUCT_CANDIDATE_APPROVAL_BOUNDARY = {
     "may_open_pull_request": False,
     "may_publish_read_model": False,
     "git_service_promotion_started": False,
+}
+PRODUCT_CANDIDATE_APPROVAL_DECISION_BOUNDARY = {
+    **PRODUCT_CANDIDATE_APPROVAL_BOUNDARY,
+    "agent_may_recommend": True,
+    "agent_may_approve": False,
+    "git_service_execution_remains_separate": True,
+    "review_merge_required_for_canonical_acceptance": True,
+    "read_model_publish_requires_merged_review": True,
+    "may_merge_review": False,
+    "may_execute_git_service_operation": False,
+}
+PRODUCT_CANDIDATE_APPROVAL_PRIVACY_BOUNDARY = {
+    "raw_intent_text_published": False,
+    "raw_model_output_published": False,
+    "raw_operator_note_published": False,
+    "raw_prompt_published": False,
+    "local_paths_published": False,
 }
 PRODUCT_CANDIDATE_PROMOTION_AUTHORITY_FALSE_FIELDS = (
     "may_execute_prompt_agent",
@@ -9548,7 +9569,10 @@ def load_product_candidate_approval_artifact(
         "artifact_kind": artifact_kind,
         "expected_artifact_kind": expected_kind,
         "contract_ref": payload.get("contract_ref"),
+        "proposal_id": payload.get("proposal_id"),
         "sha256": file_sha256(path),
+        "readiness": nested_mapping(payload, "readiness"),
+        "summary": nested_mapping(payload, "summary"),
     }
     return payload, status, diagnostics
 
@@ -9653,6 +9677,17 @@ def product_candidate_approval_latest_intent(
             str(item.get("id") or ""),
         ),
     )[-1]
+
+
+def product_candidate_approval_operator_ref(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    operator_ref = value.strip()
+    if operator_ref.startswith("operator://"):
+        operator_ref = f"operator:{operator_ref.removeprefix('operator://')}"
+    if not PRODUCT_CANDIDATE_APPROVAL_OPERATOR_REF_RE.fullmatch(operator_ref):
+        return None
+    return operator_ref
 
 
 def product_candidate_approval_expected_refs(
@@ -9770,6 +9805,17 @@ def product_candidate_approval_intent_state_diagnostics(
                     message=f"selected intent must include `{field}`",
                 )
             )
+    if product_candidate_approval_operator_ref(selected_intent.get("requested_by")) is None:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_operator_ref_not_public_safe",
+                subject="approval_intents.intents[].requested_by",
+                message=(
+                    "selected intent must use a stable public-safe operator reference"
+                ),
+            )
+        )
     if selected_intent.get("status") != "requested":
         diagnostics.append(
             Diagnostic(
@@ -10388,6 +10434,17 @@ def build_product_candidate_approval_gate_report(
         diagnostics.extend(
             product_candidate_approval_active_candidate_diagnostics(active_candidate)
         )
+    else:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_approval_active_candidate_missing",
+                subject="active_candidate",
+                message=(
+                    "candidate approval materialization requires an active candidate source"
+                ),
+            )
+        )
     if repair_session is not None:
         diagnostics.extend(
             product_candidate_approval_repair_session_diagnostics(
@@ -10628,9 +10685,14 @@ def product_candidate_approval_gate_report_from_args(
         base_dir=specgraph_dir,
         default_rel=PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
     )
+    default_active_candidate_path = specgraph_dir / "runs" / (
+        "active_idea_to_spec_candidate.json"
+    )
     active_candidate_path = (
         input_path_arg(args.active_candidate, base_dir=specgraph_dir)
         if args.active_candidate
+        else default_active_candidate_path
+        if default_active_candidate_path.is_file()
         else None
     )
     promotion_gate_path = input_path_arg_or_default(
@@ -10965,6 +11027,37 @@ def product_candidate_approval_gate_report_ref(
     return relative_gate_path.as_posix()
 
 
+def product_candidate_approval_gate_source_artifact(
+    *,
+    gate_report: dict[str, Any],
+    artifact_key: str,
+    source_ref_key: str,
+) -> dict[str, Any]:
+    source_status = next(
+        (
+            item
+            for item in (
+                gate_report.get("source_artifacts")
+                if isinstance(gate_report.get("source_artifacts"), list)
+                else []
+            )
+            if isinstance(item, dict)
+            if item.get("key") == artifact_key and item.get("available") is True
+        ),
+        {},
+    )
+    source_ref = nested_mapping(gate_report, "source_refs").get(source_ref_key)
+    return {
+        "artifact_kind": source_status.get("artifact_kind"),
+        "contract_ref": source_status.get("contract_ref"),
+        "proposal_id": source_status.get("proposal_id"),
+        "source_ref": source_ref,
+        "sha256": source_status.get("sha256"),
+        "readiness": nested_mapping(source_status, "readiness"),
+        "summary": nested_mapping(source_status, "summary"),
+    }
+
+
 def build_candidate_approval_decision(
     *,
     gate_report_path: Path,
@@ -10984,15 +11077,30 @@ def build_candidate_approval_decision(
         gate_report_path=gate_report_path,
         gate_report=gate_report,
     )
+    active_candidate_source = product_candidate_approval_gate_source_artifact(
+        gate_report=gate_report,
+        artifact_key="active_idea_to_spec_candidate",
+        source_ref_key="active_candidate",
+    )
+    promotion_gate_source = product_candidate_approval_gate_source_artifact(
+        gate_report=gate_report,
+        artifact_key="idea_to_spec_promotion_gate",
+        source_ref_key="promotion_gate",
+    )
+    operator_ref = product_candidate_approval_operator_ref(
+        selected_intent.get("requested_by")
+    )
+    reason = selected_intent.get("reason") or (
+        "Approve review-ready candidate promotion."
+    )
     source_artifacts = {
+        "active_candidate": active_candidate_source,
+        "promotion_gate": promotion_gate_source,
         "candidate_approval_gate": gate_report_ref,
         "candidate_approval_intent": selected_intent.get("id"),
         "repair_session": gate_source_refs.get("repair_session")
         or selected_intent.get("repair_session_ref")
         or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_session"],
-        "promotion_gate": gate_source_refs.get("promotion_gate")
-        or selected_intent.get("promotion_gate_ref")
-        or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
         "repaired_handoff": gate_source_refs.get("repaired_handoff"),
         "platform_repair_execution": gate_source_refs.get("repair_execution")
         or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["repair_execution"],
@@ -11002,6 +11110,7 @@ def build_candidate_approval_decision(
     return {
         "artifact_kind": PRODUCT_CANDIDATE_APPROVAL_DECISION_KIND,
         "schema_version": 1,
+        "proposal_id": PRODUCT_CANDIDATE_APPROVAL_DECISION_PROPOSAL_ID,
         "contract_ref": PRODUCT_CANDIDATE_APPROVAL_DECISION_CONTRACT_REF,
         "generated_at": utc_now_iso(),
         "gate_report_ref": gate_report_ref,
@@ -11017,44 +11126,53 @@ def build_candidate_approval_decision(
         },
         "candidate": {
             "candidate_id": candidate_id,
-            "display_name": workspace_id.replace("-", " ").title(),
-            "active_candidate_ref": gate_source_refs.get("active_candidate")
+            "display_name": nested_mapping(gate_report, "workspace_binding").get(
+                "display_name"
+            )
+            or workspace_id.replace("-", " ").title(),
+            "active_candidate_ref": active_candidate_source.get("source_ref")
             or "runs/active_idea_to_spec_candidate.json",
-            "promotion_gate_ref": selected_intent.get("promotion_gate_ref")
+            "promotion_gate_ref": promotion_gate_source.get("source_ref")
             or PRODUCT_CANDIDATE_APPROVAL_DEFAULT_INPUTS["promotion_gate"],
         },
         "decision": {
             "requested_state": "approved",
             "state": "approved",
-            "operator_ref": selected_intent.get("requested_by"),
-            "reason": selected_intent.get("reason")
-            or "Approve review-ready candidate promotion.",
+            "approved_transition": (
+                "candidate_review_requested -> promotion_request_approved"
+            ),
+            "operator_ref": operator_ref,
+            "reason": reason,
             "conditions": [],
         },
         "readiness": {
             "ready": True,
-            "review_state": "candidate_approval_ready",
+            "review_state": "promotion_request_approved",
             "blocked_by": [],
+            "next_artifact": "Platform graph-repository promotion-request",
         },
         "promotion_request": {
             "platform_artifact_kind": "platform_graph_repository_promotion_request",
+            "path_argument": "--path",
             "paths": paths,
             "requires_git_service_execution": True,
         },
         "source_artifacts": {
             key: value for key, value in source_artifacts.items() if value is not None
         },
-        "authority_boundary": {
-            "may_execute_prompt_agent": False,
-            "may_mutate_candidate_source_artifacts": False,
-            "may_mutate_canonical_specs": False,
-            "may_write_ontology_package": False,
-            "may_write_ontology_lockfile": False,
-            "may_mark_candidate_graph_accepted": False,
-            "may_create_branch_or_commit": False,
-            "may_open_pull_request": False,
-            "may_publish_read_model": False,
-            "may_execute_git_service_operation": False,
+        "evidence_refs": [active_candidate_source, promotion_gate_source],
+        "authority_boundary": PRODUCT_CANDIDATE_APPROVAL_DECISION_BOUNDARY,
+        "privacy_boundary": PRODUCT_CANDIDATE_APPROVAL_PRIVACY_BOUNDARY,
+        "findings": [],
+        "warnings": [],
+        "summary": {
+            "status": "promotion_request_approved",
+            "requested_state": "approved",
+            "effective_state": "approved",
+            "candidate_id": candidate_id,
+            "finding_count": 0,
+            "warning_count": 0,
+            "promotion_path_count": len(paths),
         },
     }
 
@@ -12626,13 +12744,19 @@ def product_candidate_promotion_approval_ref_path(
     approval_decision_path: Path,
     raw_ref: Any,
 ) -> Path | None:
+    if isinstance(raw_ref, dict):
+        raw_ref = raw_ref.get("source_ref")
     if not isinstance(raw_ref, str) or not raw_ref.strip():
         return None
     ref_path = Path(raw_ref)
     if ref_path.is_absolute():
         return ref_path.resolve()
     decision_dir = approval_decision_path.parent.resolve()
-    workspace_root = decision_dir.parent if decision_dir.name == "runs" else decision_dir
+    workspace_root = decision_dir
+    for candidate_parent in (decision_dir, *decision_dir.parents):
+        if candidate_parent.name == "runs":
+            workspace_root = candidate_parent.parent
+            break
     if ref_path.parts and ref_path.parts[0] == "runs":
         return (workspace_root / ref_path).resolve()
     return (decision_dir / ref_path).resolve()
@@ -12714,6 +12838,15 @@ def product_candidate_promotion_plan_source_diagnostics(
                         "candidate approval source refs must resolve inside the "
                         "execution plan runs_dir"
                     ),
+                )
+            )
+        elif not ref_path.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_source_ref_missing",
+                    subject=subject,
+                    message="candidate approval source ref must identify an existing file",
                 )
             )
     return diagnostics

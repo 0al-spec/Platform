@@ -2307,6 +2307,8 @@ class PlatformCliTests(unittest.TestCase):
         promotion_gate = {
             "artifact_kind": "idea_to_spec_promotion_gate",
             "schema_version": 1,
+            "proposal_id": "0154",
+            "contract_ref": "specgraph.idea-to-spec.promotion-gate.v0.1",
             "canonical_mutations_allowed": False,
             "tracked_artifacts_written": False,
             "authority_boundary": {
@@ -2318,6 +2320,57 @@ class PlatformCliTests(unittest.TestCase):
             "summary": {
                 "workspace_id": workspace_id,
                 "candidate_id": candidate_id,
+                "promotion_path_count": 1,
+            },
+            "readiness": {
+                "ready": True,
+                "review_state": "ready_for_platform_promotion_request",
+                "blocked_by": [],
+            },
+            "promotion_request": {
+                "platform_artifact_kind": (
+                    "platform_graph_repository_promotion_request"
+                ),
+                "path_argument": "--path",
+                "paths": ["specs/nodes/SG-SPEC-CANDIDATE.yaml"],
+            },
+        }
+        active_candidate = {
+            "artifact_kind": "active_idea_to_spec_candidate",
+            "schema_version": 1,
+            "proposal_id": "0155",
+            "contract_ref": "specgraph.idea-to-spec.active-candidate-source.v0.1",
+            "canonical_mutations_allowed": False,
+            "tracked_artifacts_written": False,
+            "source_mode": "active_candidate",
+            "candidate": {
+                "authority_profile": "workspace_owner_controlled",
+                "candidate_id": candidate_id,
+                "display_name": "Idea Alpha",
+                "governance_profile": "product_workspace",
+                "public_route": f"/{workspace_id}",
+                "target_repository_role": "product_spec_workspace",
+                "workflow_lane": "product_idea_to_spec",
+            },
+            "source_artifacts": {
+                "promotion_gate": {
+                    "artifact_kind": "idea_to_spec_promotion_gate",
+                    "contract_ref": (
+                        "specgraph.idea-to-spec.promotion-gate.v0.1"
+                    ),
+                    "proposal_id": "0154",
+                    "source_ref": "runs/idea_to_spec_promotion_gate.json",
+                    "readiness": {"ready": True},
+                }
+            },
+            "readiness": {
+                "ready": True,
+                "review_state": "active_candidate_ready",
+                "blocked_by": [],
+            },
+            "summary": {
+                "candidate_id": candidate_id,
+                "status": "active_candidate_ready",
                 "promotion_path_count": 1,
             },
         }
@@ -2380,6 +2433,7 @@ class PlatformCliTests(unittest.TestCase):
         }
         artifacts = {
             "idea_to_spec_candidate_approval_intents.json": intent_state,
+            "active_idea_to_spec_candidate.json": active_candidate,
             "idea_to_spec_promotion_gate.json": promotion_gate,
             "platform_product_repair_rerun_execution_report.json": execution_report,
             "platform_product_repair_rerun_publication_report.json": publication_report,
@@ -3087,6 +3141,24 @@ real-idea-intake-from-entry-request:
         tmp_root.mkdir(parents=True, exist_ok=True)
         approval_path = tmp_root / "candidate_approval_decision.json"
         promotion_paths = paths or ["specs/nodes/SG-SPEC-CANDIDATE.yaml"]
+        source_paths = {
+            "active_candidate": "runs/active_idea_to_spec_candidate.json",
+            "candidate_approval_gate": (
+                "runs/platform_candidate_approval_intent_gate_report.json"
+            ),
+            "repair_session": "runs/idea_to_spec_repair_session.json",
+            "promotion_gate": "runs/idea_to_spec_promotion_gate.json",
+            "platform_repair_execution": (
+                "runs/platform_product_repair_rerun_execution_report.json"
+            ),
+            "platform_repair_publication": (
+                "runs/platform_product_repair_rerun_publication_report.json"
+            ),
+        }
+        for source_ref in source_paths.values():
+            source_path = tmp_root / source_ref
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_text("{}\n", encoding="utf-8")
         approval_path.write_text(
             json.dumps(
                 {
@@ -3136,16 +3208,27 @@ real-idea-intake-from-entry-request:
                         "requires_git_service_execution": True,
                     },
                     "source_artifacts": {
+                        "active_candidate": {
+                            "source_ref": source_paths["active_candidate"],
+                            "sha256": platform_module.file_sha256(
+                                tmp_root / source_paths["active_candidate"]
+                            ),
+                        },
                         "candidate_approval_gate": (
-                            "runs/platform_candidate_approval_intent_gate_report.json"
+                            source_paths["candidate_approval_gate"]
                         ),
-                        "repair_session": "runs/idea_to_spec_repair_session.json",
-                        "promotion_gate": "runs/idea_to_spec_promotion_gate.json",
+                        "repair_session": source_paths["repair_session"],
+                        "promotion_gate": {
+                            "source_ref": source_paths["promotion_gate"],
+                            "sha256": platform_module.file_sha256(
+                                tmp_root / source_paths["promotion_gate"]
+                            ),
+                        },
                         "platform_repair_execution": (
-                            "runs/platform_product_repair_rerun_execution_report.json"
+                            source_paths["platform_repair_execution"]
                         ),
                         "platform_repair_publication": (
-                            "runs/platform_product_repair_rerun_publication_report.json"
+                            source_paths["platform_repair_publication"]
                         ),
                     },
                     "authority_boundary": {
@@ -9466,8 +9549,21 @@ workspaces:
                 payload["contract_ref"],
                 "specgraph.idea-to-spec.candidate-approval-decision.v0.1",
             )
+            self.assertEqual(payload["proposal_id"], "0157")
             self.assertEqual(payload["decision"]["state"], "approved")
+            self.assertEqual(
+                payload["decision"]["approved_transition"],
+                "candidate_review_requested -> promotion_request_approved",
+            )
+            self.assertEqual(
+                payload["decision"]["operator_ref"],
+                "operator:specspace-local",
+            )
             self.assertTrue(payload["readiness"]["ready"])
+            self.assertEqual(
+                payload["readiness"]["review_state"],
+                "promotion_request_approved",
+            )
             self.assertEqual(payload["candidate"]["candidate_id"], "idea-alpha")
             self.assertEqual(
                 payload["promotion_request"]["paths"],
@@ -9479,6 +9575,32 @@ workspaces:
             self.assertFalse(payload["authority_boundary"]["may_open_pull_request"])
             self.assertFalse(
                 payload["authority_boundary"]["may_execute_git_service_operation"]
+            )
+            self.assertEqual(payload["findings"], [])
+            self.assertEqual(payload["warnings"], [])
+            self.assertEqual(
+                payload["summary"]["status"],
+                "promotion_request_approved",
+            )
+            self.assertEqual(
+                payload["source_artifacts"]["active_candidate"]["source_ref"],
+                "runs/active_idea_to_spec_candidate.json",
+            )
+            self.assertEqual(
+                payload["source_artifacts"]["active_candidate"]["sha256"],
+                platform_module.file_sha256(
+                    specgraph_dir / "runs/active_idea_to_spec_candidate.json"
+                ),
+            )
+            self.assertEqual(
+                payload["source_artifacts"]["promotion_gate"]["source_ref"],
+                "runs/idea_to_spec_promotion_gate.json",
+            )
+            self.assertEqual(
+                payload["source_artifacts"]["promotion_gate"]["sha256"],
+                platform_module.file_sha256(
+                    specgraph_dir / "runs/idea_to_spec_promotion_gate.json"
+                ),
             )
 
     def test_product_candidate_approval_approve_materializes_decision_and_report(
@@ -9555,6 +9677,40 @@ workspaces:
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
             self.assertFalse(payload["authority_boundary"]["mutates_canonical_specs"])
+
+    def test_product_candidate_approval_gate_rejects_private_operator_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_candidate_approval_artifacts(specgraph_dir)
+            intent_path = (
+                specgraph_dir / "runs/idea_to_spec_candidate_approval_intents.json"
+            )
+            intent_state = json.loads(intent_path.read_text(encoding="utf-8"))
+            intent_state["intents"][0]["requested_by"] = "/Users/operator/private"
+            intent_path.write_text(json.dumps(intent_state), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-candidate-approval",
+                "gate",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--workspace-id",
+                "idea-alpha",
+                "--path",
+                "specs/nodes/SG-SPEC-CANDIDATE.yaml",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {item["code"] for item in payload["diagnostics"]}
+        self.assertIn(
+            "product_candidate_approval_operator_ref_not_public_safe",
+            codes,
+        )
 
     def test_product_candidate_approval_approve_dry_run_does_not_write_decision(
         self,
@@ -9903,6 +10059,7 @@ workspaces:
             inputs_dir = specgraph_dir / "inputs"
             inputs_dir.mkdir()
             for filename in (
+                "active_idea_to_spec_candidate.json",
                 "idea_to_spec_repair_session.json",
                 "idea_to_spec_promotion_gate.json",
             ):
@@ -9910,6 +10067,31 @@ workspaces:
                     (specgraph_dir / "runs" / filename).read_text(encoding="utf-8"),
                     encoding="utf-8",
                 )
+            active_candidate_path = inputs_dir / "active_idea_to_spec_candidate.json"
+            active_candidate = json.loads(
+                active_candidate_path.read_text(encoding="utf-8")
+            )
+            active_candidate["source_artifacts"]["promotion_gate"]["source_ref"] = (
+                "inputs/idea_to_spec_promotion_gate.json"
+            )
+            active_candidate_path.write_text(
+                json.dumps(active_candidate),
+                encoding="utf-8",
+            )
+            repair_session_path = inputs_dir / "idea_to_spec_repair_session.json"
+            repair_session = json.loads(
+                repair_session_path.read_text(encoding="utf-8")
+            )
+            repair_session["source_artifacts"]["active_candidate"]["source_ref"] = (
+                "inputs/active_idea_to_spec_candidate.json"
+            )
+            repair_session["source_artifacts"]["promotion_gate"]["source_ref"] = (
+                "inputs/idea_to_spec_promotion_gate.json"
+            )
+            repair_session_path.write_text(
+                json.dumps(repair_session),
+                encoding="utf-8",
+            )
 
             result = self.run_cli(
                 "product-candidate-approval",
@@ -9918,6 +10100,8 @@ workspaces:
                 str(specgraph_dir),
                 "--workspace-id",
                 "idea-alpha",
+                "--active-candidate",
+                "inputs/active_idea_to_spec_candidate.json",
                 "--repair-session",
                 "inputs/idea_to_spec_repair_session.json",
                 "--promotion-gate",
@@ -9928,7 +10112,7 @@ workspaces:
                 "json",
             )
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout or result.stderr)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ready_to_materialize"])
         self.assertEqual(
@@ -10483,6 +10667,35 @@ workspaces:
             self.assertTrue(payload["dry_run"])
             self.assertEqual(payload["local_files_written"], [])
             self.assertFalse(output.exists())
+
+    def test_product_candidate_promotion_request_rejects_missing_source_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            plan_path = self.build_graph_repository_execution_plan(tmp_root)
+            approval_decision = self.write_candidate_approval_decision(tmp_root)
+            missing_source = (
+                tmp_root
+                / "runs/platform_product_repair_rerun_execution_report.json"
+            )
+            missing_source.unlink()
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(plan_path),
+                "--approval-decision",
+                str(approval_decision),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {item["code"] for item in payload["diagnostics"]}
+        self.assertIn("product_candidate_promotion_source_ref_missing", codes)
 
     def test_product_candidate_promotion_request_rejects_blocked_plan(
         self,

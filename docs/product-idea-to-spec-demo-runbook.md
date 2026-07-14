@@ -476,6 +476,13 @@ scripts/platform.py product-candidate-approval approve \
 Use the actual promotion paths from the repaired promotion gate, not the example
 path above.
 
+The resulting decision must use the SpecGraph v0.1 approval contract: proposal
+`0157`, review state `promotion_request_approved`, a public-safe operator ref,
+and digest-pinned `active_candidate` and `promotion_gate` source artifacts.
+Keep those source artifacts in any portable promotion review packet. Platform
+will reject the later promotion request when a selected source ref does not
+exist in the target checkout.
+
 ## 5. Promotion Request And Git Service Dry Run
 
 Only run these commands after `candidate_approval_decision.json` is fresh and
