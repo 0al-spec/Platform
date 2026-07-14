@@ -128,25 +128,24 @@ Completed rollout evidence:
 - [x] Automate the fail-closed production backup/isolated restore-smoke cycle
   with guaranteed runtime restart, and add streaming `age` off-host export that
   never writes a plaintext archive to the operator machine.
+- [x] Define a versioned three-tier backup-retention policy with validated
+  minimum copy counts, target ages, protected states, and disabled automatic
+  deletion.
+- [x] Run the causally ordered production backup drill: fresh probe, bounded
+  backup, isolated restore smoke, encrypted operator-local and iCloud copies,
+  and digest verification without a plaintext off-host archive.
+- [x] Reboot the production canary host, require a changed boot id, pass strict
+  recovery and the post-reboot probe, then replay the identical read-only
+  request with the same identity, output refs, and attempt `1`.
 
 Remaining sign-off sequence:
 
-1. Capture a fresh preflight and pre-reboot probe while the queue is drained.
-2. Use `hosted_managed_production_backup_cycle.py`, then
-   `hosted_managed_offsite_backup.py`, to produce a private
-   PostgreSQL/artifact backup, pass isolated restore smoke without restoring
-   over production, and retain an encrypted copy outside the VPS.
-3. Run a fresh public-TLS canary after restore smoke, then reboot the host.
-4. After reboot, verify all four services, PostgreSQL queue state, and worker
-   heartbeat; run strict recovery and capture the post-reboot probe.
-5. Replay the identical read-only request and require the same request id,
-   idempotency key, output refs, and attempt `1`.
-6. Point a controlled SpecSpace hosted profile at the service and pass product
+1. Point a controlled SpecSpace hosted profile at the service and pass product
    smoke with `backend_managed_ready`, while keeping the deployment allowlist at
    `review_status_execute` only.
-7. Audit a drained queue, exercise rollback to SpecSpace read-only mode, verify
+2. Audit a drained queue, exercise rollback to SpecSpace read-only mode, verify
    no active jobs or locks, and retain rollback evidence.
-8. Run the combined production sign-off gate over the causally ordered
+3. Run the combined production sign-off gate over the causally ordered
    preflight, probes, backup/restore, canary, recovery, replay, queue audit,
    hosted SpecSpace smoke, and rollback smoke evidence.
 
