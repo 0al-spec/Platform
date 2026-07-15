@@ -825,6 +825,24 @@ Do not replay the signed-off request as a new semantic probe. Its idempotency
 key must continue to resolve to the existing receipt. A fresh probe requires a
 new open review object, validated input evidence, and a new queue-safe request.
 
+### Next hosted rollout phases
+
+Proceed from the signed-off baseline in bounded stages:
+
+1. harden known CI timing/error-reporting flakes and keep backup/recovery
+   evidence current;
+2. retain bounded worker windows until a separate operating decision enables a
+   continuously running read-only worker;
+3. run a new `review_status_execute` pilot with a new open review and request;
+4. evaluate `promotion_execute_dry_run` as the first allowlist expansion;
+5. expose only the enabled operations through SpecSpace hosted lifecycle UX;
+6. propose irreversible Git review or publication operations one at a time.
+
+Each phase must preserve a narrow allowlist, durable authoritative reports,
+queue drain, monitoring, recovery, rollback, and a post-operation worker-state
+decision. Production canary sign-off is a prerequisite, not blanket authority
+for later phases.
+
 ## Delivery And Recovery
 
 Hosted execution uses **at-least-once** delivery. It must not claim exactly-once

@@ -206,6 +206,44 @@ The service must not treat working directories as authority. Authority comes
 from validated promotion artifacts, repository policy, review state, and the
 published read-model manifest.
 
+## Planned Repository Synchronization Boundary
+
+Platform can safely synchronize a repository available to its backend or
+worker, but synchronization must be a fixed Git Service contract rather than a
+generic `git pull` endpoint. A repository on an operator laptop is outside the
+hosted backend filesystem; it requires a separate local agent or synchronization
+through the shared Git remote.
+
+The safe product-repository flow should be split into three operations:
+
+1. `repository_sync_inspect` compares the clean local branch and HEAD with the
+   configured remote using read-only remote discovery. It writes only a durable
+   diagnostic report.
+2. `repository_sync_fetch` updates only the bound remote-tracking ref after
+   revalidating repository identity, remote identity, credentials, and expected
+   local HEAD.
+3. `repository_sync_fast_forward` updates the bound working branch only when the
+   worktree is clean and the update is provably fast-forward. Divergence,
+   force-push evidence, submodule drift, or unexpected refs block the operation.
+
+The request must not accept an arbitrary repository path, remote name, remote
+URL, branch, credential, Git configuration, environment variable, or command.
+Those values come from a versioned repository/workspace binding and a
+server-owned credential profile. Prefer scoped GitHub App installation tokens
+or deploy credentials over user PATs. Secrets stay in secret files or the
+credential boundary and never enter queue requests or reports.
+
+Execution must disable interactive credential prompts and repository hooks,
+allow only approved HTTPS/SSH transports, reject Git remote helpers such as
+`ext::` and local/file transports, and pin both pre-operation and observed
+remote commits in the result. Fetch and fast-forward are separate write
+authorities: a successful inspection never authorizes either mutation.
+
+This product-repository capability must not replace the production deployment
+checkout contract. Platform and SpecGraph runtime checkouts continue to update
+through reviewed full commit ids, image locks, and the bounded
+`0al-hosted-managed-checkout` helper.
+
 For a step-by-step local product demo that exercises SpecGraph artifact
 generation, SpecSpace Product Workspace visibility, Idea Maturity diagnostics,
 Platform repair smoke, candidate approval, and Git Service dry-run boundaries,
