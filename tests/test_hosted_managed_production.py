@@ -263,14 +263,22 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
 
 
 class HostedManagedProductionProbeTests(unittest.TestCase):
-    def fixture_runner(self, *, heartbeat_generated_at: str):
+    def fixture_runner(
+        self,
+        *,
+        heartbeat_generated_at: str,
+        worker_mode: str = "stopped",
+    ):
+        services = set(probe.BASE_SERVICES)
+        if worker_mode == "continuous":
+            services.add(probe.CONTINUOUS_WORKER_SERVICE)
         rows = [
             {
                 "Service": service,
                 "State": "running",
                 "Health": "healthy",
             }
-            for service in sorted(probe.EXPECTED_SERVICES)
+            for service in sorted(services)
         ]
         heartbeat = {
             "artifact_kind": "platform_hosted_managed_operation_worker_health",
@@ -302,7 +310,9 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
             },
         )
         self.assertTrue(report["ok"], report["diagnostics"])
-        self.assertEqual(report["summary"]["healthy_service_count"], 4)
+        self.assertEqual(report["summary"]["healthy_service_count"], 3)
+        self.assertEqual(report["summary"]["worker_mode"], "stopped")
+        self.assertEqual(report["worker"]["status"], "stopped")
         self.assertNotIn("/srv/platform", str(report))
 
     def test_probe_blocks_stale_heartbeat_and_expanded_allowlist(self) -> None:
@@ -313,8 +323,10 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
             project_name="platform-managed",
             now=now,
             runner=self.fixture_runner(
-                heartbeat_generated_at="2026-07-12T23:58:00+00:00"
+                heartbeat_generated_at="2026-07-12T23:58:00+00:00",
+                worker_mode="continuous",
             ),
+            worker_mode="continuous",
             fetch_health=lambda _: {
                 "ok": True,
                 "adapter": "postgresql",
@@ -327,6 +339,36 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("worker_heartbeat_stale", report["diagnostics"])
         self.assertIn("service_allowlist_not_read_only_canary", report["diagnostics"])
+
+    def test_continuous_worker_requires_explicit_profile(self) -> None:
+        now = datetime(2026, 7, 13, tzinfo=timezone.utc)
+        commands: list[list[str]] = []
+        delegate = self.fixture_runner(
+            heartbeat_generated_at=now.isoformat(),
+            worker_mode="continuous",
+        )
+
+        def runner(command, **kwargs):
+            commands.append(command)
+            return delegate(command, **kwargs)
+
+        report = probe.run_probe(
+            service_url="https://managed.example.test",
+            compose_file=Path("/srv/platform/compose.yml"),
+            project_name="platform-managed",
+            worker_mode="continuous",
+            now=now,
+            runner=runner,
+            fetch_health=lambda _: {
+                "ok": True,
+                "adapter": "postgresql",
+                "enabled_operation_ids": ["review_status_execute"],
+            },
+        )
+        self.assertTrue(report["ok"], report["diagnostics"])
+        self.assertTrue(
+            all("continuous-worker" in command for command in commands)
+        )
 
     def test_probe_rejects_url_userinfo_before_fetching(self) -> None:
         with self.assertRaisesRegex(

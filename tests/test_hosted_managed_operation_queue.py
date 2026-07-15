@@ -135,6 +135,46 @@ class HostedManagedOperationQueueTests(unittest.TestCase):
         self.assertIsNotNone(leased)
         self.assertIsNone(blocked)
 
+    def test_expected_request_pin_does_not_lease_neighbor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            queue = queue_module.SQLiteManagedOperationQueue(":memory:")
+            first = request_for(temp, "review_status_execute")
+            second = request_for(
+                temp,
+                "review_status_execute",
+                workspace_id="second-workspace",
+            )
+            for request in (first, second):
+                queue.enqueue(
+                    request,
+                    now_epoch=100,
+                    now_iso="2026-07-10T00:00:00Z",
+                )
+            worker = queue_module.HostedManagedOperationWorker(
+                queue,
+                SuccessfulExecutor(),
+                worker_id="worker-pinned",
+                expected_request_id=second["request_id"],
+            )
+
+            receipt = worker.run_once(
+                now_epoch=101,
+                now_iso="2026-07-10T00:00:01Z",
+            )
+            first_job = queue.get(first["request_id"])
+            second_job = queue.get(second["request_id"])
+            snapshot = queue.operational_snapshot()
+            queue.close()
+
+        self.assertEqual(receipt["request_ref"], second["request_id"])
+        self.assertEqual(first_job["status"], "queued")
+        self.assertEqual(second_job["status"], "succeeded")
+        self.assertEqual(
+            [item["request_id"] for item in snapshot["active_jobs"]],
+            [first["request_id"]],
+        )
+
     def test_worker_completes_only_with_all_expected_reports(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)

@@ -9,31 +9,40 @@ import subprocess
 import tempfile
 from typing import Any
 
+try:
+    from scripts import hosted_managed_worker_window
+except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
+    import hosted_managed_worker_window
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = REPO_ROOT / "docker-compose.hosted-managed-production.example.yml"
 INGRESS_DOCKERFILE = REPO_ROOT / "Dockerfile.hosted-managed-ingress"
+WORKER_WINDOW_POLICY = (
+    REPO_ROOT / "deploy" / "hosted-managed" / "worker-window-policy.json"
+)
 ALLOWLIST_ENV = "PLATFORM_MANAGED_OPERATION_ALLOWLIST"
 READ_ONLY_CANARY_OPERATION = "review_status_execute"
 RUNTIME_SERVICES = {
     "managed-operation-postgres",
     "managed-operation-service",
-    "managed-operation-worker",
     "managed-operation-ingress",
 }
+CONTINUOUS_WORKER_SERVICE = "managed-operation-worker"
 MAINTENANCE_SERVICE = "managed-operation-maintenance"
+WINDOW_WORKER_SERVICE = "managed-operation-window-worker"
 SHA256 = "1" * 64
 
 
-def _command(*, maintenance: bool = False) -> list[str]:
+def _command(*, profile: str | None = None) -> list[str]:
     command = [
         "docker",
         "compose",
         "--file",
         str(COMPOSE_FILE),
     ]
-    if maintenance:
-        command.extend(("--profile", "maintenance"))
+    if profile is not None:
+        command.extend(("--profile", profile))
     command.extend(("config", "--format", "json"))
     return command
 
@@ -123,6 +132,7 @@ def _assert_digest_pinned(service_name: str, service: dict[str, Any]) -> None:
 
 
 def validate_hosted_managed_production_compose() -> dict[str, Any]:
+    hosted_managed_worker_window.load_policy(WORKER_WINDOW_POLICY.resolve())
     ingress_dockerfile = INGRESS_DOCKERFILE.read_text(encoding="utf-8")
     if "ARG CADDY_BASE_IMAGE\n" not in ingress_dockerfile or (
         "ARG CADDY_BASE_IMAGE=" in ingress_dockerfile
@@ -165,11 +175,11 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
 
     services = payload.get("services")
     if not isinstance(services, dict) or set(services) != RUNTIME_SERVICES:
-        raise RuntimeError("production Compose must contain exactly four runtime services")
+        raise RuntimeError("production Compose must contain exactly three runtime services")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         maintenance_render = subprocess.run(
-            _command(maintenance=True),
+            _command(profile="maintenance"),
             cwd=REPO_ROOT,
             env=_environment(
                 Path(temp_dir) / "maintenance",
@@ -189,30 +199,82 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
         raise RuntimeError("maintenance profile must add exactly one service")
     maintenance = maintenance_services[MAINTENANCE_SERVICE]
 
+    with tempfile.TemporaryDirectory() as temp_dir:
+        window_render = subprocess.run(
+            _command(profile="bounded-worker"),
+            cwd=REPO_ROOT,
+            env=_environment(
+                Path(temp_dir) / "bounded-worker",
+                allowlist=READ_ONLY_CANARY_OPERATION,
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if window_render.returncode != 0:
+            raise RuntimeError("bounded-worker profile did not render")
+        window_payload = json.loads(window_render.stdout)
+    window_services = window_payload.get("services")
+    if not isinstance(window_services, dict) or set(window_services) != (
+        RUNTIME_SERVICES | {WINDOW_WORKER_SERVICE}
+    ):
+        raise RuntimeError("bounded-worker profile must add exactly one service")
+    window_worker = window_services[WINDOW_WORKER_SERVICE]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        continuous_render = subprocess.run(
+            _command(profile="continuous-worker"),
+            cwd=REPO_ROOT,
+            env=_environment(
+                Path(temp_dir) / "continuous-worker",
+                allowlist=READ_ONLY_CANARY_OPERATION,
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if continuous_render.returncode != 0:
+            raise RuntimeError("continuous-worker profile did not render")
+        continuous_payload = json.loads(continuous_render.stdout)
+    continuous_services = continuous_payload.get("services")
+    if not isinstance(continuous_services, dict) or set(continuous_services) != (
+        RUNTIME_SERVICES | {CONTINUOUS_WORKER_SERVICE}
+    ):
+        raise RuntimeError("continuous-worker profile must add exactly one service")
+    worker = continuous_services[CONTINUOUS_WORKER_SERVICE]
+
     for service_name, service in services.items():
         _assert_digest_pinned(service_name, service)
     _assert_digest_pinned(MAINTENANCE_SERVICE, maintenance)
+    _assert_digest_pinned(WINDOW_WORKER_SERVICE, window_worker)
+    _assert_digest_pinned(CONTINUOUS_WORKER_SERVICE, worker)
 
     for service_name in (
         "managed-operation-service",
-        "managed-operation-worker",
         "managed-operation-ingress",
     ):
         _assert_hardened(service_name, services[service_name])
     _assert_hardened(MAINTENANCE_SERVICE, maintenance)
+    _assert_hardened(WINDOW_WORKER_SERVICE, window_worker)
+    _assert_hardened(CONTINUOUS_WORKER_SERVICE, worker)
 
-    for service_name in ("managed-operation-service", "managed-operation-worker"):
-        environment = services[service_name].get("environment")
+    for service_name, service_definition in (
+        ("managed-operation-service", services["managed-operation-service"]),
+        (CONTINUOUS_WORKER_SERVICE, worker),
+    ):
+        environment = service_definition.get("environment")
         if not isinstance(environment, dict) or environment.get(ALLOWLIST_ENV) != (
             READ_ONLY_CANARY_OPERATION
         ):
             raise RuntimeError(f"{service_name} did not receive the canary allowlist")
-        state_mount = _bind_mount(service=services[service_name], target="/data/specspace-state")
+        state_mount = _bind_mount(
+            service=service_definition,
+            target="/data/specspace-state",
+        )
         if state_mount.get("read_only") is not True:
             raise RuntimeError(f"{service_name} state mount must be read-only")
 
     service = services["managed-operation-service"]
-    worker = services["managed-operation-worker"]
     ingress = services["managed-operation-ingress"]
     if service.get("ports"):
         raise RuntimeError("managed service must not publish a host port")
@@ -255,6 +317,35 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
         raise RuntimeError("backup tooling must read artifacts without mutation authority")
     if maintenance_backups.get("read_only") is True:
         raise RuntimeError("backup tooling requires only its dedicated writable backup root")
+    if window_worker.get("profiles") != ["bounded-worker"]:
+        raise RuntimeError("bounded worker must remain an explicit profile")
+    if window_worker.get("restart") not in (None, "no"):
+        raise RuntimeError("bounded worker must not have a restart policy")
+    window_environment = window_worker.get("environment")
+    if not isinstance(window_environment, dict) or window_environment.get(
+        ALLOWLIST_ENV
+    ) != READ_ONLY_CANARY_OPERATION:
+        raise RuntimeError("bounded worker did not receive the read-only allowlist")
+    window_command = window_worker.get("command")
+    window_command_text = (
+        " ".join(window_command) if isinstance(window_command, list) else ""
+    )
+    for required_fragment in (
+        "managed-operation worker-window",
+        "--expected-request-id",
+        "--window-id",
+        "/workspace/Platform/deploy/hosted-managed/worker-window-policy.json",
+    ):
+        if required_fragment not in window_command_text:
+            raise RuntimeError("bounded worker command contract is incomplete")
+    window_artifacts = _bind_mount(window_worker, "/workspace/SpecGraph")
+    window_state = _bind_mount(window_worker, "/data/specspace-state")
+    if window_artifacts.get("read_only") is True:
+        raise RuntimeError("bounded worker must write authoritative reports")
+    if window_state.get("read_only") is not True:
+        raise RuntimeError("bounded worker state mount must be read-only")
+    if worker.get("profiles") != ["continuous-worker"]:
+        raise RuntimeError("continuous worker must require an explicit profile")
 
     networks = payload.get("networks")
     if not isinstance(networks, dict):
@@ -277,6 +368,8 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
         raise RuntimeError("TLS ingress must have internal service access and one ingress network")
     if worker_networks == ingress_networks:
         raise RuntimeError("worker egress and public ingress networks must remain separate")
+    if set(window_worker.get("networks", {})) != worker_networks:
+        raise RuntimeError("bounded worker must use the worker network boundary")
 
     return {
         "artifact_kind": "platform_hosted_managed_production_compose_contract_report",
@@ -291,6 +384,8 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
             "internal_backend_network": True,
             "worker_egress_only": True,
             "maintenance_profile_isolated": True,
+            "bounded_worker_profile_isolated": True,
+            "bounded_worker_policy_validated": True,
         },
     }
 

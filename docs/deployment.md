@@ -151,8 +151,8 @@ checkout paths, raw idea text, or the full request envelope.
 For a dedicated VM or an N100-class staging node, use the standalone
 `docker-compose.hosted-managed-runtime.example.yml` profile documented in
 [`hosted-managed-operations.md`](hosted-managed-operations.md). It packages
-PostgreSQL, the authenticated service, and one worker into one host and one
-monthly infrastructure unit. The runtime supports both `amd64` and `arm64`
+PostgreSQL, the authenticated service, and a worker into one host and one
+monthly infrastructure unit. The development runtime supports both `amd64` and `arm64`
 through the Debian Python base image; build it on the target architecture or
 publish a multi-architecture image.
 
@@ -197,6 +197,13 @@ Issue and renew the dedicated HTTPS certificate with the tracked
 `deploy/hosted-managed/hosted-managed-tls.sh` helper described in the same
 runbook. The helper pins issuance to the expected IPv4 and synchronizes only
 the configured certificate lineage into the runtime secret files.
+The production profile starts with its worker stopped. A versioned bounded
+worker policy permits one exact `review_status_execute` request through the
+one-shot `bounded-worker` profile. The former long-running worker is isolated
+behind `continuous-worker` and requires a separate rollout decision. Detailed
+operator commands and evidence semantics are in
+[`hosted-managed-operations.md`](hosted-managed-operations.md#bounded-worker-operating-policy).
+
 The production contract is checked in CI with:
 
 ```bash
@@ -204,8 +211,9 @@ make hosted-managed-production-contract
 ```
 
 It fails when images are mutable, the allowlist is absent, the Platform service
-publishes a direct port, TLS ingress is missing, maintenance tooling is enabled
-by default, or service/worker network authority expands.
+publishes a direct port, TLS ingress is missing, maintenance or worker tooling
+is enabled by default, the bounded policy expands beyond read-only scope, or
+service/worker network authority expands.
 
 Production images are published separately by the manual
 `publish-hosted-managed-images.yml` workflow. Consume only refs from its
