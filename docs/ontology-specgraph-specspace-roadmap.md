@@ -310,8 +310,11 @@ The current execution order is:
      SpecGraph PR `#689`: one queue attempt, digest-pinned authoritative output,
      drained queue, stopped worker, successful backup/restore smoke, encrypted
      off-host export, and healthy post-operation probe;
-   - evaluate `promotion_execute_dry_run` only as a separate allowlist-expansion
-     proposal with its own recovery, monitoring, backup, and rollback evidence;
+   - `promotion_execute_dry_run` is conditionally selected as the first
+     allowlist expansion in the
+     [dedicated rollout proposal](hosted-managed-promotion-dry-run-rollout-proposal.md),
+     but production enablement remains blocked on an operation-specific policy,
+     recovery, monitoring, backup, and rollback implementation;
    - connect the enabled hosted operations to SpecSpace lifecycle actions and
      observability before proposing any irreversible Git or publication action.
    Every allowlist expansion remains a separate rollout with operation-specific
