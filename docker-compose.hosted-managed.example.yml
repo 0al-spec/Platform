@@ -62,6 +62,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+      start_period: 90s
 
   managed-operation-worker:
     image: "${PLATFORM_MANAGED_OPERATION_IMAGE:-python:3.12-slim}"
@@ -104,7 +105,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 30s
+      start_period: 90s
 
   specspace-api:
     command:

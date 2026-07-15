@@ -827,10 +827,25 @@ new open review object, validated input evidence, and a new queue-safe request.
 
 ### Next hosted rollout phases
 
+The operational-hardening baseline for these phases is now explicit:
+
+- off-host backup export waits for both pipeline processes and reports a failed
+  `age` process as `age encryption failed`, even when the early exit also closes
+  the input pipe;
+- the development/CI Compose profile reserves at least 90 seconds for service
+  and worker startup because that profile installs hosted Python dependencies
+  inside each container before starting the process;
+- immutable runtime and production profiles continue to use prebuilt images and
+  do not gain execution authority from this startup allowance.
+
+These checks harden diagnostics and CI startup only. They do not start the
+production worker, expand the operation allowlist, or change queue replay
+policy.
+
 Proceed from the signed-off baseline in bounded stages:
 
-1. harden known CI timing/error-reporting flakes and keep backup/recovery
-   evidence current;
+1. preserve the completed CI timing/error-reporting hardening and keep
+   backup/recovery evidence current;
 2. retain bounded worker windows until a separate operating decision enables a
    continuously running read-only worker;
 3. run a new `review_status_execute` pilot with a new open review and request;

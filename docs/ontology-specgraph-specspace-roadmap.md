@@ -300,7 +300,10 @@ The current execution order is:
    production allowlist requires a separate rollout decision; neither follows
    automatically from canary sign-off.
    The next hosted rollout sequence is deliberately incremental:
-   - harden the known backup-error and Compose cold-start CI flakes;
+   - keep backup failure classification deterministic when the encryption
+     process closes its input early, and preserve a contract-tested startup
+     health budget for the development/CI Compose profile that installs hosted
+     dependencies at container startup;
    - keep the worker in bounded maintenance windows until an explicit operating
      policy chooses continuous read-only execution;
    - run a fresh `review_status_execute` pilot only with a new open review object
