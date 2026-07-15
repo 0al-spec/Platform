@@ -1,0 +1,24 @@
+{
+  "artifact_kind": "platform_hosted_managed_worker_window_policy",
+  "schema_version": 1,
+  "contract_ref": "platform.hosted-managed.worker-window-policy.v1",
+  "mode": "bounded",
+  "enabled_operation_ids": [
+    "review_status_execute"
+  ],
+  "max_duration_seconds": 900,
+  "max_processed_operations": 1,
+  "maximum_initial_attempt": 0,
+  "require_expected_request_id": true,
+  "require_exclusive_queue": true,
+  "require_strict_recovery_preflight": true,
+  "require_authoritative_reports": true,
+  "require_worker_stopped_after_window": true,
+  "authority_boundary": {
+    "may_accept_arbitrary_commands": false,
+    "may_expand_operation_allowlist": false,
+    "may_execute_unpinned_requests": false,
+    "may_keep_worker_running": false,
+    "may_retry_irreversible_operations": false
+  }
+}

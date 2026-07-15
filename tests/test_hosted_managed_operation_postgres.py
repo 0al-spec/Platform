@@ -287,6 +287,54 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
         os.environ.get("PLATFORM_TEST_POSTGRES_URL"),
         "set PLATFORM_TEST_POSTGRES_URL for PostgreSQL queue integration",
     )
+    def test_real_postgresql_expected_request_pin_skips_neighbor(self) -> None:
+        database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
+        queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        try:
+            with queue.connection.cursor() as cursor:
+                cursor.execute(
+                    "TRUNCATE managed_operation_events, managed_operation_locks, "
+                    "managed_operation_jobs RESTART IDENTITY CASCADE"
+                )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp = Path(temp_dir)
+                first = request_for(temp, "review_status_execute")
+                second = request_for(
+                    temp,
+                    "review_status_execute",
+                    workspace_id="postgres-pinned-workspace",
+                )
+                for request in (first, second):
+                    queue.enqueue(
+                        request,
+                        now_epoch=100,
+                        now_iso="2026-07-10T00:00:00Z",
+                    )
+                worker = queue_module.HostedManagedOperationWorker(
+                    queue,
+                    SuccessfulExecutor(),
+                    worker_id="postgres-pinned-worker",
+                    expected_request_id=second["request_id"],
+                )
+                receipt = worker.run_once(
+                    now_epoch=101,
+                    now_iso="2026-07-10T00:00:01Z",
+                )
+                first_job = queue.get(first["request_id"])
+                second_job = queue.get(second["request_id"])
+                snapshot = queue.operational_snapshot()
+        finally:
+            queue.close()
+
+        self.assertEqual(receipt["request_ref"], second["request_id"])
+        self.assertEqual(first_job["status"], "queued")
+        self.assertEqual(second_job["status"], "succeeded")
+        self.assertEqual(snapshot["active_lock_count"], 0)
+
+    @unittest.skipUnless(
+        os.environ.get("PLATFORM_TEST_POSTGRES_URL"),
+        "set PLATFORM_TEST_POSTGRES_URL for PostgreSQL queue integration",
+    )
     def test_concurrent_idempotent_enqueue_returns_one_queue_job(self) -> None:
         database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
         first_queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)

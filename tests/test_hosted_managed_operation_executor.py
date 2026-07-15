@@ -155,6 +155,7 @@ class ExecutorFixture:
 class RecordingRunner:
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
+        self.timeouts: list[int] = []
 
     def __call__(
         self,
@@ -164,6 +165,7 @@ class RecordingRunner:
         timeout_seconds: int,
     ) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
+        self.timeouts.append(timeout_seconds)
         output_flags = {"--output", "--output-gate", "--gate-output", "--decision-output", "--git-service-output"}
         for index, item in enumerate(command[:-1]):
             if item not in output_flags:
@@ -233,6 +235,30 @@ class HostedManagedOperationExecutorTests(unittest.TestCase):
             result.output_reports[0]["logical_ref"],
             "runs/product_candidate_promotion_review_status_report.json",
         )
+
+    def test_worker_window_caps_request_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = ExecutorFixture(Path(temp_dir))
+            request = fixture.request("review_status_execute")
+            runner = RecordingRunner()
+            executor = executor_module.PlatformManagedOperationExecutor(
+                resolver=fixture.resolver(),
+                platform_script=fixture.platform_script,
+                runner=runner,
+                maximum_timeout_seconds=60,
+            )
+            leased = queue_module.LeasedOperation(
+                request_id=request["request_id"],
+                request=request,
+                attempt=1,
+                lease_owner="bounded-worker-a",
+                lease_expires_at=1000,
+            )
+
+            result = executor.execute(leased)
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(runner.timeouts, [60])
 
     def test_input_digest_drift_is_quarantined_before_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

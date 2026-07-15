@@ -429,7 +429,13 @@ def deploy(
             sleeper=sleeper,
         )
         _run(
-            [*current_prefix, "stop", "managed-operation-worker"],
+            [
+                *current_prefix,
+                "--profile",
+                "continuous-worker",
+                "stop",
+                "managed-operation-worker",
+            ],
             runner=runner,
             label="worker quiesce",
         )

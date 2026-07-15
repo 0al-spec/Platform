@@ -475,8 +475,9 @@ requests, canary reports, or container image layers. Rotate them by atomically
 replacing the corresponding file and recreating only the consumers that read
 it. Service-token rotation must update SpecSpace and Platform in one bounded
 cutover. Database credential rotation must update PostgreSQL first, then both
-database secret files, then recreate service, worker, and maintenance
-containers. Never reuse the service bearer token as a GitHub or database token.
+database secret files, then recreate PostgreSQL, service, and maintenance
+containers plus the worker only when a worker profile is explicitly enabled.
+Never reuse the service bearer token as a GitHub or database token.
 
 Run the fail-closed host preflight as root so ownership checks are meaningful:
 
@@ -491,8 +492,8 @@ The preflight report contains no secret values, paths, or local filesystem
 metadata. It requires exact read-only canary scope, `0440` root/runtime-group
 secret files, digest-pinned images, a clean HTTPS URL, runtime-owned data
 directories, and a regular non-symlink SpecGraph `Makefile` beneath the artifact
-root. The last check mirrors the worker startup contract so an empty artifact
-directory blocks deployment before the worker enters a restart loop.
+root. The last check mirrors the executor input contract so an empty artifact
+directory blocks deployment before any bounded worker window can open.
 
 ### Start and probe
 
@@ -542,7 +543,9 @@ model. Initial host bootstrap and database image upgrades remain separate
 procedures. Do not retry after an unverified rollback; inspect the deployment
 report and container state first.
 
-Validate and start the production profile:
+Validate and start the production control plane. The default profile starts
+PostgreSQL, the authenticated service, and TLS ingress. It intentionally does
+not start an execution worker:
 
 ```bash
 make hosted-managed-production-contract
@@ -560,8 +563,9 @@ docker compose --project-name platform-managed-production \
   --output /srv/0al/evidence/probe-before-reboot.json
 ```
 
-The bounded Compose smoke starts the real Caddy, PostgreSQL, service, and worker
-profile with a one-day self-signed fixture certificate and a temporary local
+The bounded Compose smoke explicitly enables the `continuous-worker` profile
+and starts the real Caddy, PostgreSQL, service, and worker with a one-day
+self-signed fixture certificate and a temporary local
 registry so even the test image is addressed by digest. It enqueues no managed
 request and removes containers, registry, and volumes afterward.
 Build `Dockerfile.hosted-managed-ingress` from a digest-pinned Caddy base and
@@ -569,15 +573,18 @@ publish that image by digest. The build removes Caddy's unused low-port file
 capability, allowing the non-root ingress container to keep `cap_drop: ALL` and
 `no-new-privileges` while listening on port `8443`.
 
-The probe requires all four runtime services to be healthy, PostgreSQL as the
-queue adapter, a fresh worker heartbeat, and exactly
-`review_status_execute` in service health. The report is public-safe and omits
-Compose paths and credentials.
+The default probe requires the three control-plane services to be healthy, the
+worker to be absent, PostgreSQL as the queue adapter, and exactly
+`review_status_execute` in service health. Use `--worker-mode continuous` only
+for a separately approved continuous-worker rollout; that mode additionally
+requires the worker service and a fresh heartbeat. The report is public-safe
+and omits Compose paths and credentials.
 
 Initial operational targets are diagnostic objectives, not an external SLA:
 
 - alert immediately on any quarantined request or expanded allowlist;
-- alert after two failed probes or a worker heartbeat older than 30 seconds;
+- alert after two failed probes; when continuous mode is explicitly enabled,
+  also alert on a worker heartbeat older than 30 seconds;
 - alert when a read-only canary does not terminate within its bounded window;
 - run a read-only canary at least daily during rollout and after each deploy;
 - run strict recovery and queue-drain audit after unclean shutdowns;
@@ -589,8 +596,10 @@ Use the bounded production backup-cycle orchestrator as the primary operator
 entry point. It probes the runtime, requires a drained queue, stops the public
 enqueue boundary, audits the queue again, stops the worker, creates the private
 backup, runs an isolated restore smoke, verifies the complete output set, and
-then restarts and probes the runtime. Once quiescing starts, runtime restart is
-attempted from a `finally` path even when backup or restore verification fails.
+then restarts and probes the control plane. A continuous worker is stopped if
+present but is not implicitly re-enabled. Once quiescing starts, control-plane
+restart is attempted from a `finally` path even when backup or restore
+verification fails.
 
 On the production host, from the commit-pinned Platform checkout, run:
 
@@ -825,6 +834,75 @@ Do not replay the signed-off request as a new semantic probe. Its idempotency
 key must continue to resolve to the existing receipt. A fresh probe requires a
 new open review object, validated input evidence, and a new queue-safe request.
 
+### Bounded worker operating policy
+
+`deploy/hosted-managed/worker-window-policy.json` is the versioned,
+fail-closed policy for the current production operating mode. It permits only
+`review_status_execute`, one exact fresh request, one attempt, and at most 900
+seconds. It requires strict recovery, an otherwise empty active queue, no
+workspace locks, authoritative output reports, and a stopped worker after the
+window. It does not permit arbitrary commands, allowlist expansion, unpinned
+requests, irreversible retries, or a persistent worker.
+
+The production Compose profile now has three distinct modes:
+
+- no worker profile: the default steady state;
+- `bounded-worker`: a one-shot container started only through the tracked host
+  wrapper for one exact request;
+- `continuous-worker`: the prior long-running worker, retained for explicit
+  compatibility and future rollout decisions but never enabled by default.
+
+Do not run the bounded service with `docker compose up`. After the request has
+been authenticated and enqueued while the worker is stopped, record the
+server-issued request id and choose a fresh operator window id:
+
+```bash
+request_id='managed-operation://<workspace>/review_status_execute/<opaque-id>'
+window_id="review-status-$(date -u +%Y%m%dT%H%M%SZ)"
+
+sudo /usr/bin/python3 \
+  /srv/0al/platform/scripts/hosted_managed_production_worker_window.py \
+  --window-id "$window_id" \
+  --request-id "$request_id"
+```
+
+The host wrapper performs the complete bounded sequence:
+
+1. validate the exact read-only deployment allowlist and policy;
+2. prove that neither bounded nor continuous worker is running;
+3. execute fixed `managed-operation recover --strict` through the maintenance
+   profile;
+4. start one `bounded-worker` container pinned to the exact request id;
+5. let the worker revalidate binding/input digests and run only the registered
+   Platform wrapper;
+6. enforce the policy timeout and force-remove a timed-out container;
+7. prove that no worker remains;
+8. verify the core report identity, policy digest, terminal state, and
+   authoritative output report digests;
+9. write immutable public-safe host evidence under
+   `/srv/0al/evidence/worker-window-<window-id>.json`.
+
+The worker also writes the core report at
+`runs/managed-worker-windows/<window-id>.json`. Queue success alone is not
+lifecycle completion; the operation's Platform output reports remain
+authoritative. A blocked or timed-out window must not be retried with the same
+window id. Inspect its diagnostics and queue state first. A terminal
+`attempt=1` success may be reconciled into a fresh window report without
+re-executing the operation; any ambiguous or irreversible state remains
+fail-closed.
+
+Validate the code and Compose contract before deploying this mode:
+
+```bash
+make hosted-managed-production-worker-window-contract
+make hosted-managed-production-contract
+```
+
+This policy is an operating boundary, not authority to keep the worker running.
+Enabling `continuous-worker` or adding `promotion_execute_dry_run` requires a
+separate rollout decision, updated evidence, and operation-specific recovery
+analysis.
+
 ### Next hosted rollout phases
 
 The operational-hardening baseline for these phases is now explicit:
@@ -846,8 +924,8 @@ Proceed from the signed-off baseline in bounded stages:
 
 1. preserve the completed CI timing/error-reporting hardening and keep
    backup/recovery evidence current;
-2. retain bounded worker windows until a separate operating decision enables a
-   continuously running read-only worker;
+2. use the versioned bounded worker policy for each new read-only pilot until a
+   separate operating decision enables a continuously running worker;
 3. run a new `review_status_execute` pilot with a new open review and request;
 4. evaluate `promotion_execute_dry_run` as the first allowlist expansion;
 5. expose only the enabled operations through SpecSpace hosted lifecycle UX;

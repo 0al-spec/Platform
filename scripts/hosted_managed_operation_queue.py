@@ -71,6 +71,7 @@ class ManagedOperationQueue(Protocol):
         now_epoch: float,
         now_iso: str,
         lease_seconds: int,
+        expected_request_id: str | None = None,
     ) -> LeasedOperation | None: ...
 
     def complete(
@@ -105,6 +106,8 @@ class ManagedOperationQueue(Protocol):
         now_iso: str,
         max_attempts: int = 3,
     ) -> list[dict[str, Any]]: ...
+
+    def operational_snapshot(self) -> dict[str, Any]: ...
 
 
 def open_managed_operation_queue(
@@ -366,20 +369,23 @@ class SQLiteManagedOperationQueue:
         now_epoch: float,
         now_iso: str,
         lease_seconds: int,
+        expected_request_id: str | None = None,
     ) -> LeasedOperation | None:
         if not worker_id or lease_seconds < 1:
             raise QueueContractError("worker id and positive lease duration are required")
         lease_expires_at = now_epoch + lease_seconds
         self.connection.execute("BEGIN IMMEDIATE")
         try:
-            rows = self.connection.execute(
-                """
+            query = """
                 SELECT * FROM managed_operation_jobs
                 WHERE status = 'queued' AND available_at <= ?
-                ORDER BY created_at, request_id
-                """,
-                (now_epoch,),
-            ).fetchall()
+            """
+            parameters: list[Any] = [now_epoch]
+            if expected_request_id is not None:
+                query += " AND request_id = ?"
+                parameters.append(expected_request_id)
+            query += " ORDER BY created_at, request_id"
+            rows = self.connection.execute(query, parameters).fetchall()
             selected: sqlite3.Row | None = None
             selected_request: dict[str, Any] | None = None
             for row in rows:
@@ -705,6 +711,44 @@ class SQLiteManagedOperationQueue:
             for row in rows
         ]
 
+    def operational_snapshot(self) -> dict[str, Any]:
+        status_rows = self.connection.execute(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM managed_operation_jobs
+            GROUP BY status ORDER BY status
+            """
+        ).fetchall()
+        active_rows = self.connection.execute(
+            """
+            SELECT request_id, operation_id, workspace_id, status, attempt
+            FROM managed_operation_jobs
+            WHERE status IN ('queued', 'leased', 'running')
+            ORDER BY created_at, request_id
+            """
+        ).fetchall()
+        lock_count = int(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM managed_operation_locks"
+            ).fetchone()[0]
+        )
+        return {
+            "status_counts": {
+                str(row["status"]): int(row["count"]) for row in status_rows
+            },
+            "active_jobs": [
+                {
+                    "request_id": row["request_id"],
+                    "operation_id": row["operation_id"],
+                    "workspace_id": row["workspace_id"],
+                    "status": row["status"],
+                    "attempt": int(row["attempt"]),
+                }
+                for row in active_rows
+            ],
+            "active_lock_count": lock_count,
+        }
+
 
 class HostedManagedOperationWorker:
     def __init__(
@@ -716,6 +760,7 @@ class HostedManagedOperationWorker:
         lease_seconds: int = 600,
         monotonic_clock: Callable[[], float] = time.monotonic,
         allowed_operation_ids: frozenset[str] | None = None,
+        expected_request_id: str | None = None,
     ) -> None:
         self.queue = queue
         self.executor = executor
@@ -725,6 +770,7 @@ class HostedManagedOperationWorker:
         self.allowed_operation_ids = contracts.normalize_operation_allowlist(
             allowed_operation_ids
         )
+        self.expected_request_id = expected_request_id
 
     def run_once(
         self,
@@ -744,6 +790,7 @@ class HostedManagedOperationWorker:
             now_epoch=now_epoch,
             now_iso=now_iso,
             lease_seconds=self.lease_seconds,
+            expected_request_id=self.expected_request_id,
         )
         if leased is None:
             return None

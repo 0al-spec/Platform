@@ -237,11 +237,15 @@ class PlatformManagedOperationExecutor:
         platform_script: Path,
         python_executable: str = sys.executable,
         runner: CommandRunner = _default_runner,
+        maximum_timeout_seconds: int | None = None,
     ) -> None:
         self.resolver = resolver
         self.platform_script = platform_script.resolve()
         self.python_executable = python_executable
         self.runner = runner
+        self.maximum_timeout_seconds = maximum_timeout_seconds
+        if maximum_timeout_seconds is not None and maximum_timeout_seconds < 1:
+            raise ExecutorContractError("maximum executor timeout must be positive")
         if self.platform_script.name != "platform.py" or not self.platform_script.is_file():
             raise ExecutorContractError("worker Platform script is missing or invalid")
         if not (self.resolver.specgraph_dir / "Makefile").is_file():
@@ -554,7 +558,11 @@ class PlatformManagedOperationExecutor:
                 status="quarantined",
                 diagnostics=(str(exc),),
             )
-        timeout_seconds = int(_mapping(leased.request.get("operation")).get("timeout_seconds") or 120)
+        timeout_seconds = int(
+            _mapping(leased.request.get("operation")).get("timeout_seconds") or 120
+        )
+        if self.maximum_timeout_seconds is not None:
+            timeout_seconds = min(timeout_seconds, self.maximum_timeout_seconds)
         for index, command in enumerate(commands):
             try:
                 completed = self.runner(

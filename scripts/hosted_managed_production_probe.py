@@ -12,12 +12,12 @@ from urllib.parse import urlsplit
 import urllib.request
 
 
-EXPECTED_SERVICES = {
+BASE_SERVICES = {
     "managed-operation-postgres",
     "managed-operation-service",
-    "managed-operation-worker",
     "managed-operation-ingress",
 }
+CONTINUOUS_WORKER_SERVICE = "managed-operation-worker"
 READ_ONLY_CANARY_OPERATION = "review_status_execute"
 
 
@@ -74,10 +74,13 @@ def run_probe(
     env_file: Path | None = None,
     timeout_seconds: float = 10.0,
     max_heartbeat_age_seconds: float = 30.0,
+    worker_mode: str = "stopped",
     now: datetime | None = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     fetch_health: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if worker_mode not in {"stopped", "continuous"}:
+        raise ProductionProbeError("production probe worker mode is invalid")
     parsed = urlsplit(service_url)
     if (
         parsed.scheme != "https"
@@ -99,6 +102,8 @@ def run_probe(
     if env_file is not None:
         compose_prefix.extend(["--env-file", str(env_file)])
     compose_prefix.extend(["--project-name", project_name, "--file", str(compose_file)])
+    if worker_mode == "continuous":
+        compose_prefix.extend(["--profile", "continuous-worker"])
     health_url = f"{service_url.rstrip('/')}/v1/health"
     health = (
         fetch_health(health_url)
@@ -124,23 +129,25 @@ def run_probe(
             "state": str(row.get("State") or row.get("state") or "unknown").lower(),
             "health": str(row.get("Health") or row.get("health") or "unknown").lower(),
         }
-    heartbeat_output = _run(
-        [
-            *compose_prefix,
-            "exec",
-            "-T",
-            "managed-operation-worker",
-            "cat",
-            "/tmp/managed-operation-worker-health.json",
-        ],
-        runner=runner,
-    )
-    try:
-        heartbeat = json.loads(heartbeat_output)
-    except json.JSONDecodeError as exc:
-        raise ProductionProbeError("worker heartbeat is invalid") from exc
-    if not isinstance(heartbeat, dict):
-        raise ProductionProbeError("worker heartbeat must be an object")
+    heartbeat: dict[str, Any] = {}
+    if worker_mode == "continuous":
+        heartbeat_output = _run(
+            [
+                *compose_prefix,
+                "exec",
+                "-T",
+                CONTINUOUS_WORKER_SERVICE,
+                "cat",
+                "/tmp/managed-operation-worker-health.json",
+            ],
+            runner=runner,
+        )
+        try:
+            heartbeat = json.loads(heartbeat_output)
+        except json.JSONDecodeError as exc:
+            raise ProductionProbeError("worker heartbeat is invalid") from exc
+        if not isinstance(heartbeat, dict):
+            raise ProductionProbeError("worker heartbeat must be an object")
 
     diagnostics: list[str] = []
     if health.get("ok") is not True or health.get("adapter") != "postgresql":
@@ -148,24 +155,31 @@ def run_probe(
     enabled = health.get("enabled_operation_ids")
     if enabled != [READ_ONLY_CANARY_OPERATION]:
         diagnostics.append("service_allowlist_not_read_only_canary")
-    if set(service_states) != EXPECTED_SERVICES:
+    expected_services = set(BASE_SERVICES)
+    if worker_mode == "continuous":
+        expected_services.add(CONTINUOUS_WORKER_SERVICE)
+    if set(service_states) != expected_services:
         diagnostics.append("compose_service_set_mismatch")
-    for service in sorted(EXPECTED_SERVICES):
+    for service in sorted(expected_services):
         state = service_states.get(service, {})
         if state.get("state") != "running" or state.get("health") != "healthy":
             diagnostics.append(f"{service}_not_healthy")
-    if heartbeat.get("ok") is not True or heartbeat.get("adapter") != "postgresql":
+    if worker_mode == "continuous" and (
+        heartbeat.get("ok") is not True or heartbeat.get("adapter") != "postgresql"
+    ):
         diagnostics.append("worker_heartbeat_not_postgresql_ready")
     generated_at = heartbeat.get("generated_at")
     heartbeat_age: float | None = None
-    if isinstance(generated_at, str):
+    if worker_mode == "continuous" and isinstance(generated_at, str):
         try:
             timestamp = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
             current = now or datetime.now(timezone.utc)
             heartbeat_age = max(0.0, (current - timestamp).total_seconds())
         except ValueError:
             pass
-    if heartbeat_age is None or heartbeat_age > max_heartbeat_age_seconds:
+    if worker_mode == "continuous" and (
+        heartbeat_age is None or heartbeat_age > max_heartbeat_age_seconds
+    ):
         diagnostics.append("worker_heartbeat_stale")
 
     diagnostics = sorted(set(diagnostics))
@@ -186,6 +200,8 @@ def run_probe(
             "enabled_operation_ids": enabled if isinstance(enabled, list) else [],
         },
         "worker": {
+            "mode": worker_mode,
+            "status": "healthy" if worker_mode == "continuous" else "stopped",
             "adapter": heartbeat.get("adapter"),
             "heartbeat_sequence": heartbeat.get("heartbeat_sequence"),
             "heartbeat_age_seconds": heartbeat_age,
@@ -198,8 +214,9 @@ def run_probe(
                 value.get("state") == "running" and value.get("health") == "healthy"
                 for value in service_states.values()
             ),
-            "expected_service_count": len(EXPECTED_SERVICES),
+            "expected_service_count": len(expected_services),
             "read_only_allowlist": enabled == [READ_ONLY_CANARY_OPERATION],
+            "worker_mode": worker_mode,
         },
         "diagnostics": diagnostics,
         "privacy_boundary": {
@@ -230,6 +247,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env-file")
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--max-heartbeat-age", type=float, default=30.0)
+    parser.add_argument(
+        "--worker-mode",
+        choices=("stopped", "continuous"),
+        default="stopped",
+    )
     parser.add_argument("--output")
     args = parser.parse_args(argv)
     try:
@@ -240,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             env_file=Path(args.env_file).resolve() if args.env_file else None,
             timeout_seconds=args.timeout,
             max_heartbeat_age_seconds=args.max_heartbeat_age,
+            worker_mode=args.worker_mode,
         )
     except ProductionProbeError as exc:
         report = {

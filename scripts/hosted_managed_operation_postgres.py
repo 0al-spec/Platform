@@ -216,6 +216,7 @@ class PostgreSQLManagedOperationQueue:
         now_epoch: float,
         now_iso: str,
         lease_seconds: int,
+        expected_request_id: str | None = None,
     ) -> queue_module.LeasedOperation | None:
         if not worker_id or lease_seconds < 1:
             raise queue_module.QueueContractError(
@@ -224,15 +225,16 @@ class PostgreSQLManagedOperationQueue:
         lease_expires_at = now_epoch + lease_seconds
         with self.connection.transaction():
             with self.connection.cursor() as cursor:
-                cursor.execute(
-                    """
+                query = """
                     SELECT * FROM managed_operation_jobs
                     WHERE status = 'queued' AND available_at <= %s
-                    ORDER BY created_at, request_id
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    (now_epoch,),
-                )
+                """
+                parameters: list[Any] = [now_epoch]
+                if expected_request_id is not None:
+                    query += " AND request_id = %s"
+                    parameters.append(expected_request_id)
+                query += " ORDER BY created_at, request_id FOR UPDATE SKIP LOCKED"
+                cursor.execute(query, parameters)
                 for row in cursor.fetchall():
                     request = self._loads(row["request_json"])
                     scopes = queue_module._operation_lock_scopes(request)
@@ -600,3 +602,41 @@ class PostgreSQLManagedOperationQueue:
             }
             for row in rows
         ]
+
+    def operational_snapshot(self) -> dict[str, Any]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT status, COUNT(*) AS count
+                FROM managed_operation_jobs
+                GROUP BY status ORDER BY status
+                """
+            )
+            status_rows = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT request_id, operation_id, workspace_id, status, attempt
+                FROM managed_operation_jobs
+                WHERE status IN ('queued', 'leased', 'running')
+                ORDER BY created_at, request_id
+                """
+            )
+            active_rows = cursor.fetchall()
+            cursor.execute("SELECT COUNT(*) AS count FROM managed_operation_locks")
+            lock_row = cursor.fetchone()
+        return {
+            "status_counts": {
+                str(row["status"]): int(row["count"]) for row in status_rows
+            },
+            "active_jobs": [
+                {
+                    "request_id": row["request_id"],
+                    "operation_id": row["operation_id"],
+                    "workspace_id": row["workspace_id"],
+                    "status": row["status"],
+                    "attempt": int(row["attempt"]),
+                }
+                for row in active_rows
+            ],
+            "active_lock_count": int(lock_row["count"] if lock_row else 0),
+        }

@@ -34,7 +34,6 @@ DEFAULT_OUTPUT = Path("/srv/0al/evidence/hosted-managed-backup-cycle.json")
 DEFAULT_SERVICE_URL = "https://managed.specgraph.tech"
 DEFAULT_PROJECT_NAME = "platform-managed-production"
 RUNTIME_SERVICES = (
-    "managed-operation-worker",
     "managed-operation-service",
     "managed-operation-ingress",
 )
@@ -355,7 +354,13 @@ def run_backup_cycle(
         _queue_audit(prefix, runner=runner)
         phases.append({"phase": "queue_audit_after_quiesce", "status": "passed"})
         _run(
-            [*prefix, "stop", "managed-operation-worker"],
+            [
+                *prefix,
+                "--profile",
+                "continuous-worker",
+                "stop",
+                "managed-operation-worker",
+            ],
             runner=runner,
             label="worker stop after drain",
         )

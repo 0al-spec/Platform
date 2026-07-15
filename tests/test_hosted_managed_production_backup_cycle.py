@@ -126,7 +126,7 @@ class ProductionBackupCycleTests(unittest.TestCase):
             restart = next(
                 index
                 for index, command in enumerate(rendered_calls)
-                if " up --detach managed-operation-worker" in command
+                if " up --detach managed-operation-service" in command
             )
             self.assertLess(stop_boundary, stop_worker)
             self.assertLess(stop_worker, backup)
@@ -168,7 +168,7 @@ class ProductionBackupCycleTests(unittest.TestCase):
             self.assertTrue(report["summary"]["runtime_recovered"])
             self.assertTrue(
                 any(
-                    " up --detach managed-operation-worker" in command
+                    " up --detach managed-operation-service" in command
                     for command in calls
                 )
             )
@@ -210,7 +210,7 @@ class ProductionBackupCycleTests(unittest.TestCase):
             self.assertTrue(report["summary"]["runtime_recovered"])
             self.assertTrue(
                 any(
-                    " up --detach managed-operation-worker" in command
+                    " up --detach managed-operation-service" in command
                     for command in calls
                 )
             )

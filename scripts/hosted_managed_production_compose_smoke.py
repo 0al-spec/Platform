@@ -190,6 +190,8 @@ def run_smoke() -> dict[str, Any]:
         project_name,
         "--file",
         str(COMPOSE_FILE),
+        "--profile",
+        "continuous-worker",
     ]
     environment: dict[str, str] | None = None
     try:

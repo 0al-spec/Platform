@@ -28,12 +28,14 @@ try:
     from scripts import hosted_managed_operations
     from scripts import hosted_managed_operation_queue
     from scripts import hosted_managed_operation_service
+    from scripts import hosted_managed_worker_window
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_operation_executor
     import hosted_managed_operation_canary
     import hosted_managed_operations
     import hosted_managed_operation_queue
     import hosted_managed_operation_service
+    import hosted_managed_worker_window
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -16533,14 +16535,11 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
     return 0 if not args.strict or not policy_findings else 1
 
 
-def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
-    if args.lease_seconds < 600:
-        raise PlatformError(
-            "hosted managed-operation worker lease must be at least 600 seconds"
-        )
-    queue = _open_managed_operation_queue(args)
-    allowed_operation_ids = managed_operation_allowlist_from_args(args)
-
+def _managed_operation_executor(
+    args: argparse.Namespace,
+    *,
+    maximum_timeout_seconds: int | None = None,
+) -> hosted_managed_operation_executor.PlatformManagedOperationExecutor:
     def validate_binding(binding: dict[str, Any], workspace_id: str) -> list[str]:
         return [
             diagnostic.code
@@ -16558,11 +16557,22 @@ def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
         specgraph_dir=Path(args.specgraph_dir),
         binding_validator=validate_binding,
     )
-    executor = hosted_managed_operation_executor.PlatformManagedOperationExecutor(
+    return hosted_managed_operation_executor.PlatformManagedOperationExecutor(
         resolver=resolver,
         platform_script=Path(__file__),
         python_executable=sys.executable,
+        maximum_timeout_seconds=maximum_timeout_seconds,
     )
+
+
+def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
+    if args.lease_seconds < 600:
+        raise PlatformError(
+            "hosted managed-operation worker lease must be at least 600 seconds"
+        )
+    queue = _open_managed_operation_queue(args)
+    allowed_operation_ids = managed_operation_allowlist_from_args(args)
+    executor = _managed_operation_executor(args)
     try:
         recovered = queue.recover_expired(
             now_epoch=time.time(),
@@ -16575,6 +16585,7 @@ def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
             worker_id=args.worker_id,
             lease_seconds=args.lease_seconds,
             allowed_operation_ids=allowed_operation_ids,
+            expected_request_id=args.expected_request_id,
         )
         receipt = worker.run_once()
     except (
@@ -16605,6 +16616,62 @@ def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
             "platform_output_reports_are_authoritative": True,
         },
     }
+
+
+def managed_operation_worker_window(args: argparse.Namespace) -> int:
+    artifact_root = Path(args.artifact_root)
+    try:
+        if not args.expected_request_id:
+            raise hosted_managed_worker_window.WorkerWindowError(
+                "bounded worker window requires --expected-request-id"
+            )
+        policy = hosted_managed_worker_window.load_policy(Path(args.policy))
+        output_path = hosted_managed_worker_window.report_path(
+            artifact_root,
+            args.window_id,
+        )
+        existing = hosted_managed_worker_window.load_existing_report(
+            output_path,
+            window_id=args.window_id,
+            expected_request_id=args.expected_request_id,
+            expected_policy_sha256=hosted_managed_worker_window.policy_sha256(policy),
+        )
+        if existing is not None:
+            print(json.dumps(existing, indent=2, sort_keys=True))
+            summary = existing.get("summary")
+            summary = summary if isinstance(summary, dict) else {}
+            return (
+                0
+                if summary.get("status") == "bounded_worker_window_completed"
+                else 1
+            )
+        queue = _open_managed_operation_queue(args)
+        try:
+            allowed_operation_ids = managed_operation_allowlist_from_args(args)
+            executor = _managed_operation_executor(
+                args,
+                maximum_timeout_seconds=int(policy["max_duration_seconds"]),
+            )
+            report = hosted_managed_worker_window.run_window(
+                queue=queue,
+                executor=executor,
+                policy=policy,
+                window_id=args.window_id,
+                expected_request_id=args.expected_request_id,
+                worker_id=args.worker_id,
+                allowed_operation_ids=allowed_operation_ids,
+            )
+        finally:
+            queue.close()
+        hosted_managed_worker_window.write_report(output_path, report)
+    except (
+        hosted_managed_worker_window.WorkerWindowError,
+        hosted_managed_operation_queue.QueueContractError,
+        hosted_managed_operation_executor.ExecutorContractError,
+    ) as exc:
+        raise PlatformError(str(exc)) from exc
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["summary"]["status"] == "bounded_worker_window_completed" else 1
 
 
 def managed_operation_worker_once(args: argparse.Namespace) -> int:
@@ -20623,12 +20690,30 @@ def build_parser() -> argparse.ArgumentParser:
             "PLATFORM_MANAGED_OPERATION_ALLOWLIST as a comma-separated list."
         ),
     )
+    managed_operation_worker_common.add_argument(
+        "--expected-request-id",
+        help="Lease only this exact managed-operation request id.",
+    )
     managed_operation_worker_parser = managed_operation_subcommands.add_parser(
         "worker-once",
         help="Lease and execute at most one operation through a fixed Platform adapter.",
         parents=[managed_operation_worker_common],
     )
     managed_operation_worker_parser.set_defaults(func=managed_operation_worker_once)
+    managed_operation_worker_window_parser = managed_operation_subcommands.add_parser(
+        "worker-window",
+        help="Execute one exact request under the versioned bounded-worker policy.",
+        parents=[managed_operation_worker_common],
+    )
+    managed_operation_worker_window_parser.add_argument("--window-id", required=True)
+    managed_operation_worker_window_parser.add_argument(
+        "--policy",
+        required=True,
+        help="Absolute path to the digest-pinned worker-window policy.",
+    )
+    managed_operation_worker_window_parser.set_defaults(
+        func=managed_operation_worker_window
+    )
     managed_operation_worker_loop_parser = managed_operation_subcommands.add_parser(
         "worker",
         help="Continuously recover, lease, and execute allowlisted managed operations.",
