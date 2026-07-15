@@ -573,6 +573,14 @@ publish that image by digest. The build removes Caddy's unused low-port file
 capability, allowing the non-root ingress container to keep `cap_drop: ALL` and
 `no-new-privileges` while listening on port `8443`.
 
+The production ingress also requires Compose `init: true`. Docker health checks
+are executed as short-lived processes inside the container; without a minimal
+PID 1 reaper, Caddy can accumulate their zombie children until the container
+PID limit prevents further health checks and `docker exec`. Treat a rising
+ingress PID count or `procReady not received` health output as a blocking
+runtime defect. Recreate the ingress from the validated Compose contract rather
+than increasing `pids.max` or disabling health checks.
+
 The default probe requires the three control-plane services to be healthy, the
 worker to be absent, PostgreSQL as the queue adapter, and exactly
 `review_status_execute` in service health. Use `--worker-mode continuous` only
