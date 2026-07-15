@@ -299,6 +299,19 @@ The current execution order is:
    healthy. Keeping the read-only worker continuously enabled or expanding the
    production allowlist requires a separate rollout decision; neither follows
    automatically from canary sign-off.
+   The next hosted rollout sequence is deliberately incremental:
+   - harden the known backup-error and Compose cold-start CI flakes;
+   - keep the worker in bounded maintenance windows until an explicit operating
+     policy chooses continuous read-only execution;
+   - run a fresh `review_status_execute` pilot only with a new open review object
+     and a new queue-safe request;
+   - add `promotion_execute_dry_run` only after the read-only pilot remains
+     observable and recoverable;
+   - connect the enabled hosted operations to SpecSpace lifecycle actions and
+     observability before proposing any irreversible Git or publication action.
+   Every allowlist expansion remains a separate rollout with operation-specific
+   confirmation, idempotency, monitoring, recovery, backup, and rollback
+   evidence.
 5. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
    machine ids for refs and promotion paths while exposing deterministic,
    privacy-checked display aliases in candidate overview and topology artifacts;
@@ -307,6 +320,16 @@ The current execution order is:
    layers, `modelApplicability`, and change classification so product
    candidates can explain which ontology layer and applicability frame each
    claim depends on.
+7. **Bound product-repository synchronization.** Planned as a Git Service
+   capability, not a generic shell command. Platform should first inspect a
+   repository and its configured remote without changing local refs, then offer
+   separately authorized fetch and fast-forward operations. Repository root,
+   remote alias, remote URL, default branch, expected local HEAD, and expected
+   remote HEAD must come from a validated repository/workspace binding rather
+   than browser input or untrusted `.git/config`. A hosted worker can operate
+   only on a checkout mounted into its execution environment; synchronizing a
+   repository on an operator laptop requires a separate local agent or using the
+   shared Git remote as the exchange boundary.
 
 Platform should not introduce a separate task-tracking CLI yet. Markdown
 roadmaps plus GitHub PR history remain the source of truth. If automation is
