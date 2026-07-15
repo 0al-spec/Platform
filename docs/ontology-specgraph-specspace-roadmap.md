@@ -291,11 +291,14 @@ The current execution order is:
    digest-pinned images, a workspace-scoped `hosted-operation-canary` request,
    and a successful public-TLS `review_status_execute` canary. The authoritative
    review-status report was digest-verified, replay preserved attempt `1`, and
-   the queue drained without active locks. Full production sign-off remains
-   pending until reboot persistence, private backup/restore smoke, hosted
-   SpecSpace smoke, rollback-to-read-only verification, and the final combined
-   evidence gate are complete. Do not expand the production allowlist before
-   that sign-off.
+   the queue drained without active locks. Reboot persistence, strict recovery,
+   private backup/restore smoke, hosted SpecSpace smoke, rollback-to-read-only
+   verification, and the combined evidence gate are complete; the durable
+   result is `production_canary_signed_off`. The worker was stopped after the
+   bounded rollout, while ingress, PostgreSQL, and the HTTP service remain
+   healthy. Keeping the read-only worker continuously enabled or expanding the
+   production allowlist requires a separate rollout decision; neither follows
+   automatically from canary sign-off.
 5. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
    machine ids for refs and promotion paths while exposing deterministic,
    privacy-checked display aliases in candidate overview and topology artifacts;

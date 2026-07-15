@@ -804,6 +804,27 @@ Only `production_canary_signed_off` permits a later, separate rollout proposal
 for `promotion_execute_dry_run`. This sign-off does not enable that operation,
 consume-on-attempt work, non-dry-run Git review, or read-model publication.
 
+### Recorded production canary status
+
+The initial `hosted-operation-canary` production rollout completed the bounded
+`review_status_execute` canary, reboot/recovery replay, digest verification,
+queue-drain audit, backup/restore smoke, hosted SpecSpace smoke, read-only
+rollback, and final combined sign-off. The original request remained at
+`attempt=1`, and the resulting report status was
+`production_canary_signed_off`.
+
+The worker was stopped after the bounded rollout. This is the expected steady
+state until a separate rollout decision chooses one of the following:
+
+- keep the worker stopped and start it only for bounded maintenance windows;
+- keep a read-only worker enabled for monitored `review_status_execute` jobs;
+- propose an allowlist expansion with operation-specific recovery, monitoring,
+  and rollback evidence.
+
+Do not replay the signed-off request as a new semantic probe. Its idempotency
+key must continue to resolve to the existing receipt. A fresh probe requires a
+new open review object, validated input evidence, and a new queue-safe request.
+
 ## Delivery And Recovery
 
 Hosted execution uses **at-least-once** delivery. It must not claim exactly-once
