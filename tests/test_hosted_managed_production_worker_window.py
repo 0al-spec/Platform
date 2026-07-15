@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -131,6 +133,23 @@ class HostedManagedProductionWorkerWindowTests(unittest.TestCase):
             "request_id": REQUEST_ID,
             "output": (root / "evidence.json").resolve(),
         }
+
+    def test_runbook_window_id_example_matches_contract(self) -> None:
+        runbook = (
+            Path(__file__).resolve().parents[1]
+            / "docs"
+            / "hosted-managed-operations.md"
+        ).read_text(encoding="utf-8")
+        match = re.search(
+            r'window_id="review-status-\$\(date -u (\+[^)]+)\)"',
+            runbook,
+        )
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        date_format = match.group(1).removeprefix("+")
+        sample = "review-status-" + datetime.now(timezone.utc).strftime(date_format)
+        self.assertRegex(sample, window_module.WINDOW_ID_RE)
 
     def test_runs_fixed_one_shot_service_and_verifies_stopped_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
