@@ -306,10 +306,12 @@ The current execution order is:
      dependencies at container startup;
    - keep the worker in bounded maintenance windows until an explicit operating
      policy chooses continuous read-only execution;
-   - run a fresh `review_status_execute` pilot only with a new open review object
-     and a new queue-safe request;
-   - add `promotion_execute_dry_run` only after the read-only pilot remains
-     observable and recoverable;
+   - the fresh bounded `review_status_execute` pilot is complete against
+     SpecGraph PR `#689`: one queue attempt, digest-pinned authoritative output,
+     drained queue, stopped worker, successful backup/restore smoke, encrypted
+     off-host export, and healthy post-operation probe;
+   - evaluate `promotion_execute_dry_run` only as a separate allowlist-expansion
+     proposal with its own recovery, monitoring, backup, and rollback evidence;
    - connect the enabled hosted operations to SpecSpace lifecycle actions and
      observability before proposing any irreversible Git or publication action.
    Every allowlist expansion remains a separate rollout with operation-specific

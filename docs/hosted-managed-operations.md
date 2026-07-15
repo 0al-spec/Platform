@@ -866,7 +866,7 @@ server-issued request id and choose a fresh operator window id:
 
 ```bash
 request_id='managed-operation://<workspace>/review_status_execute/<opaque-id>'
-window_id="review-status-$(date -u +%Y%m%dT%H%M%SZ)"
+window_id="review-status-$(date -u +%Y%m%dt%H%M%Sz)"
 
 sudo /usr/bin/python3 \
   /srv/0al/platform/scripts/hosted_managed_production_worker_window.py \
@@ -911,6 +911,30 @@ Enabling `continuous-worker` or adding `promotion_execute_dry_run` requires a
 separate rollout decision, updated evidence, and operation-specific recovery
 analysis.
 
+### Recorded bounded worker pilot status
+
+The first post-sign-off bounded worker pilot completed against SpecGraph review
+PR `#689`. Production ran Platform commit
+`2c7a9cd240d2379a9452f18d57b756295425e21c` with only
+`review_status_execute` enabled. The fresh request started at attempt `0`, the
+one-shot worker processed it exactly once, and the authoritative review-status
+report observed the review as open without merging it or publishing a read
+model.
+
+The core and host reports both completed without diagnostics. The core report
+recorded attempt `1`, one processed operation, digest-pinned authoritative
+output, zero active jobs after execution, and zero active locks. The host report
+confirmed that the bounded container exited, the continuous worker remained
+disabled, and no worker was left running. The subsequent production backup
+cycle `production-20260715t154652z`, isolated restore smoke, encrypted off-host
+export, queue-drain audit, and post-operation probe all passed.
+
+This result validates the bounded operating policy for a second fresh read-only
+request. It does not authorize a persistent worker or expand the production
+allowlist. SpecGraph PR `#689` was subsequently merged through the normal
+repository review process as merge commit `588c4d8`. The canary itself did not
+merge the review or publish a read model.
+
 ### Next hosted rollout phases
 
 The operational-hardening baseline for these phases is now explicit:
@@ -934,8 +958,10 @@ Proceed from the signed-off baseline in bounded stages:
    backup/recovery evidence current;
 2. use the versioned bounded worker policy for each new read-only pilot until a
    separate operating decision enables a continuously running worker;
-3. run a new `review_status_execute` pilot with a new open review and request;
-4. evaluate `promotion_execute_dry_run` as the first allowlist expansion;
+3. preserve the completed fresh `review_status_execute` pilot evidence and keep
+   the worker stopped between bounded windows;
+4. evaluate `promotion_execute_dry_run` as the first allowlist expansion in a
+   separate proposal;
 5. expose only the enabled operations through SpecSpace hosted lifecycle UX;
 6. propose irreversible Git review or publication operations one at a time.
 
