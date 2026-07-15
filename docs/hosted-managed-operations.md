@@ -931,8 +931,9 @@ export, queue-drain audit, and post-operation probe all passed.
 
 This result validates the bounded operating policy for a second fresh read-only
 request. It does not authorize a persistent worker or expand the production
-allowlist. SpecGraph PR `#689` remains a normal review object and must be merged
-or closed through the repository review process, not by the canary.
+allowlist. SpecGraph PR `#689` was subsequently merged through the normal
+repository review process as merge commit `588c4d8`. The canary itself did not
+merge the review or publish a read model.
 
 ### Next hosted rollout phases
 
