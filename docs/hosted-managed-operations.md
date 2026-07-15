@@ -960,8 +960,8 @@ Proceed from the signed-off baseline in bounded stages:
    separate operating decision enables a continuously running worker;
 3. preserve the completed fresh `review_status_execute` pilot evidence and keep
    the worker stopped between bounded windows;
-4. evaluate `promotion_execute_dry_run` as the first allowlist expansion in a
-   separate proposal;
+4. evaluate `promotion_execute_dry_run` as the first allowlist expansion in the
+   [dedicated rollout proposal](hosted-managed-promotion-dry-run-rollout-proposal.md);
 5. expose only the enabled operations through SpecSpace hosted lifecycle UX;
 6. propose irreversible Git review or publication operations one at a time.
 
