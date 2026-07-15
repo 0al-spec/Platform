@@ -178,6 +178,7 @@ services:
   managed-operation-ingress:
     image: "${PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE:?set a digest-pinned Caddy image}"
     restart: unless-stopped
+    init: true
     user: "1000:1000"
     read_only: true
     tmpfs:

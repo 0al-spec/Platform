@@ -295,6 +295,8 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
         raise RuntimeError("TLS ingress must be the only published production port")
     if ingress.get("user") != "1000:1000":
         raise RuntimeError("TLS ingress must run as the unprivileged runtime user")
+    if ingress.get("init") is not True:
+        raise RuntimeError("TLS ingress must use an init process to reap health checks")
     ingress_command = ingress.get("command")
     if ingress_command != [
         "run",
