@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+import re
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any
 
 
@@ -18,6 +19,10 @@ COMPOSE_FILES = (
 )
 ALLOWLIST_ENV = "PLATFORM_MANAGED_OPERATION_ALLOWLIST"
 READ_ONLY_CANARY_OPERATION = "review_status_execute"
+MINIMUM_DYNAMIC_INSTALL_START_PERIOD_SECONDS = 90
+DURATION_PATTERN = re.compile(
+    r"(?:(?P<hours>[0-9]+)h)?(?:(?P<minutes>[0-9]+)m)?(?:(?P<seconds>[0-9]+)s)?"
+)
 
 
 def _command(env_file: Path) -> list[str]:
@@ -43,6 +48,19 @@ def _environment(*, allowlist: str | None) -> dict[str, str]:
     if allowlist is not None:
         environment[ALLOWLIST_ENV] = allowlist
     return environment
+
+
+def _duration_seconds(value: object) -> int | None:
+    if not isinstance(value, str):
+        return None
+    matched = DURATION_PATTERN.fullmatch(value)
+    if matched is None or not any(matched.groupdict().values()):
+        return None
+    return (
+        int(matched.group("hours") or 0) * 3600
+        + int(matched.group("minutes") or 0) * 60
+        + int(matched.group("seconds") or 0)
+    )
 
 
 def validate_hosted_managed_compose() -> dict[str, Any]:
@@ -98,6 +116,19 @@ def validate_hosted_managed_compose() -> dict[str, Any]:
             raise RuntimeError(
                 f"{service_name} did not receive the deployment allowlist"
             )
+        healthcheck = service.get("healthcheck")
+        start_period = (
+            healthcheck.get("start_period")
+            if isinstance(healthcheck, dict)
+            else None
+        )
+        start_period_seconds = _duration_seconds(start_period)
+        if start_period_seconds is None:
+            raise RuntimeError(f"{service_name} omitted its startup health budget")
+        if start_period_seconds < MINIMUM_DYNAMIC_INSTALL_START_PERIOD_SECONDS:
+            raise RuntimeError(
+                f"{service_name} startup health budget is too short"
+            )
         checked_services.append(service_name)
 
     return {
@@ -107,6 +138,9 @@ def validate_hosted_managed_compose() -> dict[str, Any]:
             "missing_allowlist_blocked": True,
             "configured_allowlist_rendered": True,
             "checked_services": checked_services,
+            "dynamic_install_start_period_seconds": (
+                MINIMUM_DYNAMIC_INSTALL_START_PERIOD_SECONDS
+            ),
         },
     }
 

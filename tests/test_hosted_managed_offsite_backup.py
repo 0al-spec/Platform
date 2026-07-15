@@ -14,6 +14,35 @@ from scripts import hosted_managed_offsite_backup as offsite
 PLAINTEXT_ARCHIVE = b"private hosted backup stream"
 
 
+class _BrokenPipeInput(io.BytesIO):
+    def write(self, data: bytes) -> int:
+        raise BrokenPipeError("age exited before consuming input")
+
+
+class _FakeProcess:
+    def __init__(
+        self,
+        *,
+        returncode: int,
+        stdout: io.BytesIO | None = None,
+        stdin: io.BytesIO | None = None,
+    ) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stdin = stdin
+        self.completed = False
+
+    def poll(self) -> int | None:
+        return self.returncode if self.completed else None
+
+    def wait(self) -> int:
+        self.completed = True
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.completed = True
+
+
 class OffsiteBackupTests(unittest.TestCase):
     def executable(self, root: Path, name: str, source: str) -> Path:
         path = root / name
@@ -170,6 +199,44 @@ class OffsiteBackupTests(unittest.TestCase):
             with self.assertRaisesRegex(offsite.OffsiteBackupError, "age encryption"):
                 offsite.export_offsite_backup(**fixture)
             self.assertEqual(list((root / "encrypted").iterdir()), [])
+
+    def test_early_age_exit_is_classified_after_broken_pipe(self) -> None:
+        processes = iter(
+            (
+                _FakeProcess(
+                    returncode=0,
+                    stdout=io.BytesIO(PLAINTEXT_ARCHIVE),
+                ),
+                _FakeProcess(
+                    returncode=1,
+                    stdin=_BrokenPipeInput(),
+                ),
+            )
+        )
+
+        with self.assertRaisesRegex(offsite.OffsiteBackupError, "age encryption"):
+            offsite._stream_encrypted_archive(
+                ssh_command=["fake-ssh"],
+                age_command=["fake-age"],
+                temporary_output=Path("unused.tar.age"),
+                popen=lambda *args, **kwargs: next(processes),
+            )
+
+    def test_remote_failure_keeps_precedence_without_broken_pipe(self) -> None:
+        processes = iter(
+            (
+                _FakeProcess(returncode=1, stdout=io.BytesIO()),
+                _FakeProcess(returncode=1, stdin=io.BytesIO()),
+            )
+        )
+
+        with self.assertRaisesRegex(offsite.OffsiteBackupError, "remote backup"):
+            offsite._stream_encrypted_archive(
+                ssh_command=["fake-ssh"],
+                age_command=["fake-age"],
+                temporary_output=Path("unused.tar.age"),
+                popen=lambda *args, **kwargs: next(processes),
+            )
 
     def test_failed_restore_smoke_report_blocks_export(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

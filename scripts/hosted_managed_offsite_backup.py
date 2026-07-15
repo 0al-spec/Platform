@@ -202,12 +202,22 @@ def _stream_encrypted_archive(
         )
         if ssh_process.stdout is None or age_process.stdin is None:
             raise OffsiteBackupError("backup export pipeline is unavailable")
-        while chunk := ssh_process.stdout.read(1024 * 1024):
-            plaintext_digest.update(chunk)
-            age_process.stdin.write(chunk)
-        age_process.stdin.close()
+        broken_pipe: BrokenPipeError | None = None
+        try:
+            while chunk := ssh_process.stdout.read(1024 * 1024):
+                plaintext_digest.update(chunk)
+                age_process.stdin.write(chunk)
+            age_process.stdin.close()
+        except BrokenPipeError as exc:
+            broken_pipe = exc
+            if ssh_process.poll() is None:
+                ssh_process.terminate()
         ssh_returncode = ssh_process.wait()
         age_returncode = age_process.wait()
+        if broken_pipe is not None:
+            if age_returncode != 0:
+                raise OffsiteBackupError("age encryption failed") from broken_pipe
+            raise OffsiteBackupError("encrypted backup stream failed") from broken_pipe
         if ssh_returncode != 0:
             raise OffsiteBackupError("remote backup stream failed")
         if age_returncode != 0:
@@ -227,7 +237,10 @@ def _stream_encrypted_archive(
         if age_process is not None:
             for stream in (age_process.stdin,):
                 if stream is not None and not stream.closed:
-                    stream.close()
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
     return plaintext_digest.hexdigest(), temporary_output.stat().st_size
 
 
