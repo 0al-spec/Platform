@@ -519,7 +519,7 @@ class PlatformManagedOperationExecutor:
                 command.extend(["--dry-run", "--open-review-dry-run"])
             return [command]
         if operation_id == "review_status_execute":
-            return [[
+            command = [
                 *base,
                 "product-candidate-promotion",
                 "review-status",
@@ -529,7 +529,16 @@ class PlatformManagedOperationExecutor:
                 str(self._output(resolved, "runs/product_candidate_promotion_review_status_report.json")),
                 "--format",
                 "json",
-            ]]
+            ]
+            review_object_evidence = self._optional_input(
+                resolved,
+                "runs/product_candidate_promotion_review_object_evidence.json",
+            )
+            if review_object_evidence is not None:
+                command.extend(
+                    ["--review-object-evidence", str(review_object_evidence)]
+                )
+            return [command]
         if operation_id == "read_model_publication_execute":
             return [[
                 *base,

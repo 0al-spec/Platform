@@ -242,7 +242,13 @@ MANAGED_OPERATIONS: tuple[ManagedOperationDefinition, ...] = (
     ManagedOperationDefinition(
         operation_id="review_status_execute",
         platform_command=("product-candidate-promotion", "review-status"),
-        input_refs=("runs/product_candidate_promotion_execution_report.json",),
+        input_refs=(
+            "runs/product_candidate_promotion_execution_report.json",
+            "runs/product_candidate_promotion_review_object_evidence.json",
+        ),
+        conditional_input_refs=(
+            "runs/product_candidate_promotion_review_object_evidence.json",
+        ),
         output_reports=("runs/product_candidate_promotion_review_status_report.json",),
         idempotency_source="review.pr_number",
         side_effect_class="git_read_only",

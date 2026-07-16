@@ -11696,6 +11696,135 @@ workspaces:
                 ).is_file()
             )
 
+    def test_product_candidate_promotion_review_object_evidence_is_probe_only(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            review_url = "https://github.com/example/repo/pull/456"
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 456,
+                    "url": review_url,
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "headRefOid": "d" * 40,
+                },
+            )
+            evidence = tmp_root / "product_candidate_promotion_review_object_evidence.json"
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "review-object-evidence",
+                "--execution-report",
+                str(execution_report),
+                "--review-url",
+                review_url,
+                "--gh-bin",
+                str(fake_gh),
+                "--output",
+                str(evidence),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"], payload["diagnostics"])
+            self.assertTrue(payload["probe_only"])
+            self.assertEqual(payload["review_number"], 456)
+            self.assertTrue(evidence.is_file())
+            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+            status_output = tmp_root / "product_candidate_promotion_review_status_report.json"
+            status_result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--review-object-evidence",
+                str(evidence),
+                "--gh-bin",
+                str(fake_gh),
+                "--output",
+                str(status_output),
+                "--format",
+                "json",
+            )
+            self.assertEqual(status_result.returncode, 0, status_result.stderr)
+            status_payload = json.loads(status_result.stdout)
+            self.assertTrue(status_payload["review_probe_only"])
+            self.assertEqual(status_payload["summary"]["status"], "review_probe_completed")
+            self.assertIn("--review-url", status_payload["graph_repository_command"])
+
+            bundle_dir = self.write_public_read_model_bundle(tmp_root)
+            publish_result = self.run_cli(
+                "product-candidate-promotion",
+                "publish-read-model",
+                "--review-status-report",
+                str(status_output),
+                "--bundle-dir",
+                str(bundle_dir),
+                "--output-dir",
+                str(tmp_root / "published"),
+                "--format",
+                "json",
+            )
+            self.assertEqual(publish_result.returncode, 1)
+            publish_payload = json.loads(publish_result.stdout)
+            self.assertIn(
+                "product_candidate_promotion_review_probe_not_publishable",
+                {item["code"] for item in publish_payload["diagnostics"]},
+            )
+
+    def test_product_candidate_promotion_review_object_evidence_rejects_foreign_branch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            review_url = "https://github.com/example/repo/pull/456"
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 456,
+                    "url": review_url,
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "headRefName": "foreign-branch",
+                    "baseRefName": "main",
+                    "headRefOid": "d" * 40,
+                },
+            )
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "review-object-evidence",
+                "--execution-report",
+                str(execution_report),
+                "--review-url",
+                review_url,
+                "--gh-bin",
+                str(fake_gh),
+                "--output",
+                str(tmp_root / "evidence.json"),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertIn(
+            "product_candidate_promotion_review_object_identity_invalid",
+            {item["code"] for item in payload["diagnostics"]},
+        )
+
     def test_product_candidate_promotion_review_status_rejects_dry_run_execution(
         self,
     ) -> None:

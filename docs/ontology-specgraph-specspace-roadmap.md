@@ -332,8 +332,10 @@ The current execution order is:
      SpecSpace-owned state, and provider-binding validation. The remaining
      rollout evidence is one UI-originated `review_status_execute` processed in
      a bounded production worker window, followed by queue drain, rollback
-     verification, probe, and backup. Continuous read-only execution remains a
-     later operating-policy decision.
+     verification, probe, and backup. A probe-only review object now has an
+     explicit digest-pinned evidence artifact and cannot be confused with the
+     promotion execution that opened the candidate PR. Continuous read-only
+     execution remains a later operating-policy decision.
    Every allowlist expansion remains a separate rollout with operation-specific
    confirmation, idempotency, monitoring, recovery, backup, and rollback
    evidence.
