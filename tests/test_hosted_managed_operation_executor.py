@@ -246,6 +246,46 @@ class HostedManagedOperationExecutorTests(unittest.TestCase):
             "runs/product_candidate_promotion_review_status_report.json",
         )
 
+    def test_review_status_passes_optional_review_object_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = ExecutorFixture(Path(temp_dir))
+            definition = contracts.operation_by_id("review_status_execute")
+            assert definition is not None
+            execution_ref = "runs/product_candidate_promotion_execution_report.json"
+            evidence_ref = (
+                "runs/product_candidate_promotion_review_object_evidence.json"
+            )
+            execution_path = fixture.write_input(execution_ref, "review_status_execute", 0)
+            evidence_path = fixture.write_input(evidence_ref, "review_status_execute", 1)
+            request = contracts.build_request(
+                operation_id="review_status_execute",
+                workspace_binding=binding(),
+                workspace_binding_ref=BINDING_REF,
+                workspace_binding_source_sha256=hashlib.sha256(
+                    fixture.binding_path.read_bytes()
+                ).hexdigest(),
+                inputs={execution_ref: execution_path, evidence_ref: evidence_path},
+                generated_at="2026-07-10T00:00:00Z",
+            )
+            runner = RecordingRunner()
+            executor = executor_module.PlatformManagedOperationExecutor(
+                resolver=fixture.resolver(),
+                platform_script=fixture.platform_script,
+                runner=runner,
+            )
+            result = executor.execute(
+                queue_module.LeasedOperation(
+                    request_id=request["request_id"],
+                    request=request,
+                    attempt=1,
+                    lease_owner="worker-a",
+                    lease_expires_at=200,
+                )
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertIn("--review-object-evidence", runner.commands[0])
+
     def test_worker_window_caps_request_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             fixture = ExecutorFixture(Path(temp_dir))

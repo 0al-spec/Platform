@@ -13787,6 +13787,292 @@ def product_candidate_promotion_portable_review_url(
     return review_url if isinstance(review_url, str) else None
 
 
+PRODUCT_CANDIDATE_PROMOTION_REVIEW_OBJECT_EVIDENCE_KIND = (
+    "platform_product_candidate_promotion_review_object_evidence"
+)
+
+
+def product_candidate_promotion_review_object_evidence_diagnostics(
+    evidence: dict[str, Any],
+    *,
+    execution_report_path: Path,
+    execution_report: dict[str, Any],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    if evidence.get("artifact_kind") != (
+        PRODUCT_CANDIDATE_PROMOTION_REVIEW_OBJECT_EVIDENCE_KIND
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_object_kind_mismatch",
+                subject="review_object_evidence.artifact_kind",
+                message=(
+                    "expected "
+                    f"{PRODUCT_CANDIDATE_PROMOTION_REVIEW_OBJECT_EVIDENCE_KIND}"
+                ),
+            )
+        )
+    if evidence.get("ok") is not True or evidence.get("probe_only") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_object_not_ready",
+                subject="review_object_evidence.ok",
+                message="review object evidence must be ready and probe_only",
+            )
+        )
+    expected_digest = file_sha256(execution_report_path)
+    if (
+        expected_digest is None
+        or evidence.get("promotion_execution_report_sha256") != expected_digest
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_object_execution_digest_mismatch",
+                subject="review_object_evidence.promotion_execution_report_sha256",
+                message="review object evidence must pin the selected promotion execution report",
+            )
+        )
+    for field in ("workspace_id", "candidate_id", "candidate_branch"):
+        if evidence.get(field) != execution_report.get(field):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_review_object_identity_mismatch",
+                    subject=f"review_object_evidence.{field}",
+                    message=f"{field} must match the promotion execution report",
+                )
+            )
+    review_number = evidence.get("review_number")
+    diagnostics.extend(
+        github_pull_request_url_diagnostics(
+            evidence.get("review_url"),
+            subject="review_object_evidence.review_url",
+            expected_number=review_number,
+        )
+    )
+    if evidence.get("review_state_at_capture") != "open":
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_object_not_open",
+                subject="review_object_evidence.review_state_at_capture",
+                message="a fresh review probe must be open when evidence is captured",
+            )
+        )
+    review_head_sha = evidence.get("review_head_sha")
+    if not isinstance(review_head_sha, str) or not re.fullmatch(
+        r"[0-9a-f]{40}", review_head_sha
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_object_head_invalid",
+                subject="review_object_evidence.review_head_sha",
+                message="review object evidence must pin the captured PR head SHA",
+            )
+        )
+    privacy = evidence.get("privacy_boundary")
+    if not isinstance(privacy, dict) or any(
+        privacy.get(field) is not expected
+        for field, expected in (
+            ("public_safe", True),
+            ("raw_idea_included", False),
+            ("local_paths_included", False),
+        )
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_object_privacy_invalid",
+                subject="review_object_evidence.privacy_boundary",
+                message="review object evidence must be explicitly public-safe",
+            )
+        )
+    boundary = evidence.get("authority_boundary")
+    required_false = (
+        "opens_pull_requests",
+        "merges_pull_requests",
+        "publishes_read_models",
+        "creates_git_commits",
+        "mutates_canonical_specs",
+        "writes_ontology_packages",
+        "accepts_ontology_terms",
+    )
+    if not isinstance(boundary, dict) or any(
+        boundary.get(field) is not False for field in required_false
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_object_authority_expanded",
+                subject="review_object_evidence.authority_boundary",
+                message="review object evidence must remain read-only and probe-only",
+            )
+        )
+    elif any(
+        isinstance(key, str) and key.startswith("may_") and value is not False
+        for key, value in boundary.items()
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_object_authority_expanded",
+                subject="review_object_evidence.authority_boundary",
+                message="unknown may_* authority flags must be exactly false",
+            )
+        )
+    return diagnostics
+
+
+def product_candidate_promotion_review_object_evidence(args: argparse.Namespace) -> int:
+    execution_report_path = Path(args.execution_report).resolve()
+    execution_report = load_json_mapping(
+        execution_report_path,
+        label="product candidate promotion execution report",
+    )
+    diagnostics = product_candidate_promotion_execution_report_diagnostics(
+        execution_report,
+        base_dir=execution_report_path.parent,
+    )
+    review_number_tail = str(args.review_url).rstrip("/").rsplit("/", 1)[-1]
+    review_number = int(review_number_tail) if review_number_tail.isdigit() else None
+    diagnostics.extend(
+        github_pull_request_url_diagnostics(
+            args.review_url,
+            subject="review_url",
+            expected_number=review_number,
+        )
+    )
+    command = [
+        args.gh_bin,
+        "pr",
+        "view",
+        str(args.review_url),
+        "--json",
+        "number,url,state,isDraft,headRefName,baseRefName,headRefOid",
+    ]
+    if args.repo:
+        command.extend(["--repo", args.repo])
+    command_result: dict[str, Any] | None = None
+    review: dict[str, Any] = {}
+    if not any(item.level == "ERROR" for item in diagnostics):
+        command_result, diagnostic = run_graph_repository_command(command)
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+        else:
+            try:
+                parsed = json.loads(command_result["stdout"])
+            except json.JSONDecodeError as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_candidate_promotion_review_object_unparseable",
+                        subject="gh.pr.view",
+                        message=f"cannot parse gh pr view output: {exc}",
+                    )
+                )
+            else:
+                if isinstance(parsed, dict):
+                    review = parsed
+                else:
+                    diagnostics.append(
+                        Diagnostic(
+                            level="ERROR",
+                            code="product_candidate_promotion_review_object_wrong_type",
+                            subject="gh.pr.view",
+                            message="gh pr view output must be an object",
+                        )
+                    )
+    expected_branch = execution_report.get("candidate_branch")
+    if review:
+        if (
+            review.get("state") != "OPEN"
+            or review.get("isDraft") is True
+            or review.get("headRefName") != expected_branch
+            or review.get("baseRefName") != args.base
+            or review.get("number") != review_number
+            or review.get("url") != args.review_url
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_review_object_identity_invalid",
+                    subject="gh.pr.view",
+                    message=(
+                        "review object must be an open non-draft PR with the expected "
+                        "number, URL, candidate branch, and base branch"
+                    ),
+                )
+            )
+    error_count = sum(item.level == "ERROR" for item in diagnostics)
+    ok = error_count == 0
+    report = {
+        "schema_version": 1,
+        "artifact_kind": PRODUCT_CANDIDATE_PROMOTION_REVIEW_OBJECT_EVIDENCE_KIND,
+        "generated_at": utc_now_iso(),
+        "ok": ok,
+        "probe_only": True,
+        "promotion_execution_report_ref": (
+            "runs/product_candidate_promotion_execution_report.json"
+        ),
+        "promotion_execution_report_sha256": file_sha256(execution_report_path),
+        "workspace_id": execution_report.get("workspace_id"),
+        "candidate_id": execution_report.get("candidate_id"),
+        "candidate_branch": execution_report.get("candidate_branch"),
+        "review_url": review.get("url") if review else args.review_url,
+        "review_number": review.get("number") if review else review_number,
+        "review_state_at_capture": (
+            "open" if review.get("state") == "OPEN" else "unknown"
+        ),
+        "review_head_sha": review.get("headRefOid"),
+        "base_branch": review.get("baseRefName") if review else args.base,
+        "workspace_binding": execution_report.get("workspace_binding"),
+        "privacy_boundary": {
+            "public_safe": True,
+            "raw_idea_included": False,
+            "local_paths_included": False,
+        },
+        "command": command,
+        "command_result": command_result,
+        "authority_boundary": {
+            "opens_pull_requests": False,
+            "merges_pull_requests": False,
+            "publishes_read_models": False,
+            "creates_git_commits": False,
+            "mutates_canonical_specs": False,
+            "writes_ontology_packages": False,
+            "accepts_ontology_terms": False,
+        },
+        "diagnostics": [asdict(item) for item in diagnostics],
+        "summary": {
+            "status": "review_object_ready" if ok else "blocked",
+            "error_count": error_count,
+            "next_action": (
+                "Run read-only review status inspection in a bounded worker window."
+                if ok
+                else "Resolve review object validation findings before enqueue."
+            ),
+        },
+    }
+    output_path = Path(args.output).resolve()
+    if ok and not args.no_write_report:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif diagnostics:
+        print(render_diagnostic_table(diagnostics))
+    else:
+        print(f"review_object_ready\t{report['review_url']}")
+    return 0 if ok else 1
+
+
 def product_candidate_promotion_execution_report_diagnostics(
     execution_report: dict[str, Any],
     *,
@@ -13991,6 +14277,15 @@ def product_candidate_promotion_review_status_report_diagnostics(
                 message="read-model publication requires a merged product review",
             )
         )
+    if require_merged and review_status_report.get("review_probe_only") is True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_review_probe_not_publishable",
+                subject="review_status_report.review_probe_only",
+                message="an external review probe cannot authorize read-model publication",
+            )
+        )
     graph_report_ref = review_status_report.get("graph_repository_review_status_report_ref")
     if not isinstance(graph_report_ref, str) or not graph_report_ref.strip():
         diagnostics.append(
@@ -14059,6 +14354,24 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         execution_report,
         base_dir=execution_report_path.parent,
     )
+    review_object_evidence_path = (
+        Path(args.review_object_evidence).resolve()
+        if args.review_object_evidence
+        else None
+    )
+    review_object_evidence: dict[str, Any] = {}
+    if review_object_evidence_path is not None:
+        review_object_evidence = load_json_mapping(
+            review_object_evidence_path,
+            label="product candidate promotion review object evidence",
+        )
+        diagnostics.extend(
+            product_candidate_promotion_review_object_evidence_diagnostics(
+                review_object_evidence,
+                execution_report_path=execution_report_path,
+                execution_report=execution_report,
+            )
+        )
     preflight_error_count = sum(
         1 for diagnostic in diagnostics if diagnostic.level == "ERROR"
     )
@@ -14085,6 +14398,14 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
     portable_review_url = product_candidate_promotion_portable_review_url(
         execution_report
     )
+    review_probe_only = bool(review_object_evidence)
+    if review_probe_only:
+        portable_review_url = (
+            review_object_evidence.get("review_url")
+            if isinstance(review_object_evidence.get("review_url"), str)
+            else None
+        )
+        legacy_handoff_ready = False
     review_status_report_dir = (
         legacy_workspace_dir if legacy_handoff_ready else output_path.parent
     )
@@ -14124,6 +14445,30 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
             diagnostics.append(child_diagnostic)
 
     child_ok = child_payload is not None and child_payload.get("ok") is True
+    if review_probe_only and isinstance(child_payload, dict):
+        current_review = nested_mapping(child_payload, "pull_request")
+        expected_review = review_object_evidence
+        if any(
+            (
+                current_review.get(field) != expected_review.get(expected_field)
+            )
+            for field, expected_field in (
+                ("number", "review_number"),
+                ("url", "review_url"),
+                ("headRefName", "candidate_branch"),
+                ("baseRefName", "base_branch"),
+                ("headRefOid", "review_head_sha"),
+            )
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_candidate_promotion_review_object_changed",
+                    subject="graph_repository_review_status.pull_request",
+                    message="review object identity or head changed after evidence capture",
+                )
+            )
+            child_ok = False
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0 and child_ok
     review_state = (
@@ -14181,6 +14526,12 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         "artifact_kind": PRODUCT_CANDIDATE_PROMOTION_REVIEW_STATUS_REPORT_KIND,
         "generated_at": utc_now_iso(),
         "promotion_execution_report_ref": str(execution_report_path),
+        "review_object_evidence_ref": (
+            None
+            if review_object_evidence_path is None
+            else str(review_object_evidence_path)
+        ),
+        "review_probe_only": review_probe_only,
         "graph_repository_review_status_report_ref": None
         if graph_repository_report_path is None
         else str(graph_repository_report_path),
@@ -14227,7 +14578,9 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         },
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
         "summary": {
-            "status": "ready_for_read_model_publication"
+            "status": "review_probe_completed"
+            if ok and review_probe_only
+            else "ready_for_read_model_publication"
             if ok and review_merged
             else "waiting_for_review_merge"
             if ok
@@ -15515,7 +15868,7 @@ def graph_repository_review_status(args: argparse.Namespace) -> int:
         "--json",
         (
             "number,url,state,isDraft,mergedAt,mergeCommit,"
-            "headRefName,baseRefName,reviewDecision"
+            "headRefName,headRefOid,baseRefName,reviewDecision"
         ),
     ]
     if args.repo:
@@ -23392,6 +23745,59 @@ def build_parser() -> argparse.ArgumentParser:
         func=product_candidate_promotion_execute
     )
 
+    product_candidate_promotion_review_object_parser = (
+        product_candidate_promotion_subcommands.add_parser(
+            "review-object-evidence",
+            help=(
+                "Capture read-only, probe-only evidence for an existing GitHub "
+                "review object without claiming that Platform opened it."
+            ),
+        )
+    )
+    product_candidate_promotion_review_object_parser.add_argument(
+        "--execution-report",
+        required=True,
+        help="Non-dry-run product promotion execution used to bind candidate identity.",
+    )
+    product_candidate_promotion_review_object_parser.add_argument(
+        "--review-url",
+        required=True,
+        help="Fresh open GitHub pull request URL used only as a read-only probe target.",
+    )
+    product_candidate_promotion_review_object_parser.add_argument(
+        "--base",
+        default="main",
+        help="Expected review base branch.",
+    )
+    product_candidate_promotion_review_object_parser.add_argument(
+        "--repo",
+        help="Optional GitHub repository passed to gh as owner/name.",
+    )
+    product_candidate_promotion_review_object_parser.add_argument(
+        "--gh-bin",
+        default="gh",
+        help="GitHub CLI executable used for read-only PR inspection.",
+    )
+    product_candidate_promotion_review_object_parser.add_argument(
+        "--output",
+        required=True,
+        help="Output path for the probe-only review object evidence report.",
+    )
+    product_candidate_promotion_review_object_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Validate and print evidence without writing the output report.",
+    )
+    product_candidate_promotion_review_object_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format.",
+    )
+    product_candidate_promotion_review_object_parser.set_defaults(
+        func=product_candidate_promotion_review_object_evidence
+    )
+
     product_candidate_promotion_review_status_parser = (
         product_candidate_promotion_subcommands.add_parser(
             "review-status",
@@ -23406,6 +23812,13 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "Path to platform_product_candidate_promotion_execution_report."
+        ),
+    )
+    product_candidate_promotion_review_status_parser.add_argument(
+        "--review-object-evidence",
+        help=(
+            "Optional probe-only evidence for a fresh external review object. "
+            "This can redirect read-only inspection but can never authorize publication."
         ),
     )
     product_candidate_promotion_review_status_parser.add_argument(

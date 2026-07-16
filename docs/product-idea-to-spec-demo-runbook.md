@@ -276,6 +276,12 @@ contract are:
 | `promotion_execute_dry_run` | `product-candidate-promotion execute --dry-run --open-review-dry-run` | `runs/product_candidate_promotion_execution_report.json` |
 | `promotion_review_execute` | `product-candidate-promotion execute` | `runs/product_candidate_promotion_execution_report.json` |
 | `review_status_execute` | `product-candidate-promotion review-status` | `runs/product_candidate_promotion_review_status_report.json` |
+
+For an external canary review object, first materialize the optional
+`runs/product_candidate_promotion_review_object_evidence.json` with
+`product-candidate-promotion review-object-evidence`. This keeps the canary PR
+separate from the earlier promotion execution and permanently blocks the probe
+report from authorizing read-model publication.
 | `read_model_publication_execute` | `product-candidate-promotion publish-read-model` | `runs/product_candidate_promotion_read_model_publication_report.json` |
 
 Use this diagnosis order when a UI action fails:

@@ -866,6 +866,28 @@ Do not replay the signed-off request as a new semantic probe. Its idempotency
 key must continue to resolve to the existing receipt. A fresh probe requires a
 new open review object, validated input evidence, and a new queue-safe request.
 
+When the fresh review object exists only as an external canary target, do not
+rewrite the prior promotion execution report or claim that Platform opened the
+probe PR. Capture a separate probe-only artifact instead:
+
+```bash
+.venv/bin/python scripts/platform.py \
+  product-candidate-promotion review-object-evidence \
+  --execution-report \
+    ../SpecGraph/runs/<workspace>/product_candidate_promotion_execution_report.json \
+  --review-url https://github.com/<owner>/<repo>/pull/<number> \
+  --repo <owner>/<repo> \
+  --output \
+    ../SpecGraph/runs/<workspace>/product_candidate_promotion_review_object_evidence.json \
+  --format json
+```
+
+The command checks the open non-draft PR, expected candidate branch and base,
+and pins the selected promotion execution report digest. The hosted
+`review_status_execute` request includes this artifact only when it is present.
+Its resulting report is marked `review_probe_only=true`; even a merged probe PR
+cannot authorize read-model publication.
+
 ### Bounded worker operating policy
 
 `deploy/hosted-managed/worker-window-policy.json` is the versioned,
