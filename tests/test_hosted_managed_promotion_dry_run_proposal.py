@@ -67,6 +67,18 @@ class HostedManagedPromotionDryRunProposalTests(unittest.TestCase):
             compose,
         )
 
+    def test_hosted_runtime_includes_promotion_wrapper_dependencies(self) -> None:
+        requirements = (self.root / "requirements-hosted.txt").read_text(
+            encoding="utf-8"
+        )
+        workflow = (
+            self.root / ".github" / "workflows" / "deploy-bundle.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("jsonschema>=", requirements)
+        self.assertIn("psycopg[binary]>=", requirements)
+        self.assertIn("import jsonschema, psycopg", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

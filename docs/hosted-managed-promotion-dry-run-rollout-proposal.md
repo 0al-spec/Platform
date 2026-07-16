@@ -176,3 +176,18 @@ The proposal recommends `promotion_execute_dry_run` as the first production
 allowlist expansion. The current decision is **proceed to local and clean-VM
 validation, not enable production yet**. A separate decision after that evidence
 must authorize the single production bounded window.
+
+### Clean-VM runtime dependency finding
+
+The first clean-VM attempt reached the digest-pinned hosted image but stopped
+before operation execution because the image contained the PostgreSQL queue
+adapter and not the `jsonschema` runtime dependency required by the fixed
+product-promotion wrapper. The queue failed closed at `attempt=1`; no output
+reports or Git mutations were produced, and that request is not eligible for a
+blind retry.
+
+`requirements-hosted.txt` now carries both queue and wrapper validation
+dependencies. CI imports `jsonschema` and `psycopg` from the built hosted image
+so a source checkout with broader development dependencies cannot mask this
+class of deployment defect. A fresh image lock and a fresh clean-VM request are
+required before recording the rollout decision.
