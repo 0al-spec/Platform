@@ -13110,6 +13110,14 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
                 subject_prefix="workspace_binding",
             )
         )
+    portable_plan_binding_context = (
+        workspace_binding_context
+        if getattr(args, "workspace_initialization", None)
+        and not any(
+            diagnostic.level == "ERROR" for diagnostic in binding_diagnostics
+        )
+        else None
+    )
     diagnostics = [
         *product_candidate_promotion_decision_diagnostics(approval_decision),
         *product_candidate_promotion_plan_source_diagnostics(
@@ -13117,14 +13125,7 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
             plan=plan,
             approval_decision_path=approval_decision_path,
             approval_decision=approval_decision,
-            workspace_binding_context=(
-                workspace_binding_context
-                if not any(
-                    diagnostic.level == "ERROR"
-                    for diagnostic in binding_diagnostics
-                )
-                else None
-            ),
+            workspace_binding_context=portable_plan_binding_context,
         ),
         *graph_repository_promotion_request_diagnostics(
             plan,

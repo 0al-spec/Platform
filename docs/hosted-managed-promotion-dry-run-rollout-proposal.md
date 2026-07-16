@@ -214,5 +214,7 @@ assumption one step earlier: approval source refs were checked against the
 plan's embedded `runs_dir` even though the validated binding and transported
 plan both identified the current `runs/<workspace-id>` directory. Promotion
 request generation now accepts that current directory only when it exactly
-matches a validated binding. Unbound plans retain legacy behavior, and a plan
-paired with approval evidence from another run remains rejected.
+matches an explicitly selected, validated initialization report. A compact
+binding copied into an approval decision is insufficient on its own. Unbound
+plans retain legacy behavior, and a plan paired with approval evidence from
+another run remains rejected.

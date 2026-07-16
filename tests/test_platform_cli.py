@@ -10837,6 +10837,80 @@ workspaces:
             {diagnostic["code"] for diagnostic in payload["diagnostics"]},
         )
 
+    def test_product_candidate_promotion_request_does_not_trust_embedded_binding_for_transport(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            producer_root = tmp_root / "producer"
+            plan_path = self.build_graph_repository_execution_plan(producer_root)
+            approval_path = self.write_candidate_approval_decision(producer_root)
+            transported_run_dir = tmp_root / "transport" / "runs" / "idea-alpha"
+            transported_run_dir.mkdir(parents=True)
+            transported_plan = transported_run_dir / plan_path.name
+            shutil.copyfile(plan_path, transported_plan)
+            for source_path in (producer_root / "runs").iterdir():
+                shutil.copyfile(source_path, transported_run_dir / source_path.name)
+
+            approval = json.loads(approval_path.read_text(encoding="utf-8"))
+            approval["candidate"]["active_candidate_ref"] = (
+                "runs/idea-alpha/active_idea_to_spec_candidate.json"
+            )
+            approval["candidate"]["promotion_gate_ref"] = (
+                "runs/idea-alpha/idea_to_spec_promotion_gate.json"
+            )
+            for key, source in approval["source_artifacts"].items():
+                if isinstance(source, dict):
+                    source["source_ref"] = (
+                        f"runs/idea-alpha/{Path(source['source_ref']).name}"
+                    )
+                else:
+                    approval["source_artifacts"][key] = (
+                        f"runs/idea-alpha/{Path(source).name}"
+                    )
+            initialization = (
+                transported_run_dir
+                / "platform_product_workspace_initialization_execution_report.json"
+            )
+            self.write_workspace_initialization_execution_report(
+                initialization,
+                workspace_id="idea-alpha",
+                display_name="Idea Alpha",
+            )
+            binding_context, binding_diagnostics = (
+                platform_module.managed_product_workspace_binding_context(
+                    report_path=initialization,
+                    specgraph_dir=tmp_root / "transport",
+                    expected_workspace_id="idea-alpha",
+                )
+            )
+            self.assertFalse(binding_diagnostics)
+            self.assertIsNotNone(binding_context)
+            approval["workspace_binding"] = binding_context
+            transported_approval = transported_run_dir / approval_path.name
+            transported_approval.write_text(
+                json.dumps(approval, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "request",
+                "--plan",
+                str(transported_plan),
+                "--approval-decision",
+                str(transported_approval),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertIn(
+            "product_candidate_promotion_source_plan_mismatch",
+            {diagnostic["code"] for diagnostic in payload["diagnostics"]},
+        )
+
     def test_product_candidate_promotion_request_rejects_unapproved_decision(
         self,
     ) -> None:
