@@ -10995,6 +10995,40 @@ workspaces:
         self.assertEqual(payload["graph_repository_plan_ref"], str(plan_path.resolve()))
         self.assertIn("--plan", payload["git_service_command"])
 
+    def test_product_candidate_promotion_execute_preserves_legacy_plan_ref(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request, approval_decision = (
+                self.build_product_candidate_promotion_request(tmp_root)
+            )
+            request_payload = json.loads(promotion_request.read_text(encoding="utf-8"))
+            request_payload.pop("plan_sha256", None)
+            promotion_request.write_text(json.dumps(request_payload), encoding="utf-8")
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(tmp_root / "candidate-worktree"),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"], payload["diagnostics"])
+        self.assertNotIn("--plan", payload["git_service_command"])
+
     def test_product_candidate_promotion_execute_rejects_foreign_explicit_plan(
         self,
     ) -> None:

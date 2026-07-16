@@ -13376,7 +13376,7 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
         "--format",
         "json",
     ]
-    if plan_path is not None:
+    if explicit_plan_path is not None:
         git_service_command.extend(["--plan", str(plan_path)])
     if materialized_source_dir is not None:
         git_service_command.extend(
