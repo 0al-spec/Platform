@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import unittest
 
 from scripts import hosted_managed_operations as operations
@@ -78,6 +79,13 @@ class HostedManagedPromotionDryRunProposalTests(unittest.TestCase):
         self.assertIn("jsonschema>=", requirements)
         self.assertIn("psycopg[binary]>=", requirements)
         self.assertIn("import jsonschema, psycopg", workflow)
+        self.assertIsNotNone(
+            re.search(
+                r"(?m)^  platform-deploy-bundle:\n"
+                r"    needs: hosted-managed-contract$",
+                workflow,
+            )
+        )
 
 
 if __name__ == "__main__":
