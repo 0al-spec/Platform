@@ -860,6 +860,12 @@ The production Compose profile now has three distinct modes:
 - `continuous-worker`: the prior long-running worker, retained for explicit
   compatibility and future rollout decisions but never enabled by default.
 
+It also contains the isolated `promotion-dry-run-window` profile. That profile
+is not a fourth steady state. It starts one fixed, non-restarting worker for the
+`promotion_execute_dry_run` policy and is accepted only when the service
+allowlist contains that operation alone. The continuous worker fails closed if
+the deployment is switched to this profile.
+
 Do not run the bounded service with `docker compose up`. After the request has
 been authenticated and enqueued while the worker is stopped, record the
 server-issued request id and choose a fresh operator window id:
@@ -907,9 +913,86 @@ make hosted-managed-production-contract
 ```
 
 This policy is an operating boundary, not authority to keep the worker running.
-Enabling `continuous-worker` or adding `promotion_execute_dry_run` requires a
-separate rollout decision, updated evidence, and operation-specific recovery
-analysis.
+Enabling `continuous-worker` or selecting the tracked
+`promotion_execute_dry_run` profile in production requires a separate rollout
+decision and updated evidence.
+
+### Promotion dry-run bounded profile
+
+`deploy/hosted-managed/promotion-dry-run-worker-window-policy.json` is the
+tracked first allowlist-expansion policy. It preserves the same one-request,
+attempt-zero, strict-recovery, exclusive-queue, timeout, and stopped-worker
+requirements as the read-only policy. It additionally requires these two
+authoritative outputs:
+
+```text
+runs/product_candidate_promotion_execution_report.json
+runs/git_service_promotion_execution_report.json
+```
+
+The host wrapper verifies both receipt digests and report semantics. A valid
+result must be a strict dry-run: no physical candidate worktree, copied files,
+commit, branch, pull request, read-model publication, canonical spec mutation,
+or Ontology write. Queue success without both matching reports is blocked.
+
+Before a clean-VM or explicitly approved production window, deploy the same
+immutable image lock with the operation-specific profile while the worker is
+stopped:
+
+```bash
+sudo /usr/bin/python3 \
+  /srv/0al/platform/scripts/hosted_managed_production_deploy.py \
+  --operation-profile promotion-dry-run
+
+sudo /usr/bin/python3 \
+  /srv/0al/platform/scripts/hosted_managed_production_probe.py \
+  --service-url https://managed.specgraph.tech \
+  --compose-file \
+    /srv/0al/platform/docker-compose.hosted-managed-production.example.yml \
+  --env-file /etc/0al/hosted-managed-production.env \
+  --project-name platform-managed-production \
+  --operation-profile promotion-dry-run
+```
+
+Authenticate and enqueue exactly one validated
+`promotion_execute_dry_run` request while no worker is running. Record the
+server-issued request id, then open one window:
+
+```bash
+request_id='managed-operation://<workspace>/promotion_execute_dry_run/<opaque-id>'
+window_id="promotion-dry-run-$(date -u +%Y%m%dt%H%M%Sz)"
+
+sudo /usr/bin/python3 \
+  /srv/0al/platform/scripts/hosted_managed_production_worker_window.py \
+  --operation-profile promotion-dry-run \
+  --window-id "$window_id" \
+  --request-id "$request_id"
+```
+
+Acceptance requires `attempt=1`, a drained queue, no active lock, both
+digest-pinned reports, `dry_run_reports_verified: true`, and no candidate
+worktree under `.platform/candidates/<workspace>`. Regardless of success, do
+not leave the expanded service profile in place. After preserving the reports
+and diagnosing any ambiguity, restore the read-only baseline:
+
+```bash
+sudo /usr/bin/python3 \
+  /srv/0al/platform/scripts/hosted_managed_production_deploy.py \
+  --operation-profile review-status
+
+sudo /usr/bin/python3 \
+  /srv/0al/platform/scripts/hosted_managed_production_probe.py \
+  --service-url https://managed.specgraph.tech \
+  --compose-file \
+    /srv/0al/platform/docker-compose.hosted-managed-production.example.yml \
+  --env-file /etc/0al/hosted-managed-production.env \
+  --project-name platform-managed-production \
+  --operation-profile review-status
+```
+
+Then run the bounded backup cycle and encrypted off-host export. The profile
+does not authorize `promotion_review_execute`, a persistent worker, or any
+other operation.
 
 ### Recorded bounded worker pilot status
 

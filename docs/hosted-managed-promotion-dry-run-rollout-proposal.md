@@ -1,6 +1,6 @@
 # Hosted Promotion Dry-Run Production Rollout Proposal
 
-Status: **proposed; conditionally suitable, not approved for production enablement**
+Status: **bounded policy implemented; clean-VM and production rollout evidence pending**
 
 Operation: `promotion_execute_dry_run`
 
@@ -9,14 +9,14 @@ Operation: `promotion_execute_dry_run`
 `promotion_execute_dry_run` is the preferred first expansion of the hosted
 production operation allowlist because the registered Platform operation is
 explicitly dry-run-only and produces durable evidence without opening a Git
-review. It is not ready to enable in production yet.
+review. The operation-specific bounded policy is implemented, but production
+enablement still requires the clean-VM drill and an explicit rollout decision.
 
-The current production operating policy, preflight, probe, Compose validation,
-and bounded worker wrapper intentionally accept only `review_status_execute`.
-Changing the deployment environment alone would fail closed or bypass the
-tracked operating contract. A separate implementation PR must add an
-operation-specific bounded policy and validation before any production request
-is enqueued.
+The default production profile still accepts only `review_status_execute`.
+Tracked operation profiles now let the deploy, preflight, probe, Compose, and
+bounded worker wrappers switch atomically to exactly
+`promotion_execute_dry_run` for one stopped-worker window. A mixed allowlist or
+continuous dry-run worker remains invalid.
 
 Merging this proposal does not:
 
@@ -66,13 +66,13 @@ the operation:
 7. The production request begins at attempt `0` and is the only request eligible
    for the bounded window.
 
-## Required Implementation Before Rollout
+## Implemented Bounded Contract
 
-The implementation PR must keep the existing read-only production policy as the
-default and add a separate dry-run policy. It must not generalize the worker into
+The implementation keeps the existing read-only production policy as the
+default and adds a separate dry-run policy without generalizing the worker into
 an arbitrary operation runner.
 
-Required changes:
+Implemented controls:
 
 1. Add a versioned bounded-worker policy scoped to exactly
    `promotion_execute_dry_run`, one expected request, one processed operation,
@@ -85,9 +85,10 @@ Required changes:
 4. Verify both authoritative output reports by logical ref and SHA-256 digest.
 5. Verify operation semantics from report content, not only file presence or a
    successful queue receipt.
-6. Add negative tests for expanded allowlists, foreign workspace inputs, stale
-   digests, missing output reports, `dry_run != true`, attempted Git mutation,
-   timeout, and ambiguous lease recovery.
+6. Add negative tests for expanded allowlists, stale or missing output reports,
+   `dry_run != true`, attempted Git mutation, timeout, and ambiguous lease
+   recovery. Foreign workspace inputs and stale input digests remain guarded by
+   the hosted executor contract before Platform execution.
 7. Keep `promotion_review_execute`, publication, and consume-on-attempt
    operations disabled.
 
@@ -152,8 +153,8 @@ audit trail needed to distinguish a failed transport from a completed dry-run.
 
 ## Rollout Phases
 
-1. **Contract implementation:** add the operation-specific policy, wrapper
-   validation, tests, and docs in a separate PR.
+1. **Contract implementation:** complete. The operation-specific policy,
+   profile registry, wrapper validation, tests, and docs are tracked.
 2. **Local and CI validation:** run the real HTTP handler, PostgreSQL queue,
    worker, and report checks with fixture-owned artifacts.
 3. **Clean VM or staging drill:** exercise one request with immutable images,
@@ -172,5 +173,6 @@ audit trail needed to distinguish a failed transport from a completed dry-run.
 ## Approval Gate
 
 The proposal recommends `promotion_execute_dry_run` as the first production
-allowlist expansion, subject to the implementation and evidence above. The
-current decision is **proceed to an implementation PR, not enable production**.
+allowlist expansion. The current decision is **proceed to local and clean-VM
+validation, not enable production yet**. A separate decision after that evidence
+must authorize the single production bounded window.

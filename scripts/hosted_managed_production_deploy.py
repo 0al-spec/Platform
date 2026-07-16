@@ -25,6 +25,12 @@ try:
         _write_atomic,
         render_environment,
     )
+    from scripts.hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        profile_by_id,
+        profile_by_operation_id,
+        profile_ids,
+    )
     from scripts.validate_hosted_managed_image_lock import validate_image_lock
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     from hosted_managed_production_preflight import run_preflight
@@ -33,6 +39,12 @@ except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo r
         ProductionEnvRenderError,
         _write_atomic,
         render_environment,
+    )
+    from hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        profile_by_id,
+        profile_by_operation_id,
+        profile_ids,
     )
     from validate_hosted_managed_image_lock import validate_image_lock
 
@@ -126,14 +138,38 @@ def _required(values: dict[str, str], key: str) -> str:
 
 
 def _require_release_only_environment_change(
-    *, current: dict[str, str], candidate: dict[str, str]
+    *,
+    current: dict[str, str],
+    candidate: dict[str, str],
+    operation_profile: str,
 ) -> None:
     if set(current) != set(candidate):
         raise ProductionDeployError(
             "production environment inventory drift requires a separate procedure"
         )
     changed = {key for key in current if current.get(key) != candidate.get(key)}
-    if not changed.issubset(RELEASE_IMAGE_KEYS):
+    allowed_changes = set(RELEASE_IMAGE_KEYS)
+    if "PLATFORM_MANAGED_OPERATION_ALLOWLIST" in changed:
+        try:
+            current_profile = profile_by_operation_id(
+                current["PLATFORM_MANAGED_OPERATION_ALLOWLIST"]
+            )
+            candidate_profile = profile_by_id(operation_profile)
+        except (KeyError, ValueError) as exc:
+            raise ProductionDeployError(
+                "operation profile transition is not approved"
+            ) from exc
+        if (
+            current_profile.operation_id
+            == candidate["PLATFORM_MANAGED_OPERATION_ALLOWLIST"]
+            or candidate_profile.operation_id
+            != candidate["PLATFORM_MANAGED_OPERATION_ALLOWLIST"]
+        ):
+            raise ProductionDeployError(
+                "operation profile transition does not match the requested profile"
+            )
+        allowed_changes.add("PLATFORM_MANAGED_OPERATION_ALLOWLIST")
+    if not changed.issubset(allowed_changes):
         raise ProductionDeployError(
             "non-image production configuration drift requires a separate procedure"
         )
@@ -243,7 +279,9 @@ def _wait_queue_drained(
     raise ProductionDeployError("production queue did not drain after ingress closed")
 
 
-def _preflight(*, values: dict[str, str], service_url: str) -> dict[str, Any]:
+def _preflight(
+    *, values: dict[str, str], service_url: str, operation_profile: str
+) -> dict[str, Any]:
     secret_names = {
         "service_token": "PLATFORM_MANAGED_OPERATION_TOKEN_FILE",
         "database_password": "PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE",
@@ -269,6 +307,7 @@ def _preflight(*, values: dict[str, str], service_url: str) -> dict[str, Any]:
             _required(values, "PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT")
         ),
         state_dir=Path(_required(values, "PLATFORM_MANAGED_OPERATION_STATE_DIR")),
+        operation_profile=operation_profile,
     )
     if report.get("ok") is not True:
         raise ProductionDeployError("production preflight blocked deployment")
@@ -285,6 +324,7 @@ def _probe_until_healthy(
     attempts: int,
     interval_seconds: float,
     sleeper: Callable[[float], None],
+    operation_profile: str,
 ) -> tuple[dict[str, Any], int]:
     last_report: dict[str, Any] | None = None
     for attempt in range(1, attempts + 1):
@@ -295,6 +335,7 @@ def _probe_until_healthy(
                 env_file=env_file,
                 project_name=project_name,
                 runner=runner,
+                operation_profile=operation_profile,
             )
         except ProductionProbeError:
             last_report = None
@@ -319,7 +360,12 @@ def deploy(
     drain_attempts: int = 12,
     drain_interval_seconds: float = 5.0,
     sleeper: Callable[[float], None] = time.sleep,
+    operation_profile: str = REVIEW_STATUS_PROFILE_ID,
 ) -> dict[str, Any]:
+    try:
+        selected_profile = profile_by_id(operation_profile)
+    except ValueError as exc:
+        raise ProductionDeployError("production operation profile is invalid") from exc
     if not all(
         path.is_absolute() for path in (image_lock_path, env_file, compose_file)
     ):
@@ -361,6 +407,7 @@ def deploy(
         ingress_port=int(
             _required(current_values, "PLATFORM_MANAGED_OPERATION_INGRESS_PORT")
         ),
+        operation_profile=selected_profile.profile_id,
     )
     candidate_values = _parse_environment(rendered)
     if _required(
@@ -372,8 +419,21 @@ def deploy(
     _require_release_only_environment_change(
         current=current_values,
         candidate=candidate_values,
+        operation_profile=selected_profile.profile_id,
     )
-    preflight_report = _preflight(values=candidate_values, service_url=service_url)
+    preflight_report = _preflight(
+        values=candidate_values,
+        service_url=service_url,
+        operation_profile=selected_profile.profile_id,
+    )
+    try:
+        current_profile = profile_by_operation_id(
+            _required(current_values, "PLATFORM_MANAGED_OPERATION_ALLOWLIST")
+        )
+    except ValueError as exc:
+        raise ProductionDeployError(
+            "current production operation profile is unsupported"
+        ) from exc
 
     env_file.parent.mkdir(parents=True, exist_ok=True)
     descriptor, candidate_name = tempfile.mkstemp(
@@ -467,6 +527,7 @@ def deploy(
             attempts=health_attempts,
             interval_seconds=health_interval_seconds,
             sleeper=sleeper,
+            operation_profile=selected_profile.profile_id,
         )
     except (
         OSError,
@@ -500,6 +561,7 @@ def deploy(
                 attempts=health_attempts,
                 interval_seconds=health_interval_seconds,
                 sleeper=sleeper,
+                operation_profile=current_profile.profile_id,
             )
             rollback_ok = True
         except (OSError, ProductionDeployError):
@@ -522,7 +584,8 @@ def deploy(
             "status": "production_runtime_updated",
             "source_commit": source_commit,
             "environment_sha256": render_report["summary"]["environment_sha256"],
-            "enabled_operation_ids": ["review_status_execute"],
+            "operation_profile": selected_profile.profile_id,
+            "enabled_operation_ids": [selected_profile.operation_id],
             "queue_drained": True,
             "drain_attempt": drain_attempt,
             "postgresql_image_unchanged": True,
@@ -543,6 +606,9 @@ def deploy(
         "effects": {
             "production_environment_replaced": True,
             "runtime_containers_recreated": True,
+            "operation_profile_changed": (
+                current_profile.profile_id != selected_profile.profile_id
+            ),
             "enqueue_boundary_quiesced": True,
             "postgresql_volume_recreated": False,
             "managed_operation_enqueued": False,
@@ -582,6 +648,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--health-interval", type=float, default=5.0)
     parser.add_argument("--drain-attempts", type=int, default=12)
     parser.add_argument("--drain-interval", type=float, default=5.0)
+    parser.add_argument(
+        "--operation-profile",
+        choices=profile_ids(),
+        default=REVIEW_STATUS_PROFILE_ID,
+    )
     args = parser.parse_args(argv)
     python_error: ProductionDeployError | None = None
     try:
@@ -614,6 +685,7 @@ def main(argv: list[str] | None = None) -> int:
                 health_interval_seconds=args.health_interval,
                 drain_attempts=args.drain_attempts,
                 drain_interval_seconds=args.drain_interval,
+                operation_profile=args.operation_profile,
             )
         except (
             OSError,

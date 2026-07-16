@@ -90,7 +90,8 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("service_url_not_private_https_endpoint", report["diagnostics"])
         self.assertIn(
-            "deployment_allowlist_not_exact_canary_scope", report["diagnostics"]
+            "deployment_allowlist_not_exact_operation_profile",
+            report["diagnostics"],
         )
         self.assertIn("service_token_mode_not_0440", report["diagnostics"])
 
@@ -135,7 +136,8 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
             fixture = self.fixture(Path(temp_dir))
             fixture["allowlist"] = "review_status_execute,promotion_execute_dry_run"
             blocked = preflight.run_preflight(**fixture)
-            fixture["allow_dry_run"] = True
+            fixture["allowlist"] = "promotion_execute_dry_run"
+            fixture["operation_profile"] = "promotion-dry-run"
             ready = preflight.run_preflight(**fixture)
         self.assertFalse(blocked["ok"])
         self.assertTrue(ready["ok"], ready["diagnostics"])
@@ -338,7 +340,7 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
         )
         self.assertFalse(report["ok"])
         self.assertIn("worker_heartbeat_stale", report["diagnostics"])
-        self.assertIn("service_allowlist_not_read_only_canary", report["diagnostics"])
+        self.assertIn("service_allowlist_not_operation_profile", report["diagnostics"])
 
     def test_continuous_worker_requires_explicit_profile(self) -> None:
         now = datetime(2026, 7, 13, tzinfo=timezone.utc)
@@ -369,6 +371,37 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
         self.assertTrue(
             all("continuous-worker" in command for command in commands)
         )
+
+    def test_promotion_dry_run_profile_requires_stopped_worker(self) -> None:
+        now = datetime(2026, 7, 13, tzinfo=timezone.utc)
+        report = probe.run_probe(
+            service_url="https://managed.example.test",
+            compose_file=Path("/srv/platform/compose.yml"),
+            project_name="platform-managed",
+            operation_profile="promotion-dry-run",
+            now=now,
+            runner=self.fixture_runner(heartbeat_generated_at=now.isoformat()),
+            fetch_health=lambda _: {
+                "ok": True,
+                "adapter": "postgresql",
+                "enabled_operation_ids": ["promotion_execute_dry_run"],
+            },
+        )
+        self.assertTrue(report["ok"], report["diagnostics"])
+        self.assertTrue(report["summary"]["allowlist_matches_profile"])
+        self.assertFalse(report["summary"]["read_only_allowlist"])
+
+        with self.assertRaisesRegex(
+            probe.ProductionProbeError,
+            "continuous worker is forbidden",
+        ):
+            probe.run_probe(
+                service_url="https://managed.example.test",
+                compose_file=Path("/srv/platform/compose.yml"),
+                project_name="platform-managed",
+                operation_profile="promotion-dry-run",
+                worker_mode="continuous",
+            )
 
     def test_probe_rejects_url_userinfo_before_fetching(self) -> None:
         with self.assertRaisesRegex(

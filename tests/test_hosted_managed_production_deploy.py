@@ -150,6 +150,63 @@ class HostedManagedProductionDeployTests(unittest.TestCase):
             self.assertNotIn("/srv/0al", str(report))
             self.assertFalse(report["authority_boundary"]["may_enqueue_operations"])
 
+    def test_switches_to_exact_promotion_dry_run_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.fixture(Path(temp_dir))
+            fixture.pop("commands")
+            fixture.pop("rendered")
+            fixture["operation_profile"] = "promotion-dry-run"
+            with (
+                mock.patch.object(deployment, "_preflight", return_value={"ok": True}),
+                mock.patch.object(
+                    deployment, "_queue_audit", return_value=self.queue_report()
+                ),
+                mock.patch.object(
+                    deployment,
+                    "_probe_until_healthy",
+                    return_value=(self.successful_probe(), 1),
+                ) as probe_mock,
+            ):
+                report = deployment.deploy(**fixture)
+
+            environment = fixture["env_file"].read_text(encoding="utf-8")
+            self.assertIn(
+                "PLATFORM_MANAGED_OPERATION_ALLOWLIST=promotion_execute_dry_run\n",
+                environment,
+            )
+            self.assertEqual(report["summary"]["operation_profile"], "promotion-dry-run")
+            self.assertEqual(
+                report["summary"]["enabled_operation_ids"],
+                ["promotion_execute_dry_run"],
+            )
+            self.assertTrue(report["effects"]["operation_profile_changed"])
+            self.assertEqual(
+                probe_mock.call_args.kwargs["operation_profile"],
+                "promotion-dry-run",
+            )
+
+    def test_mixed_current_allowlist_blocks_profile_transition(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.fixture(Path(temp_dir))
+            fixture.pop("commands")
+            fixture.pop("rendered")
+            fixture["operation_profile"] = "promotion-dry-run"
+            current = fixture["env_file"].read_text(encoding="utf-8")
+            fixture["env_file"].write_text(
+                current.replace(
+                    "PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute",
+                    "PLATFORM_MANAGED_OPERATION_ALLOWLIST="
+                    "review_status_execute,promotion_execute_dry_run",
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                deployment.ProductionDeployError,
+                "transition is not approved",
+            ):
+                deployment.deploy(**fixture)
+
     def test_checkout_lock_mismatch_blocks_before_compose(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             fixture = self.fixture(Path(temp_dir))

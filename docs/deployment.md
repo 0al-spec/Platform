@@ -197,11 +197,14 @@ Issue and renew the dedicated HTTPS certificate with the tracked
 `deploy/hosted-managed/hosted-managed-tls.sh` helper described in the same
 runbook. The helper pins issuance to the expected IPv4 and synchronizes only
 the configured certificate lineage into the runtime secret files.
-The production profile starts with its worker stopped. A versioned bounded
-worker policy permits one exact `review_status_execute` request through the
-one-shot `bounded-worker` profile. The former long-running worker is isolated
-behind `continuous-worker` and requires a separate rollout decision. Detailed
-operator commands and evidence semantics are in
+The production profile starts with its worker stopped. Versioned bounded
+policies permit either one exact `review_status_execute` request through
+`bounded-worker` or, after a separate rollout decision, one exact
+`promotion_execute_dry_run` request through `promotion-dry-run-window`. The
+dry-run profile requires two digest-pinned Platform reports and proves that no
+Git mutation occurred. The former long-running worker is isolated behind
+`continuous-worker`, is limited to the review-status profile, and requires a
+separate rollout decision. Detailed operator commands and evidence semantics are in
 [`hosted-managed-operations.md`](hosted-managed-operations.md#bounded-worker-operating-policy).
 
 The production contract is checked in CI with:
@@ -222,8 +225,9 @@ discovery aids and are not deployment inputs. The same lock also pins the
 third-party PostgreSQL runtime image used by the production Compose profile.
 Render the non-secret production environment from that lock with
 `scripts/render_hosted_managed_production_env.py`; this avoids manually
-transcribing image digests and keeps the initial allowlist fixed to the
-read-only canary operation.
+transcribing image digests. Its default profile keeps the allowlist fixed to the
+read-only canary operation; an explicit tracked operation profile is required
+for a bounded dry-run transition.
 
 ## Local Compose Entry Point
 

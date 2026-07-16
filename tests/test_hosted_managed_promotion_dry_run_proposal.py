@@ -9,6 +9,7 @@ from scripts import hosted_managed_operations as operations
 class HostedManagedPromotionDryRunProposalTests(unittest.TestCase):
     def setUp(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        self.root = root
         self.proposal = (
             root / "docs" / "hosted-managed-promotion-dry-run-rollout-proposal.md"
         ).read_text(encoding="utf-8")
@@ -36,15 +37,35 @@ class HostedManagedPromotionDryRunProposalTests(unittest.TestCase):
     def test_proposal_does_not_claim_rollout_authority(self) -> None:
         normalized = " ".join(self.proposal.split())
         self.assertIn(
-            "conditionally suitable, not approved for production enablement",
+            "clean-VM and production rollout evidence pending",
             normalized,
         )
         self.assertIn(
-            "proceed to an implementation PR, not enable production",
+            "proceed to local and clean-VM validation, not enable production yet",
             normalized,
         )
         self.assertIn("does not authorize a continuous worker", normalized)
         self.assertIn("no branch, commit, or pull request was created", normalized)
+
+    def test_implemented_profile_remains_one_shot_and_operation_specific(self) -> None:
+        policy = (
+            self.root
+            / "deploy"
+            / "hosted-managed"
+            / "promotion-dry-run-worker-window-policy.json"
+        ).read_text(encoding="utf-8")
+        compose = (
+            self.root / "docker-compose.hosted-managed-production.example.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"promotion_execute_dry_run"', policy)
+        self.assertNotIn("review_status_execute", policy)
+        self.assertIn("promotion-dry-run-window", compose)
+        self.assertIn("restart: \"no\"", compose)
+        self.assertIn(
+            "promotion-dry-run-worker-window-policy.json",
+            compose,
+        )
 
 
 if __name__ == "__main__":
