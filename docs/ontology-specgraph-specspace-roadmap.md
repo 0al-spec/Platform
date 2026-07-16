@@ -310,8 +310,8 @@ The current execution order is:
      SpecGraph PR `#689`: one queue attempt, digest-pinned authoritative output,
      drained queue, stopped worker, successful backup/restore smoke, encrypted
      off-host export, and healthy post-operation probe;
-   - `promotion_execute_dry_run` is selected as the first allowlist expansion in
-     the
+   - `promotion_execute_dry_run` completed as the first bounded allowlist
+     expansion under the
      [dedicated rollout proposal](hosted-managed-promotion-dry-run-rollout-proposal.md).
    - Hosted promotion transport pins the execution plan independently and
      validates `promotion_request.plan_sha256`; producer-machine absolute plan
@@ -320,8 +320,11 @@ The current execution order is:
      verification, stopped-worker enforcement, and rollback path are
      implemented. The clean-VM drill passed at `attempt=1` with two
      digest-pinned reports, a drained queue, strict recovery, backup, and no Git
-     mutations. One production bounded window is approved only after its fresh
-     preflight and off-host backup; the default allowlist remains read-only;
+     mutations. The single production window completed at `attempt=1` with two
+     digest-pinned reports, a drained queue, no Git mutation, successful
+     pre/post backup and off-host export, immediate rollback, and a healthy
+     final probe. The default allowlist is again `review_status_execute`, the
+     worker is stopped, and another window requires a new decision;
    - connect the enabled hosted operations to SpecSpace lifecycle actions and
      observability before proposing any irreversible Git or publication action.
    Every allowlist expansion remains a separate rollout with operation-specific
