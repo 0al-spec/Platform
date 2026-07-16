@@ -19932,6 +19932,23 @@ def list_values_for_service_section(
     return values
 
 
+def top_level_mapping_keys(lines: list[str], section_name: str) -> list[str]:
+    keys: list[str] = []
+    in_section = False
+    for line in lines:
+        if line == f"{section_name}:":
+            in_section = True
+            continue
+        if not in_section:
+            continue
+        if line and not line.startswith(" "):
+            break
+        match = re.match(r"^  ([A-Za-z0-9_.-]+):\s*$", line)
+        if match:
+            keys.append(match.group(1))
+    return keys
+
+
 def compose_port_host_part(port: str) -> str | None:
     value = port.strip().strip('"').strip("'")
     if not value or ":" not in value:
@@ -20127,6 +20144,35 @@ def validate_timeweb_manifest_tree(
                 errors.append(
                     f"{target_file} hosted managed profile is missing {fragment.strip()!r}"
                 )
+        expected_api_volumes = [
+            f"{TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:{TIMEWEB_HOSTED_MANAGED_STATE_DIR}"
+        ]
+        actual_api_volumes = list_values_for_service_section(
+            blocks,
+            "specspace-api",
+            "volumes",
+        )
+        if actual_api_volumes != expected_api_volumes:
+            errors.append(
+                f"{target_file} hosted specspace-api volumes must equal "
+                f"{expected_api_volumes}, got {actual_api_volumes}"
+            )
+        for service_name in set(blocks) - {"specspace-api"}:
+            service_volumes = list_values_for_service_section(
+                blocks,
+                service_name,
+                "volumes",
+            )
+            if service_volumes:
+                errors.append(
+                    f"{target_file} hosted {service_name} must not declare volumes"
+                )
+        top_level_volumes = top_level_mapping_keys(lines, "volumes")
+        if top_level_volumes != [TIMEWEB_HOSTED_MANAGED_STATE_VOLUME]:
+            errors.append(
+                f"{target_file} hosted top-level volumes must equal "
+                f"{[TIMEWEB_HOSTED_MANAGED_STATE_VOLUME]}, got {top_level_volumes}"
+            )
         if re.search(r"(?m)^\s+(?:source|type):\s*bind\s*$", text):
             errors.append(f"{target_file} hosted managed profile must not use bind mounts")
     else:

@@ -993,6 +993,48 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(validate.returncode, 1, validate.stderr)
         self.assertFalse(json.loads(validate.stdout)["valid"])
 
+    def test_timeweb_validate_rejects_extra_hosted_bind_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-execution",
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose.replace(
+                    "    depends_on:\n      - specspace-api\n",
+                    "    depends_on:\n      - specspace-api\n"
+                    "    volumes:\n      - /etc:/host-etc\n",
+                ),
+                encoding="utf-8",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-execution",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 1, validate.stderr)
+        payload = json.loads(validate.stdout)
+        self.assertIn(
+            "docker-compose.yml hosted app must not declare volumes",
+            payload["errors"],
+        )
+
     def test_timeweb_render_rejects_non_https_hosted_executor(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             result = self.run_cli(
