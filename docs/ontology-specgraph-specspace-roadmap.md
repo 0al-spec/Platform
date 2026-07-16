@@ -318,8 +318,10 @@ The current execution order is:
      refs are not execution inputs on the worker host.
      Its separate one-shot policy, exact deployment profile, report-semantic
      verification, stopped-worker enforcement, and rollback path are
-     implemented. Production enablement remains blocked on a clean-VM drill and
-     a separate single-window rollout decision;
+     implemented. The clean-VM drill passed at `attempt=1` with two
+     digest-pinned reports, a drained queue, strict recovery, backup, and no Git
+     mutations. One production bounded window is approved only after its fresh
+     preflight and off-host backup; the default allowlist remains read-only;
    - connect the enabled hosted operations to SpecSpace lifecycle actions and
      observability before proposing any irreversible Git or publication action.
    Every allowlist expansion remains a separate rollout with operation-specific
