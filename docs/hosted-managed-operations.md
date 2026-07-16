@@ -1020,6 +1020,21 @@ Then run the bounded backup cycle and encrypted off-host export. The profile
 does not authorize `promotion_review_execute`, a persistent worker, or any
 other operation.
 
+### Recorded promotion dry-run clean-VM status
+
+The operation-specific clean-VM gate passed on ARM64 with Platform commit
+`f7e3d66aeca1de51d0b4ffccdbeda5f86e97d581` and its digest-pinned hosted image.
+The fresh request started at attempt `0`, completed at attempt `1`, pinned both
+registered reports, drained the queue and workspace lock, and left Git HEAD,
+refs, status, and worktree inventory unchanged. Strict recovery, a non-empty
+PostgreSQL backup, report digest verification, worker shutdown, and VM shutdown
+also passed.
+
+This evidence authorizes only the next production preflight and one explicit
+bounded window. Production must still begin from the stopped-worker read-only
+baseline, take a fresh off-host backup, prepare a new production request, and
+restore `review_status_execute` immediately after the window.
+
 ### Recorded bounded worker pilot status
 
 The first post-sign-off bounded worker pilot completed against SpecGraph review

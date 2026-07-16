@@ -1,6 +1,6 @@
 # Hosted Promotion Dry-Run Production Rollout Proposal
 
-Status: **bounded policy implemented; clean-VM and production rollout evidence pending**
+Status: **clean-VM evidence accepted; one production bounded window approved pending preflight**
 
 Operation: `promotion_execute_dry_run`
 
@@ -9,8 +9,9 @@ Operation: `promotion_execute_dry_run`
 `promotion_execute_dry_run` is the preferred first expansion of the hosted
 production operation allowlist because the registered Platform operation is
 explicitly dry-run-only and produces durable evidence without opening a Git
-review. The operation-specific bounded policy is implemented, but production
-enablement still requires the clean-VM drill and an explicit rollout decision.
+review. The operation-specific bounded policy and clean-VM drill are complete.
+Production execution still requires the approved window's fresh preflight and
+off-host backup; merging this document does not perform either step.
 
 The default production profile still accepts only `review_status_execute`.
 Tracked operation profiles now let the deploy, preflight, probe, Compose, and
@@ -156,10 +157,10 @@ audit trail needed to distinguish a failed transport from a completed dry-run.
 
 1. **Contract implementation:** complete. The operation-specific policy,
    profile registry, wrapper validation, tests, and docs are tracked.
-2. **Local and CI validation:** run the real HTTP handler, PostgreSQL queue,
-   worker, and report checks with fixture-owned artifacts.
-3. **Clean VM or staging drill:** exercise one request with immutable images,
-   strict recovery, backup, and worker shutdown.
+2. **Local and CI validation:** complete. The real HTTP handler, PostgreSQL
+   queue, worker, and report checks pass with fixture-owned artifacts.
+3. **Clean VM or staging drill:** complete. One request passed through immutable
+   ARM64 images with strict recovery, backup, and worker shutdown.
 4. **Production preflight:** prepare one dedicated request and a fresh backup;
    keep the worker stopped.
 5. **Single bounded production window:** enable only
@@ -174,9 +175,11 @@ audit trail needed to distinguish a failed transport from a completed dry-run.
 ## Approval Gate
 
 The proposal recommends `promotion_execute_dry_run` as the first production
-allowlist expansion. The current decision is **proceed to local and clean-VM
-validation, not enable production yet**. A separate decision after that evidence
-must authorize the single production bounded window.
+allowlist expansion. The clean-VM evidence below satisfies the staging gate.
+The current decision is **authorize exactly one production bounded window after
+the production preflight and fresh off-host backup pass**. This does not
+authorize a persistent worker, a mixed allowlist, automatic retry, or a real
+promotion review.
 
 ### Clean-VM runtime dependency finding
 
@@ -218,3 +221,33 @@ matches an explicitly selected, validated initialization report. A compact
 binding copied into an approval decision is insufficient on its own. Unbound
 plans retain legacy behavior, and a plan paired with approval evidence from
 another run remains rejected.
+
+### Accepted clean-VM evidence
+
+The final clean-VM drill ran Platform commit
+`f7e3d66aeca1de51d0b4ffccdbeda5f86e97d581` through the immutable ARM64 image
+`sha256:a4cb524ac32d957dd2f816e039d47cf4bd1138f48b053fc25164d60b35ec4bbe`.
+The service allowlist contained only `promotion_execute_dry_run`, and the fresh
+request pinned the promotion request, approval decision, and execution plan.
+
+The request completed as follows:
+
+- queue state `succeeded`, `attempt=1`;
+- one processed operation, zero active jobs, and zero active locks;
+- product report digest
+  `791c6b7f19efc3a15c72c77aaf008b5a95672511c5df5bb1b5f2bad6101b2f44`;
+- Git Service report digest
+  `677e9240cd15275898b4856b8999d295b977d7f9f062f06849c1b0e62a89251c`;
+- strict recovery completed with no receipts to recover or quarantine;
+- the PostgreSQL backup was non-empty and had SHA-256
+  `75938c624e132ab6a6f17e40a151eecc942968bb65dd1cf3c393b706153358a6`;
+- Git HEAD, refs, status, and worktree inventory were unchanged;
+- no candidate worktree, branch, commit, review, or read-model publication was
+  created;
+- the bounded worker exited successfully, all runtime containers were stopped,
+  and the clean VM was shut down.
+
+Two earlier failed requests remain preserved as audit evidence and are not
+eligible for retry: one exposed the missing image dependency, and one exposed
+the producer-host plan path. Neither produced authoritative outputs or Git
+mutations. The accepted request is fresh and does not reconcile either failure.

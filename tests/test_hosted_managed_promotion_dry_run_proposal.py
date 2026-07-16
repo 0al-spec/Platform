@@ -35,16 +35,17 @@ class HostedManagedPromotionDryRunProposalTests(unittest.TestCase):
         ):
             self.assertIn(f"`{token}`", self.proposal)
 
-    def test_proposal_does_not_claim_rollout_authority(self) -> None:
+    def test_proposal_authorizes_only_one_bounded_window(self) -> None:
         normalized = " ".join(self.proposal.split())
         self.assertIn(
-            "clean-VM and production rollout evidence pending",
+            "clean-VM evidence accepted; one production bounded window approved pending preflight",
             normalized,
         )
         self.assertIn(
-            "proceed to local and clean-VM validation, not enable production yet",
+            "authorize exactly one production bounded window after the production preflight and fresh off-host backup pass",
             normalized,
         )
+        self.assertIn("does not authorize a persistent worker", normalized)
         self.assertIn("does not authorize a continuous worker", normalized)
         self.assertIn("no branch, commit, or pull request was created", normalized)
 
