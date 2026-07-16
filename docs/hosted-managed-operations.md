@@ -1035,6 +1035,37 @@ bounded window. Production must still begin from the stopped-worker read-only
 baseline, take a fresh off-host backup, prepare a new production request, and
 restore `review_status_execute` immediately after the window.
 
+### Recorded promotion dry-run production bounded status
+
+The single authorized production window completed for the dedicated
+`hosted-operation-canary` workspace on Platform commit
+`f7e3d66aeca1de51d0b4ffccdbeda5f86e97d581`. Pre-operation backup cycle
+`production-20260716t104508z`, isolated restore smoke, encrypted off-host
+export, and archive digest verification passed before the allowlist changed.
+
+The service then advertised only `promotion_execute_dry_run`. Request
+`managed-operation://hosted-operation-canary/promotion_execute_dry_run/4c0f6638dbe110ea11058591`
+started at attempt `0` and bounded window
+`promotion-dry-run-20260716t105624z` completed it at attempt `1`. The core and
+host reports had no diagnostics, the queue drained, no workspace lock remained,
+and the receipt pinned both authoritative outputs:
+
+- product promotion execution:
+  `ce0cef5f904cd602bd497efd3443605f82f9584181541de384ce7118c353d562`;
+- Git Service promotion execution:
+  `747255542d3b0c4aa64c13fcaae42b10a8faab98c3d1038a09599a3e66b2a79b`.
+
+Both reports described a strict dry-run. SpecGraph HEAD, status, and worktree
+inventory were unchanged; no candidate worktree, commit, branch, pull request,
+read model, canonical spec mutation, or Ontology write was created.
+
+Production was immediately restored to the stopped-worker
+`review_status_execute` profile. Strict recovery was a no-op. Post-operation
+backup cycle `production-20260716t110028z`, isolated restore smoke, encrypted
+off-host export, archive digest verification, and the final production probe
+passed. This evidence closes the approved window; it does not authorize a
+persistent worker, another dry-run window, or an irreversible operation.
+
 ### Recorded bounded worker pilot status
 
 The first post-sign-off bounded worker pilot completed against SpecGraph review
@@ -1084,8 +1115,9 @@ Proceed from the signed-off baseline in bounded stages:
    separate operating decision enables a continuously running worker;
 3. preserve the completed fresh `review_status_execute` pilot evidence and keep
    the worker stopped between bounded windows;
-4. evaluate `promotion_execute_dry_run` as the first allowlist expansion in the
-   [dedicated rollout proposal](hosted-managed-promotion-dry-run-rollout-proposal.md);
+4. preserve the completed one-shot `promotion_execute_dry_run` production
+   evidence and require a new proposal before another bounded window or
+   allowlist expansion;
 5. expose only the enabled operations through SpecSpace hosted lifecycle UX;
 6. propose irreversible Git review or publication operations one at a time.
 

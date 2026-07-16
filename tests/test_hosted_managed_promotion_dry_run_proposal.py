@@ -35,19 +35,25 @@ class HostedManagedPromotionDryRunProposalTests(unittest.TestCase):
         ):
             self.assertIn(f"`{token}`", self.proposal)
 
-    def test_proposal_authorizes_only_one_bounded_window(self) -> None:
+    def test_completed_window_authorizes_no_automatic_expansion(self) -> None:
         normalized = " ".join(self.proposal.split())
         self.assertIn(
-            "clean-VM evidence accepted; one production bounded window approved pending preflight",
+            "production bounded window completed; read-only baseline restored",
             normalized,
         )
         self.assertIn(
-            "authorize exactly one production bounded window after the production preflight and fresh off-host backup pass",
+            "authorize no further production window without a new proposal",
             normalized,
         )
         self.assertIn("does not authorize a persistent worker", normalized)
-        self.assertIn("does not authorize a continuous worker", normalized)
+        self.assertIn(
+            "does not authorize another window, a continuous worker",
+            normalized,
+        )
         self.assertIn("no branch, commit, or pull request was created", normalized)
+        self.assertIn("production-20260716t104508z", normalized)
+        self.assertIn("production-20260716t110028z", normalized)
+        self.assertIn("promotion-dry-run-20260716t105624z", normalized)
 
     def test_implemented_profile_remains_one_shot_and_operation_specific(self) -> None:
         policy = (

@@ -1,6 +1,6 @@
 # Hosted Promotion Dry-Run Production Rollout Proposal
 
-Status: **clean-VM evidence accepted; one production bounded window approved pending preflight**
+Status: **production bounded window completed; read-only baseline restored**
 
 Operation: `promotion_execute_dry_run`
 
@@ -9,9 +9,10 @@ Operation: `promotion_execute_dry_run`
 `promotion_execute_dry_run` is the preferred first expansion of the hosted
 production operation allowlist because the registered Platform operation is
 explicitly dry-run-only and produces durable evidence without opening a Git
-review. The operation-specific bounded policy and clean-VM drill are complete.
-Production execution still requires the approved window's fresh preflight and
-off-host backup; merging this document does not perform either step.
+review. The operation-specific bounded policy, clean-VM drill, and the one
+approved production window are complete. Production has returned to the
+stopped-worker `review_status_execute` baseline. This result authorizes no
+additional production windows or allowlist expansion.
 
 The default production profile still accepts only `review_status_execute`.
 Tracked operation profiles now let the deploy, preflight, probe, Compose, and
@@ -161,25 +162,26 @@ audit trail needed to distinguish a failed transport from a completed dry-run.
    queue, worker, and report checks pass with fixture-owned artifacts.
 3. **Clean VM or staging drill:** complete. One request passed through immutable
    ARM64 images with strict recovery, backup, and worker shutdown.
-4. **Production preflight:** prepare one dedicated request and a fresh backup;
-   keep the worker stopped.
-5. **Single bounded production window:** enable only
-   `promotion_execute_dry_run`, process the exact request once, and collect all
-   success evidence.
-6. **Immediate rollback to baseline:** stop the worker and restore the read-only
-   service allowlist.
-7. **Post-rollout decision:** decide separately whether the operation may remain
-   available for future bounded windows. This proposal does not authorize a
-   continuous worker or the next allowlist expansion.
+4. **Production preflight:** complete. A dedicated request and fresh encrypted
+   off-host backup were prepared while the worker remained stopped.
+5. **Single bounded production window:** complete. Only
+   `promotion_execute_dry_run` was enabled and the exact request was processed
+   once.
+6. **Immediate rollback to baseline:** complete. The worker is stopped and the
+   service advertises only `review_status_execute`.
+7. **Post-rollout decision:** pending as a separate proposal. This completed
+   window does not authorize another window, a continuous worker, or the next
+   allowlist expansion.
 
 ## Approval Gate
 
-The proposal recommends `promotion_execute_dry_run` as the first production
-allowlist expansion. The clean-VM evidence below satisfies the staging gate.
-The current decision is **authorize exactly one production bounded window after
-the production preflight and fresh off-host backup pass**. This does not
-authorize a persistent worker, a mixed allowlist, automatic retry, or a real
-promotion review.
+The proposal selected `promotion_execute_dry_run` as the first production
+allowlist expansion. The clean-VM evidence below satisfied the staging gate,
+and the single authorized production bounded window has now completed. The
+current decision is **restore the read-only baseline and authorize no further
+production window without a new proposal**. This does not authorize a
+persistent worker, a mixed allowlist, automatic retry, or a real promotion
+review.
 
 ### Clean-VM runtime dependency finding
 
@@ -251,3 +253,36 @@ Two earlier failed requests remain preserved as audit evidence and are not
 eligible for retry: one exposed the missing image dependency, and one exposed
 the producer-host plan path. Neither produced authoritative outputs or Git
 mutations. The accepted request is fresh and does not reconcile either failure.
+
+### Accepted production evidence
+
+The single production window ran Platform commit
+`f7e3d66aeca1de51d0b4ffccdbeda5f86e97d581` against the dedicated
+`hosted-operation-canary` workspace. Before the profile change, backup cycle
+`production-20260716t104508z`, isolated restore smoke, encrypted off-host
+export, and encrypted archive digest verification passed. The worker remained
+stopped while the deployment allowlist changed from `review_status_execute` to
+exactly `promotion_execute_dry_run` and while the digest-pinned request was
+authenticated and enqueued.
+
+Bounded window `promotion-dry-run-20260716t105624z` completed with:
+
+- request state `succeeded` at `attempt=1`;
+- product promotion report digest
+  `ce0cef5f904cd602bd497efd3443605f82f9584181541de384ce7118c353d562`;
+- Git Service report digest
+  `747255542d3b0c4aa64c13fcaae42b10a8faab98c3d1038a09599a3e66b2a79b`;
+- core bounded-window report digest
+  `df2d7a179c04d259d6e0cfd5b15e039eda66d421d2a07c9d8b8d98a26aaa0358`;
+- zero active jobs and zero active workspace locks after execution;
+- strict dry-run report semantics and no physical candidate worktree;
+- unchanged SpecGraph HEAD, clean status, and unchanged worktree inventory;
+- no commit, branch, pull request, read-model publication, canonical spec
+  mutation, or Ontology write.
+
+The deployment then returned immediately to the stopped-worker
+`review_status_execute` profile. Strict recovery found no receipt to recover or
+quarantine. Post-operation backup cycle `production-20260716t110028z`, isolated
+restore smoke, encrypted off-host export, encrypted archive digest verification,
+and the final production probe all passed. The final queue remains drained, the
+request remains terminal at `attempt=1`, and the worker remains stopped.
