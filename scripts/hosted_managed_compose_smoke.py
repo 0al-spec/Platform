@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 from typing import Any
 
 
@@ -89,6 +90,81 @@ def _fixture_environment(root: Path) -> tuple[dict[str, str], Path]:
     return environment, env_file
 
 
+def _wait_for_service_health(
+    compose: list[str],
+    *,
+    environment: dict[str, str],
+    timeout_seconds: int = 300,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    latest_states: dict[str, str] = {}
+    while time.monotonic() < deadline:
+        all_healthy = True
+        for service in SERVICES:
+            container_id = _run(
+                [*compose, "ps", "--quiet", service],
+                environment=environment,
+                timeout_seconds=30,
+            ).strip()
+            if not container_id:
+                latest_states[service] = "missing"
+                all_healthy = False
+                continue
+            state = json.loads(
+                _run(
+                    [
+                        "docker",
+                        "inspect",
+                        "--format",
+                        "{{json .State}}",
+                        container_id,
+                    ],
+                    environment=environment,
+                    timeout_seconds=30,
+                )
+            )
+            status = state.get("Status")
+            health = state.get("Health")
+            health_status = health.get("Status") if isinstance(health, dict) else None
+            latest_states[service] = f"{status}/{health_status or 'no-health'}"
+            if status in {"dead", "exited", "removing"}:
+                raise RuntimeError(
+                    f"hosted Compose service {service} entered terminal state "
+                    f"{latest_states[service]}"
+                )
+            if health_status != "healthy":
+                all_healthy = False
+        if all_healthy:
+            return
+        time.sleep(1)
+    raise RuntimeError(
+        "hosted Compose services did not become healthy before timeout: "
+        + ", ".join(
+            f"{service}={latest_states.get(service, 'unknown')}"
+            for service in SERVICES
+        )
+    )
+
+
+def _compose_diagnostics(
+    compose: list[str],
+    *,
+    environment: dict[str, str],
+) -> str:
+    diagnostics: list[str] = []
+    for command in (
+        [*compose, "ps", "--all"],
+        [*compose, "logs", "--no-color", "--tail", "120", *SERVICES],
+    ):
+        try:
+            diagnostics.append(
+                _run(command, environment=environment, timeout_seconds=30)
+            )
+        except (RuntimeError, subprocess.SubprocessError) as exc:
+            diagnostics.append(str(exc))
+    return "\n".join(part for part in diagnostics if part).strip()
+
+
 def run_hosted_managed_compose_smoke() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(
         prefix=".hosted-managed-compose-smoke-",
@@ -99,18 +175,24 @@ def run_hosted_managed_compose_smoke() -> dict[str, Any]:
         project_name = f"platform-hosted-smoke-{os.getpid()}"
         compose = _compose_command(project_name, env_file)
         try:
-            _run(
-                [
-                    *compose,
-                    "up",
-                    "--detach",
-                    "--wait",
-                    "--wait-timeout",
-                    "300",
-                    *SERVICES,
-                ],
-                environment=environment,
-            )
+            try:
+                _run(
+                    [*compose, "up", "--detach", *SERVICES],
+                    environment=environment,
+                )
+                _wait_for_service_health(compose, environment=environment)
+            except (
+                json.JSONDecodeError,
+                RuntimeError,
+                subprocess.SubprocessError,
+            ) as exc:
+                diagnostics = _compose_diagnostics(
+                    compose,
+                    environment=environment,
+                )
+                raise RuntimeError(
+                    f"{exc}; Compose diagnostics: {diagnostics[-6000:]}"
+                ) from exc
             service_health = json.loads(
                 _run(
                     [
