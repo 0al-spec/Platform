@@ -15,12 +15,21 @@ from typing import Any
 
 try:
     from scripts.validate_hosted_managed_image_lock import validate_image_lock
+    from scripts.hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        profile_by_id,
+        profile_ids,
+    )
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     from validate_hosted_managed_image_lock import validate_image_lock
+    from hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        profile_by_id,
+        profile_ids,
+    )
 
 
 SAFE_ABSOLUTE_PATH = re.compile(r"^/[A-Za-z0-9._/-]+$")
-READ_ONLY_CANARY_OPERATION = "review_status_execute"
 SECRET_FILENAMES = {
     "PLATFORM_MANAGED_OPERATION_TOKEN_FILE": "service-token",
     "PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE": "database-password",
@@ -72,7 +81,14 @@ def render_environment(
     secret_root: str,
     ingress_bind_ip: str,
     ingress_port: int,
+    operation_profile: str = REVIEW_STATUS_PROFILE_ID,
 ) -> tuple[str, dict[str, Any]]:
+    try:
+        profile = profile_by_id(operation_profile)
+    except ValueError as exc:
+        raise ProductionEnvRenderError(
+            "production operation profile is invalid"
+        ) from exc
     roots = {
         "artifact_root": _safe_root(artifact_root, label="artifact root"),
         "state_dir": _safe_root(state_dir, label="state directory"),
@@ -102,7 +118,7 @@ def render_environment(
             "image_ref"
         ],
         "PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE": images["ingress"]["image_ref"],
-        "PLATFORM_MANAGED_OPERATION_ALLOWLIST": READ_ONLY_CANARY_OPERATION,
+        "PLATFORM_MANAGED_OPERATION_ALLOWLIST": profile.operation_id,
         "PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT": str(roots["artifact_root"]),
         "PLATFORM_MANAGED_OPERATION_STATE_DIR": str(roots["state_dir"]),
         "PLATFORM_MANAGED_OPERATION_BACKUP_ROOT": str(roots["backup_root"]),
@@ -125,7 +141,8 @@ def render_environment(
             "status": "production_env_rendered",
             "source_commit": image_lock["source_commit"],
             "image_count": 3,
-            "enabled_operation_ids": [READ_ONLY_CANARY_OPERATION],
+            "operation_profile": profile.profile_id,
+            "enabled_operation_ids": [profile.operation_id],
             "secret_ref_count": len(SECRET_FILENAMES),
             "environment_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
         },
@@ -172,6 +189,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--secret-root", default="/srv/0al/secrets")
     parser.add_argument("--ingress-bind-ip", default="0.0.0.0")
     parser.add_argument("--ingress-port", type=int, default=443)
+    parser.add_argument(
+        "--operation-profile",
+        choices=profile_ids(),
+        default=REVIEW_STATUS_PROFILE_ID,
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -184,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
             secret_root=args.secret_root,
             ingress_bind_ip=args.ingress_bind_ip,
             ingress_port=args.ingress_port,
+            operation_profile=args.operation_profile,
         )
         _write_atomic(Path(args.output), rendered, overwrite=args.overwrite)
     except ProductionEnvRenderError as exc:

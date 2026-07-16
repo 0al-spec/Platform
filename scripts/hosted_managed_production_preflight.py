@@ -11,9 +11,20 @@ import stat
 from typing import Any
 from urllib.parse import urlsplit
 
+try:
+    from scripts.hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        profile_by_id,
+        profile_ids,
+    )
+except ModuleNotFoundError:
+    from hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        profile_by_id,
+        profile_ids,
+    )
 
-READ_ONLY_CANARY_OPERATION = "review_status_execute"
-DRY_RUN_OPERATION = "promotion_execute_dry_run"
+
 SECRET_SPECS = {
     "service_token": (32, None),
     "database_password": (24, None),
@@ -132,9 +143,14 @@ def run_preflight(
     expected_secret_uid: int = 0,
     runtime_uid: int = 1000,
     runtime_gid: int = 1000,
-    allow_dry_run: bool = False,
+    operation_profile: str = REVIEW_STATUS_PROFILE_ID,
 ) -> dict[str, Any]:
     diagnostics: list[str] = []
+    try:
+        profile = profile_by_id(operation_profile)
+    except ValueError:
+        profile = None
+        diagnostics.append("production_operation_profile_invalid")
     parsed = urlsplit(service_url)
     if (
         parsed.scheme != "https"
@@ -148,11 +164,9 @@ def run_preflight(
         diagnostics.append("service_url_not_private_https_endpoint")
 
     enabled = [item.strip() for item in allowlist.split(",") if item.strip()]
-    expected = [READ_ONLY_CANARY_OPERATION]
-    if allow_dry_run:
-        expected.append(DRY_RUN_OPERATION)
+    expected = [profile.operation_id] if profile is not None else []
     if enabled != expected:
-        diagnostics.append("deployment_allowlist_not_exact_canary_scope")
+        diagnostics.append("deployment_allowlist_not_exact_operation_profile")
 
     for label in ("platform", "postgresql", "ingress"):
         if not _digest_pinned_image(image_refs.get(label, "")):
@@ -213,8 +227,9 @@ def run_preflight(
         "summary": {
             "status": "ready" if not diagnostics else "blocked",
             "service_transport": "https" if parsed.scheme == "https" else "invalid",
+            "operation_profile": profile.profile_id if profile is not None else None,
             "enabled_operations": enabled,
-            "dry_run_enabled": DRY_RUN_OPERATION in enabled,
+            "dry_run_enabled": "promotion_execute_dry_run" in enabled,
             "image_count": len(image_refs),
             "secret_file_count": len(secret_paths),
             "artifact_root_ready": not any(
@@ -251,7 +266,11 @@ def _env_path(name: str) -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--service-url", required=True)
-    parser.add_argument("--allow-dry-run", action="store_true")
+    parser.add_argument(
+        "--operation-profile",
+        choices=profile_ids(),
+        default=REVIEW_STATUS_PROFILE_ID,
+    )
     parser.add_argument("--expected-secret-uid", type=int, default=0)
     parser.add_argument("--runtime-uid", type=int, default=1000)
     parser.add_argument("--runtime-gid", type=int, default=1000)
@@ -293,7 +312,7 @@ def main(argv: list[str] | None = None) -> int:
             expected_secret_uid=args.expected_secret_uid,
             runtime_uid=args.runtime_uid,
             runtime_gid=args.runtime_gid,
-            allow_dry_run=args.allow_dry_run,
+            operation_profile=args.operation_profile,
         )
     except ProductionPreflightError as exc:
         report = {

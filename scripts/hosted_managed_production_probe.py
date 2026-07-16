@@ -11,6 +11,19 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 import urllib.request
 
+try:
+    from scripts.hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        profile_by_id,
+        profile_ids,
+    )
+except ModuleNotFoundError:
+    from hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        profile_by_id,
+        profile_ids,
+    )
+
 
 BASE_SERVICES = {
     "managed-operation-postgres",
@@ -18,7 +31,6 @@ BASE_SERVICES = {
     "managed-operation-ingress",
 }
 CONTINUOUS_WORKER_SERVICE = "managed-operation-worker"
-READ_ONLY_CANARY_OPERATION = "review_status_execute"
 
 
 class ProductionProbeError(RuntimeError):
@@ -75,12 +87,21 @@ def run_probe(
     timeout_seconds: float = 10.0,
     max_heartbeat_age_seconds: float = 30.0,
     worker_mode: str = "stopped",
+    operation_profile: str = REVIEW_STATUS_PROFILE_ID,
     now: datetime | None = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     fetch_health: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if worker_mode not in {"stopped", "continuous"}:
         raise ProductionProbeError("production probe worker mode is invalid")
+    try:
+        profile = profile_by_id(operation_profile)
+    except ValueError as exc:
+        raise ProductionProbeError("production operation profile is invalid") from exc
+    if worker_mode == "continuous" and not profile.allow_continuous_worker:
+        raise ProductionProbeError(
+            "continuous worker is forbidden for this production operation profile"
+        )
     parsed = urlsplit(service_url)
     if (
         parsed.scheme != "https"
@@ -153,8 +174,8 @@ def run_probe(
     if health.get("ok") is not True or health.get("adapter") != "postgresql":
         diagnostics.append("service_health_not_postgresql_ready")
     enabled = health.get("enabled_operation_ids")
-    if enabled != [READ_ONLY_CANARY_OPERATION]:
-        diagnostics.append("service_allowlist_not_read_only_canary")
+    if enabled != [profile.operation_id]:
+        diagnostics.append("service_allowlist_not_operation_profile")
     expected_services = set(BASE_SERVICES)
     if worker_mode == "continuous":
         expected_services.add(CONTINUOUS_WORKER_SERVICE)
@@ -198,6 +219,7 @@ def run_probe(
             "origin": origin,
             "adapter": health.get("adapter"),
             "enabled_operation_ids": enabled if isinstance(enabled, list) else [],
+            "operation_profile": profile.profile_id,
         },
         "worker": {
             "mode": worker_mode,
@@ -215,7 +237,11 @@ def run_probe(
                 for value in service_states.values()
             ),
             "expected_service_count": len(expected_services),
-            "read_only_allowlist": enabled == [READ_ONLY_CANARY_OPERATION],
+            "read_only_allowlist": (
+                profile.profile_id == REVIEW_STATUS_PROFILE_ID
+                and enabled == [profile.operation_id]
+            ),
+            "allowlist_matches_profile": enabled == [profile.operation_id],
             "worker_mode": worker_mode,
         },
         "diagnostics": diagnostics,
@@ -252,6 +278,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=("stopped", "continuous"),
         default="stopped",
     )
+    parser.add_argument(
+        "--operation-profile",
+        choices=profile_ids(),
+        default=REVIEW_STATUS_PROFILE_ID,
+    )
     parser.add_argument("--output")
     args = parser.parse_args(argv)
     try:
@@ -263,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout_seconds=args.timeout,
             max_heartbeat_age_seconds=args.max_heartbeat_age,
             worker_mode=args.worker_mode,
+            operation_profile=args.operation_profile,
         )
     except ProductionProbeError as exc:
         report = {

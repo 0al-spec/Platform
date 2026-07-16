@@ -68,6 +68,29 @@ class HostedManagedProductionEnvTests(unittest.TestCase):
         self.assertEqual(report["summary"]["enabled_operation_ids"], ["review_status_execute"])
         self.assertFalse(report["authority_boundary"]["may_deploy_production"])
 
+    def test_renderer_uses_exact_promotion_dry_run_profile(self) -> None:
+        rendered, report = renderer.render_environment(
+            image_lock=image_lock(),
+            artifact_root="/srv/0al/specgraph",
+            state_dir="/srv/0al/specspace-state",
+            backup_root="/srv/0al/backups",
+            secret_root="/srv/0al/secrets",
+            ingress_bind_ip="203.0.113.10",
+            ingress_port=443,
+            operation_profile="promotion-dry-run",
+        )
+
+        self.assertIn(
+            "PLATFORM_MANAGED_OPERATION_ALLOWLIST=promotion_execute_dry_run\n",
+            rendered,
+        )
+        self.assertNotIn("review_status_execute", rendered)
+        self.assertEqual(report["summary"]["operation_profile"], "promotion-dry-run")
+        self.assertEqual(
+            report["summary"]["enabled_operation_ids"],
+            ["promotion_execute_dry_run"],
+        )
+
     def test_renderer_rejects_overlapping_roots_and_invalid_bind_address(self) -> None:
         arguments = {
             "image_lock": image_lock(),

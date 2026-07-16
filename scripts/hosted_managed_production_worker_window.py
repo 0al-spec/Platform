@@ -13,8 +13,22 @@ from typing import Any, Callable
 
 try:
     from scripts import hosted_managed_worker_window as window_module
+    from scripts.hosted_managed_production_profiles import (
+        PROMOTION_DRY_RUN_PROFILE_ID,
+        REVIEW_STATUS_PROFILE_ID,
+        ProductionOperationProfile,
+        profile_by_id,
+        profile_ids,
+    )
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_worker_window as window_module
+    from hosted_managed_production_profiles import (
+        PROMOTION_DRY_RUN_PROFILE_ID,
+        REVIEW_STATUS_PROFILE_ID,
+        ProductionOperationProfile,
+        profile_by_id,
+        profile_ids,
+    )
 
 
 DEFAULT_COMPOSE_FILE = Path(
@@ -24,6 +38,9 @@ DEFAULT_ENV_FILE = Path("/etc/0al/hosted-managed-production.env")
 DEFAULT_PROJECT_NAME = "platform-managed-production"
 DEFAULT_EVIDENCE_ROOT = Path("/srv/0al/evidence")
 WINDOW_SERVICE = "managed-operation-window-worker"
+PROMOTION_DRY_RUN_WINDOW_SERVICE = (
+    "managed-operation-promotion-dry-run-window-worker"
+)
 CONTINUOUS_SERVICE = "managed-operation-worker"
 MAINTENANCE_SERVICE = "managed-operation-maintenance"
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -105,6 +122,8 @@ def _running_worker_services(
             "continuous-worker",
             "--profile",
             "bounded-worker",
+            "--profile",
+            "promotion-dry-run-window",
             "ps",
             "--status",
             "running",
@@ -119,7 +138,12 @@ def _running_worker_services(
     return sorted(
         item.strip()
         for item in completed.stdout.splitlines()
-        if item.strip() in {WINDOW_SERVICE, CONTINUOUS_SERVICE}
+        if item.strip()
+        in {
+            WINDOW_SERVICE,
+            PROMOTION_DRY_RUN_WINDOW_SERVICE,
+            CONTINUOUS_SERVICE,
+        }
     )
 
 
@@ -150,6 +174,7 @@ def _load_existing_output(
     *,
     window_id: str,
     request_id: str,
+    profile: ProductionOperationProfile,
 ) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -167,6 +192,11 @@ def _load_existing_output(
     privacy = privacy if isinstance(privacy, dict) else {}
     authority = payload.get("authority_boundary") if isinstance(payload, dict) else None
     authority = authority if isinstance(authority, dict) else {}
+    recorded_profile = payload.get("operation_profile")
+    legacy_review_profile = (
+        recorded_profile is None
+        and profile.profile_id == REVIEW_STATUS_PROFILE_ID
+    )
     if (
         not isinstance(payload, dict)
         or payload.get("artifact_kind")
@@ -176,6 +206,11 @@ def _load_existing_output(
         != "platform.hosted-managed.production-worker-window.v1"
         or payload.get("window_id") != window_id
         or request.get("request_id") != request_id
+        or request.get("operation_id") != profile.operation_id
+        or (
+            not legacy_review_profile
+            and recorded_profile != profile.profile_id
+        )
         or summary.get("status")
         not in {
             "production_bounded_worker_window_completed",
@@ -208,6 +243,156 @@ def _load_existing_output(
     return payload
 
 
+def _read_json_report(path: Path) -> dict[str, Any] | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _dry_run_report_diagnostics(
+    *,
+    artifact_root: Path,
+    workspace_id: str | None,
+    core_report: dict[str, Any] | None,
+    profile: ProductionOperationProfile,
+) -> list[str]:
+    if profile.profile_id != PROMOTION_DRY_RUN_PROFILE_ID:
+        return []
+    diagnostics: list[str] = []
+    if (
+        not isinstance(workspace_id, str)
+        or not window_module.REQUEST_ID_RE.fullmatch(
+            f"managed-operation://{workspace_id}/{profile.operation_id}/"
+            + "0" * 24
+        )
+    ):
+        return ["dry_run_workspace_identity_invalid"]
+    execution = core_report.get("execution") if isinstance(core_report, dict) else None
+    execution = execution if isinstance(execution, dict) else {}
+    output_rows = execution.get("authoritative_output_reports")
+    output_rows = output_rows if isinstance(output_rows, list) else []
+    output_digests = {
+        row.get("logical_ref"): row.get("sha256")
+        for row in output_rows
+        if isinstance(row, dict)
+    }
+    reports: dict[str, dict[str, Any]] = {}
+    root = artifact_root.resolve()
+    workspace_root = (root / "runs" / workspace_id).resolve()
+    try:
+        workspace_root.relative_to(root)
+    except ValueError:
+        return ["dry_run_workspace_root_invalid"]
+    for logical_ref in profile.expected_output_reports:
+        relative = logical_ref.removeprefix("runs/")
+        path = (workspace_root / relative).resolve()
+        try:
+            path.relative_to(workspace_root)
+        except ValueError:
+            diagnostics.append("dry_run_report_path_invalid")
+            continue
+        payload = _read_json_report(path)
+        if payload is None:
+            diagnostics.append("dry_run_authoritative_report_missing")
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if output_digests.get(logical_ref) != digest:
+            diagnostics.append("dry_run_authoritative_report_digest_mismatch")
+        reports[logical_ref] = payload
+
+    product = reports.get("runs/product_candidate_promotion_execution_report.json", {})
+    product_summary = product.get("summary")
+    product_summary = product_summary if isinstance(product_summary, dict) else {}
+    git_review = product.get("git_review")
+    git_review = git_review if isinstance(git_review, dict) else {}
+    product_authority = product.get("authority_boundary")
+    product_authority = (
+        product_authority if isinstance(product_authority, dict) else {}
+    )
+    product_authority_keys = {
+        "specspace_direct_git_write",
+        "controlled_git_service_execution",
+        "creates_candidate_worktree_or_branch",
+        "creates_candidate_commit",
+        "opens_pull_requests",
+        "merges_pull_requests",
+        "publishes_read_models",
+        "canonical_spec_mutation_without_review",
+        "ontology_package_write",
+        "ontology_term_acceptance",
+        "private_artifact_publication",
+    }
+    if (
+        product.get("artifact_kind")
+        != "platform_product_candidate_promotion_execution_report"
+        or product.get("ok") is not True
+        or product.get("dry_run") is not True
+        or product.get("open_review_dry_run") is not True
+        or product_summary.get("status") != "dry_run"
+        or product_summary.get("worktree_prepare_dry_run") is not True
+        or product_summary.get("physical_worktree_created") is not False
+        or product_summary.get("commit_created") is not False
+        or product_summary.get("review_opened") is not False
+        or product_summary.get("read_model_published") is not False
+        or git_review.get("physical_worktree_created") is not False
+        or git_review.get("commit_sha") is not None
+        or git_review.get("review_url") is not None
+        or git_review.get("review_opened") is not False
+        or not product_authority_keys.issubset(product_authority)
+        or any(value is not False for value in product_authority.values())
+    ):
+        diagnostics.append("product_promotion_report_not_strict_dry_run")
+
+    git_service = reports.get("runs/git_service_promotion_execution_report.json", {})
+    operations = git_service.get("operations")
+    operations = operations if isinstance(operations, list) else []
+    statuses = {
+        row.get("name"): row.get("status")
+        for row in operations
+        if isinstance(row, dict)
+    }
+    git_authority = git_service.get("authority_boundary")
+    git_authority = git_authority if isinstance(git_authority, dict) else {}
+    git_authority_keys = {
+        "specspace_direct_git_write",
+        "canonical_spec_mutation_without_review",
+        "ontology_package_write",
+        "auto_merge",
+        "private_artifact_publication",
+    }
+    if (
+        git_service.get("artifact_kind")
+        != "platform_git_service_promotion_execution_report"
+        or git_service.get("ok") is not True
+        or git_service.get("dry_run") is not True
+        or git_service.get("open_review_dry_run") is not True
+        or statuses
+        != {
+            "prepare_worktree": "dry_run",
+            "commit_candidate": "skipped_dry_run",
+            "open_review": "skipped_dry_run",
+        }
+        or git_service.get("copied_materialized_files") not in (None, [])
+        or not git_authority_keys.issubset(git_authority)
+        or any(value is not False for value in git_authority.values())
+    ):
+        diagnostics.append("git_service_report_not_strict_dry_run")
+
+    candidate_workspace = (root / ".platform" / "candidates" / workspace_id).resolve()
+    try:
+        candidate_workspace.relative_to(root)
+    except ValueError:
+        diagnostics.append("dry_run_candidate_workspace_path_invalid")
+    else:
+        if candidate_workspace.exists():
+            diagnostics.append("dry_run_physical_worktree_present")
+    return sorted(set(diagnostics))
+
+
 def execute_window(
     *,
     compose_file: Path,
@@ -216,8 +401,15 @@ def execute_window(
     window_id: str,
     request_id: str,
     output: Path,
+    operation_profile: str = REVIEW_STATUS_PROFILE_ID,
     runner: Runner = subprocess.run,
 ) -> dict[str, Any]:
+    try:
+        profile = profile_by_id(operation_profile)
+    except ValueError as exc:
+        raise ProductionWorkerWindowError(
+            "production operation profile is invalid"
+        ) from exc
     if (
         not compose_file.is_absolute()
         or compose_file.is_symlink()
@@ -230,6 +422,11 @@ def execute_window(
         raise ProductionWorkerWindowError("worker window id is invalid")
     if not window_module.REQUEST_ID_RE.fullmatch(request_id):
         raise ProductionWorkerWindowError("managed-operation request id is invalid")
+    request_operation_id = request_id.removeprefix("managed-operation://").split("/")[1]
+    if request_operation_id != profile.operation_id:
+        raise ProductionWorkerWindowError(
+            "managed-operation request does not match the production profile"
+        )
     if not output.is_absolute() or output.is_symlink():
         raise ProductionWorkerWindowError(
             "production window evidence path must be an absolute non-symlink path"
@@ -238,6 +435,7 @@ def execute_window(
         output,
         window_id=window_id,
         request_id=request_id,
+        profile=profile,
     )
     if existing_output is not None:
         return existing_output
@@ -246,9 +444,7 @@ def execute_window(
     artifact_root = Path(artifact_root_value)
     if not artifact_root.is_absolute():
         raise ProductionWorkerWindowError("artifact root is not absolute")
-    if values.get("PLATFORM_MANAGED_OPERATION_ALLOWLIST") != (
-        window_module.READ_ONLY_OPERATION_ID
-    ):
+    if values.get("PLATFORM_MANAGED_OPERATION_ALLOWLIST") != profile.operation_id:
         raise ProductionWorkerWindowError(
             "production allowlist does not match bounded worker policy"
         )
@@ -256,7 +452,7 @@ def execute_window(
         Path(__file__).resolve().parents[1]
         / "deploy"
         / "hosted-managed"
-        / "worker-window-policy.json"
+        / profile.policy_filename
     ).resolve()
     policy = window_module.load_policy(policy_path)
     core_report_path = window_module.report_path(artifact_root, window_id)
@@ -323,13 +519,13 @@ def execute_window(
                 [
                     *prefix,
                     "--profile",
-                    "bounded-worker",
+                    profile.compose_profile,
                     "run",
                     "--rm",
                     "--no-deps",
                     "--name",
                     container_name,
-                    WINDOW_SERVICE,
+                    profile.worker_service,
                 ],
                 runner=runner,
                 environment=environment,
@@ -376,6 +572,18 @@ def execute_window(
     core_policy = core_policy if isinstance(core_policy, dict) else {}
     if core_policy.get("sha256") != window_module.policy_sha256(policy):
         diagnostics.append("bounded_worker_policy_digest_mismatch")
+    core_request = core_report.get("request") if core_report else None
+    core_request = core_request if isinstance(core_request, dict) else {}
+    if core_request.get("operation_id") != profile.operation_id:
+        diagnostics.append("bounded_worker_operation_mismatch")
+    diagnostics.extend(
+        _dry_run_report_diagnostics(
+            artifact_root=artifact_root,
+            workspace_id=core_request.get("workspace_id"),
+            core_report=core_report,
+            profile=profile,
+        )
+    )
     diagnostics = sorted(set(diagnostics))
     core_digest = None
     if core_report is not None:
@@ -386,9 +594,10 @@ def execute_window(
         "contract_ref": "platform.hosted-managed.production-worker-window.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "window_id": window_id,
+        "operation_profile": profile.profile_id,
         "request": {
             "request_id": request_id,
-            "operation_id": window_module.READ_ONLY_OPERATION_ID,
+            "operation_id": profile.operation_id,
         },
         "worker_window": {
             "report_ref": (
@@ -411,6 +620,10 @@ def execute_window(
             ),
             "worker_stopped": not after_workers,
             "continuous_worker_enabled": False,
+            "dry_run_reports_verified": (
+                profile.profile_id != PROMOTION_DRY_RUN_PROFILE_ID
+                or not diagnostics
+            ),
             "diagnostic_count": len(diagnostics),
         },
         "diagnostics": diagnostics,
@@ -441,6 +654,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-name", default=DEFAULT_PROJECT_NAME)
     parser.add_argument("--window-id", required=True)
     parser.add_argument("--request-id", required=True)
+    parser.add_argument(
+        "--operation-profile",
+        choices=profile_ids(),
+        default=REVIEW_STATUS_PROFILE_ID,
+    )
     parser.add_argument("--output")
     args = parser.parse_args(argv)
     output = (
@@ -456,6 +674,7 @@ def main(argv: list[str] | None = None) -> int:
             window_id=args.window_id,
             request_id=args.request_id,
             output=output,
+            operation_profile=args.operation_profile,
         )
     except ProductionWorkerWindowError as exc:
         print(json.dumps({"ok": False, "diagnostic": str(exc)}, sort_keys=True))

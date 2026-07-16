@@ -22,6 +22,12 @@ POLICY_PATH = (
     / "hosted-managed"
     / "worker-window-policy.json"
 )
+DRY_RUN_POLICY_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "deploy"
+    / "hosted-managed"
+    / "promotion-dry-run-worker-window-policy.json"
+)
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -55,9 +61,29 @@ class InvalidOutputExecutor:
         )
 
 
+class PartialDryRunOutputExecutor:
+    def execute(
+        self,
+        leased: queue_module.LeasedOperation,
+    ) -> queue_module.ExecutionResult:
+        return queue_module.ExecutionResult(
+            status="succeeded",
+            output_reports=(
+                {
+                    "logical_ref": (
+                        "runs/product_candidate_promotion_execution_report.json"
+                    ),
+                    "sha256": "1" * 64,
+                },
+            ),
+        )
+
+
 class HostedManagedWorkerWindowTests(unittest.TestCase):
-    def policy(self) -> dict:
-        return window_module.load_policy(POLICY_PATH.resolve())
+    def policy(self, *, dry_run: bool = False) -> dict:
+        return window_module.load_policy(
+            (DRY_RUN_POLICY_PATH if dry_run else POLICY_PATH).resolve()
+        )
 
     def run_window(
         self,
@@ -66,11 +92,12 @@ class HostedManagedWorkerWindowTests(unittest.TestCase):
         *,
         executor: queue_module.ManagedOperationExecutor | None = None,
         allowlist: frozenset[str] = frozenset({"review_status_execute"}),
+        policy: dict | None = None,
     ) -> dict:
         return window_module.run_window(
             queue=queue,
             executor=executor or SuccessfulExecutor(),
-            policy=self.policy(),
+            policy=policy or self.policy(),
             window_id="window-20260715t120000z",
             expected_request_id=request_id,
             worker_id="bounded-worker-a",
@@ -95,6 +122,64 @@ class HostedManagedWorkerWindowTests(unittest.TestCase):
             "policy_authority_expanded",
             window_module.policy_diagnostics(expanded),
         )
+
+    def test_promotion_dry_run_policy_is_single_operation_and_fail_closed(self) -> None:
+        policy = self.policy(dry_run=True)
+        self.assertEqual(
+            policy["enabled_operation_ids"],
+            ["promotion_execute_dry_run"],
+        )
+        self.assertEqual(
+            window_module.expected_output_reports(policy),
+            (
+                "runs/product_candidate_promotion_execution_report.json",
+                "runs/git_service_promotion_execution_report.json",
+            ),
+        )
+
+    def test_promotion_dry_run_requires_both_authoritative_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            queue = queue_module.SQLiteManagedOperationQueue(":memory:")
+            request = request_for(temp, "promotion_execute_dry_run")
+            queue.enqueue(request, now_epoch=100, now_iso="2026-07-15T12:00:00Z")
+
+            report = self.run_window(
+                queue,
+                request["request_id"],
+                allowlist=frozenset({"promotion_execute_dry_run"}),
+                policy=self.policy(dry_run=True),
+            )
+            queue.close()
+
+        self.assertEqual(
+            report["summary"]["status"],
+            "bounded_worker_window_completed",
+        )
+        self.assertEqual(
+            {row["logical_ref"] for row in report["execution"]["authoritative_output_reports"]},
+            set(request["expected_output_reports"]),
+        )
+
+    def test_promotion_dry_run_blocks_when_one_report_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            queue = queue_module.SQLiteManagedOperationQueue(":memory:")
+            request = request_for(temp, "promotion_execute_dry_run")
+            queue.enqueue(request, now_epoch=100, now_iso="2026-07-15T12:00:00Z")
+
+            with self.assertRaisesRegex(
+                queue_module.QueueContractError,
+                "pin every expected Platform output report",
+            ):
+                self.run_window(
+                    queue,
+                    request["request_id"],
+                    executor=PartialDryRunOutputExecutor(),
+                    allowlist=frozenset({"promotion_execute_dry_run"}),
+                    policy=self.policy(dry_run=True),
+                )
+            queue.close()
 
     def test_executes_one_pinned_request_and_drains_queue(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -13,8 +13,10 @@ from typing import Any, Callable
 
 try:
     from scripts import hosted_managed_operation_queue as queue_module
+    from scripts.hosted_managed_production_profiles import profile_by_operation_id
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_operation_queue as queue_module
+    from hosted_managed_production_profiles import profile_by_operation_id
 
 
 POLICY_ARTIFACT_KIND = "platform_hosted_managed_worker_window_policy"
@@ -93,8 +95,18 @@ def policy_diagnostics(policy: dict[str, Any]) -> list[str]:
         diagnostics.append("policy_contract_ref_invalid")
     if policy.get("mode") != "bounded":
         diagnostics.append("policy_mode_invalid")
-    if policy.get("enabled_operation_ids") != [READ_ONLY_OPERATION_ID]:
+    enabled_operation_ids = policy.get("enabled_operation_ids")
+    if (
+        not isinstance(enabled_operation_ids, list)
+        or len(enabled_operation_ids) != 1
+        or not isinstance(enabled_operation_ids[0], str)
+    ):
         diagnostics.append("policy_operation_scope_invalid")
+    else:
+        try:
+            profile_by_operation_id(enabled_operation_ids[0])
+        except ValueError:
+            diagnostics.append("policy_operation_scope_invalid")
     duration = policy.get("max_duration_seconds")
     if isinstance(duration, bool) or not isinstance(duration, int) or not 60 <= duration <= 1800:
         diagnostics.append("policy_duration_invalid")
@@ -126,6 +138,17 @@ def policy_sha256(policy: dict[str, Any]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+def expected_output_reports(policy: dict[str, Any]) -> tuple[str, ...]:
+    diagnostics = policy_diagnostics(policy)
+    if diagnostics:
+        raise WorkerWindowError("worker window policy is invalid")
+    operation_id = policy["enabled_operation_ids"][0]
+    try:
+        return profile_by_operation_id(operation_id).expected_output_reports
+    except ValueError as exc:
+        raise WorkerWindowError("worker window policy operation is unsupported") from exc
 
 
 def report_path(artifact_root: Path, window_id: str) -> Path:
@@ -274,14 +297,15 @@ def run_window(
     diagnostics = sorted(set(diagnostics))
     receipt_outputs = receipt.get("output_reports") if isinstance(receipt, dict) else []
     receipt_outputs = receipt_outputs if isinstance(receipt_outputs, list) else []
+    expected_outputs = expected_output_reports(policy)
     authoritative_reports_ready = bool(receipt_outputs) and all(
         isinstance(item, dict)
         and set(item) == {"logical_ref", "sha256"}
-        and item.get("logical_ref") == READ_ONLY_OUTPUT_REF
+        and item.get("logical_ref") in expected_outputs
         and isinstance(item.get("sha256"), str)
         and SHA256_RE.fullmatch(item["sha256"])
         for item in receipt_outputs
-    ) and len(receipt_outputs) == 1
+    ) and {item["logical_ref"] for item in receipt_outputs} == set(expected_outputs)
     if not diagnostics and not authoritative_reports_ready:
         diagnostics.append("authoritative_reports_missing")
     status = "completed" if not diagnostics else "blocked"

@@ -87,6 +87,8 @@ services:
       - -ec
     command:
       - >-
+        test "$${PLATFORM_MANAGED_OPERATION_ALLOWLIST}" = "review_status_execute" ||
+        { echo "continuous worker requires the review-status profile" >&2; exit 64; };
         export GH_TOKEN="$$(cat /run/secrets/managed_operation_github_token)";
         exec python3 scripts/platform.py managed-operation worker
         --queue-adapter postgresql
@@ -151,6 +153,51 @@ services:
         --expected-request-id "$${PLATFORM_MANAGED_WORKER_WINDOW_REQUEST_ID}"
         --window-id "$${PLATFORM_MANAGED_WORKER_WINDOW_ID}"
         --policy /workspace/Platform/deploy/hosted-managed/worker-window-policy.json
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - "${PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT:?set PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT}:/workspace/SpecGraph"
+      - "${PLATFORM_MANAGED_OPERATION_STATE_DIR:?set PLATFORM_MANAGED_OPERATION_STATE_DIR}:/data/specspace-state:ro"
+    secrets:
+      - managed_operation_database_url
+      - managed_operation_github_token
+    environment:
+      PLATFORM_MANAGED_OPERATION_ALLOWLIST: "${PLATFORM_MANAGED_OPERATION_ALLOWLIST:?set PLATFORM_MANAGED_OPERATION_ALLOWLIST}"
+      PLATFORM_MANAGED_WORKER_WINDOW_ID: "${PLATFORM_MANAGED_WORKER_WINDOW_ID:-}"
+      PLATFORM_MANAGED_WORKER_WINDOW_REQUEST_ID: "${PLATFORM_MANAGED_WORKER_WINDOW_REQUEST_ID:-}"
+    networks:
+      - managed-backend
+      - managed-egress
+    depends_on:
+      managed-operation-postgres:
+        condition: service_healthy
+
+  managed-operation-promotion-dry-run-window-worker:
+    image: "${PLATFORM_MANAGED_OPERATION_IMAGE:?set a digest-pinned Platform image}"
+    profiles:
+      - promotion-dry-run-window
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - >-
+        export GH_TOKEN="$$(cat /run/secrets/managed_operation_github_token)";
+        exec python3 scripts/platform.py managed-operation worker-window
+        --queue-adapter postgresql
+        --database-url-file /run/secrets/managed_operation_database_url
+        --artifact-root /workspace/SpecGraph
+        --state-dir /data/specspace-state
+        --specgraph-dir /workspace/SpecGraph
+        --worker-id "$${HOSTNAME}-promotion-dry-run-bounded"
+        --expected-request-id "$${PLATFORM_MANAGED_WORKER_WINDOW_REQUEST_ID}"
+        --window-id "$${PLATFORM_MANAGED_WORKER_WINDOW_ID}"
+        --policy /workspace/Platform/deploy/hosted-managed/promotion-dry-run-worker-window-policy.json
     read_only: true
     tmpfs:
       - /tmp
