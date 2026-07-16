@@ -10911,6 +10911,23 @@ workspaces:
             {diagnostic["code"] for diagnostic in payload["diagnostics"]},
         )
 
+    def test_product_candidate_promotion_bound_plan_rejects_foreign_run_ref(
+        self,
+    ) -> None:
+        current_run_dir = Path("/tmp/transport/runs/other")
+        binding_context = {
+            "workspace_id": "idea-alpha",
+            "platform_default_run_dir_ref": "runs/other",
+        }
+
+        resolved = platform_module.product_candidate_promotion_bound_plan_runs_dir(
+            plan_path=current_run_dir / "graph_repository_execution_plan.json",
+            workspace_binding_context=binding_context,
+            expected_workspace_id="idea-alpha",
+        )
+
+        self.assertIsNone(resolved)
+
     def test_product_candidate_promotion_request_rejects_unapproved_decision(
         self,
     ) -> None:

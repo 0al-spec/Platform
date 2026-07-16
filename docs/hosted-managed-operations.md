@@ -976,7 +976,8 @@ Promotion-request generation applies the same portability rule only when an
 explicitly selected and validated initialization report identifies the plan's
 current directory as the exact `runs/<workspace-id>` location. A compact
 binding embedded only in the approval decision cannot authorize relocation.
-Legacy or unbound plans continue to use their embedded `runs_dir`, and
+The run ref must equal `runs/{workspace_id}`, not merely share the `runs/`
+prefix. Legacy or unbound plans continue to use their embedded `runs_dir`, and
 cross-run approval evidence remains blocking.
 
 Authenticate and enqueue exactly one validated

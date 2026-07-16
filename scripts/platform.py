@@ -12775,6 +12775,7 @@ def product_candidate_promotion_bound_plan_runs_dir(
     *,
     plan_path: Path,
     workspace_binding_context: dict[str, Any] | None,
+    expected_workspace_id: str,
 ) -> Path | None:
     if not workspace_binding_context:
         return None
@@ -12787,6 +12788,7 @@ def product_candidate_promotion_bound_plan_runs_dir(
         or ".." in run_dir_ref.parts
         or len(run_dir_ref.parts) < 2
         or run_dir_ref.parts[0] != "runs"
+        or run_dir_ref.as_posix() != f"runs/{expected_workspace_id}"
     ):
         return None
     current_runs_dir = plan_path.resolve().parent
@@ -12866,6 +12868,9 @@ def product_candidate_promotion_plan_source_diagnostics(
     plan_runs_dir = product_candidate_promotion_bound_plan_runs_dir(
         plan_path=plan_path,
         workspace_binding_context=workspace_binding_context,
+        expected_workspace_id=str(
+            nested_mapping(approval_decision, "workspace").get("workspace_id") or ""
+        ),
     ) or product_candidate_promotion_plan_runs_dir(
         plan_path=plan_path, plan=plan
     )
