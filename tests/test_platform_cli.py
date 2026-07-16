@@ -10634,6 +10634,10 @@ workspaces:
             self.assertEqual(payload["target_repository_role"], "product_spec_workspace")
             self.assertEqual(payload["authority_profile"], "workspace_owner_controlled")
             self.assertEqual(
+                payload["plan_sha256"],
+                hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
                 payload["commit_paths"],
                 ["specs/nodes/SG-SPEC-CANDIDATE.yaml"],
             )
@@ -10943,6 +10947,88 @@ workspaces:
             self.assertEqual(statuses["prepare_worktree"], "dry_run")
             self.assertEqual(statuses["commit_candidate"], "skipped_dry_run")
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+
+    def test_product_candidate_promotion_execute_accepts_digest_pinned_portable_plan(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request, approval_decision = (
+                self.build_product_candidate_promotion_request(tmp_root)
+            )
+            request_payload = json.loads(promotion_request.read_text(encoding="utf-8"))
+            plan_path = Path(request_payload["plan_ref"])
+            plan_payload = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan_payload["runs_dir"] = "/Users/foreign-host/SpecGraph/runs/workspace"
+            plan_path.write_text(json.dumps(plan_payload), encoding="utf-8")
+            request_payload["plan_ref"] = (
+                "/Users/foreign-host/SpecGraph/runs/workspace/"
+                "graph_repository_execution_plan.json"
+            )
+            request_payload["plan_sha256"] = hashlib.sha256(
+                plan_path.read_bytes()
+            ).hexdigest()
+            promotion_request.write_text(json.dumps(request_payload), encoding="utf-8")
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--plan",
+                str(plan_path),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(tmp_root / "candidate-worktree"),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"], payload["diagnostics"])
+        self.assertEqual(payload["graph_repository_plan_ref"], str(plan_path.resolve()))
+        self.assertIn("--plan", payload["git_service_command"])
+
+    def test_product_candidate_promotion_execute_rejects_foreign_explicit_plan(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            promotion_request, approval_decision = (
+                self.build_product_candidate_promotion_request(tmp_root)
+            )
+            foreign_plan = tmp_root / "foreign-plan.json"
+            foreign_plan.write_text("{}\n", encoding="utf-8")
+            repository_dir = self.create_graph_repository_checkout(tmp_root)
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "execute",
+                "--promotion-request",
+                str(promotion_request),
+                "--approval-decision",
+                str(approval_decision),
+                "--plan",
+                str(foreign_plan),
+                "--repository-dir",
+                str(repository_dir),
+                "--workspace-dir",
+                str(tmp_root / "candidate-worktree"),
+                "--dry-run",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        codes = {item["code"] for item in payload["diagnostics"]}
+        self.assertIn("product_candidate_promotion_plan_digest_mismatch", codes)
 
     def test_product_candidate_promotion_execute_defaults_repaired_source_dir(
         self,

@@ -313,6 +313,9 @@ The current execution order is:
    - `promotion_execute_dry_run` is selected as the first allowlist expansion in
      the
      [dedicated rollout proposal](hosted-managed-promotion-dry-run-rollout-proposal.md).
+   - Hosted promotion transport pins the execution plan independently and
+     validates `promotion_request.plan_sha256`; producer-machine absolute plan
+     refs are not execution inputs on the worker host.
      Its separate one-shot policy, exact deployment profile, report-semantic
      verification, stopped-worker enforcement, and rollback path are
      implemented. Production enablement remains blocked on a clean-VM drill and

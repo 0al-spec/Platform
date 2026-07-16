@@ -502,6 +502,8 @@ class PlatformManagedOperationExecutor:
                 str(self._input(resolved, "runs/graph_repository_promotion_request.json")),
                 "--approval-decision",
                 str(self._input(resolved, "runs/candidate_approval_decision.json")),
+                "--plan",
+                str(self._input(resolved, "runs/graph_repository_execution_plan.json")),
                 "--repository-dir",
                 str(specgraph_dir),
                 "--workspace-dir",

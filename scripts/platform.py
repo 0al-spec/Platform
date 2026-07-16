@@ -2306,7 +2306,8 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
         )
     )
-    plan_path = resolve_artifact_path(
+    explicit_plan_path = Path(args.plan).resolve() if args.plan else None
+    plan_path = explicit_plan_path or resolve_artifact_path(
         promotion_request.get("plan_ref"),
         base_dir=promotion_request_path.parent,
     )
@@ -2317,6 +2318,13 @@ def git_service_execute_promotion(args: argparse.Namespace) -> int:
                 code="git_service_plan_missing",
                 subject="promotion_request.plan_ref",
                 message="promotion request plan_ref must point at an execution plan",
+            )
+        )
+    elif explicit_plan_path is not None:
+        diagnostics.extend(
+            product_candidate_promotion_explicit_plan_diagnostics(
+                promotion_request=promotion_request,
+                plan_path=plan_path,
             )
         )
 
@@ -12763,6 +12771,42 @@ def product_candidate_promotion_plan_runs_dir(
     return runs_dir.resolve()
 
 
+def product_candidate_promotion_explicit_plan_diagnostics(
+    *,
+    promotion_request: dict[str, Any],
+    plan_path: Path,
+) -> list[Diagnostic]:
+    expected_digest = promotion_request.get("plan_sha256")
+    if not isinstance(expected_digest, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_digest
+    ):
+        return [
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_plan_digest_missing",
+                subject="promotion_request.plan_sha256",
+                message=(
+                    "an explicit portable execution plan requires a pinned "
+                    "plan_sha256 in the promotion request"
+                ),
+            )
+        ]
+    actual_digest = file_sha256(plan_path)
+    if actual_digest != expected_digest:
+        return [
+            Diagnostic(
+                level="ERROR",
+                code="product_candidate_promotion_plan_digest_mismatch",
+                subject="promotion_request.plan_sha256",
+                message=(
+                    "the explicit execution plan must match the digest pinned "
+                    "by the promotion request"
+                ),
+            )
+        ]
+    return []
+
+
 def product_candidate_promotion_approval_ref_path(
     *,
     approval_decision_path: Path,
@@ -12907,6 +12951,7 @@ def build_graph_repository_promotion_request_payload(
         "artifact_kind": "platform_graph_repository_promotion_request",
         "generated_at": utc_now_iso(),
         "plan_ref": str(plan_path),
+        "plan_sha256": file_sha256(plan_path),
         "ok": error_count == 0,
         "dry_run": dry_run,
         "workflow_lane": workflow_lane,
@@ -13227,17 +13272,23 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
         deployment_profile_path,
         label="deployment profile",
     )
-    plan_path = resolve_artifact_path(
+    explicit_plan_path = Path(args.plan).resolve() if args.plan else None
+    plan_path = explicit_plan_path or resolve_artifact_path(
         promotion_request.get("plan_ref"),
         base_dir=promotion_request_path.parent,
     )
     plan: dict[str, Any] = {}
     if plan_path is not None and plan_path.is_file():
         plan = load_json_mapping(plan_path, label="graph repository execution plan")
+    effective_plan = dict(plan)
+    if explicit_plan_path is not None:
+        # The pinned plan may have been produced on another host. Its location
+        # inside the current workspace-scoped runs directory is authoritative.
+        effective_plan["runs_dir"] = str(plan_path.parent)
     materialized_source_dir = product_candidate_promotion_materialized_source_dir(
         explicit=args.materialized_source_dir,
         plan_path=plan_path,
-        plan=plan,
+        plan=effective_plan,
         promotion_request=promotion_request,
     )
     diagnostics = [
@@ -13269,10 +13320,17 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
             )
         )
     else:
+        if explicit_plan_path is not None:
+            diagnostics.extend(
+                product_candidate_promotion_explicit_plan_diagnostics(
+                    promotion_request=promotion_request,
+                    plan_path=plan_path,
+                )
+            )
         diagnostics.extend(
             product_candidate_promotion_plan_source_diagnostics(
                 plan_path=plan_path,
-                plan=plan,
+                plan=effective_plan,
                 approval_decision_path=approval_decision_path,
                 approval_decision=approval_decision,
             )
@@ -13318,6 +13376,8 @@ def product_candidate_promotion_execute(args: argparse.Namespace) -> int:
         "--format",
         "json",
     ]
+    if plan_path is not None:
+        git_service_command.extend(["--plan", str(plan_path)])
     if materialized_source_dir is not None:
         git_service_command.extend(
             ["--materialized-source-dir", str(materialized_source_dir)]
@@ -21258,6 +21318,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     git_service_execute_parser.add_argument(
+        "--plan",
+        help=(
+            "Optional portable execution plan override. The plan digest must "
+            "match promotion_request.plan_sha256."
+        ),
+    )
+    git_service_execute_parser.add_argument(
         "--deployment-profile",
         default=str(DEFAULT_PRODUCT_IDEA_TO_SPEC_DEPLOYMENT_PROFILE),
         help=(
@@ -22961,6 +23028,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--approval-decision",
         required=True,
         help="Path to a candidate_approval_decision artifact.",
+    )
+    product_candidate_promotion_execute_parser.add_argument(
+        "--plan",
+        help=(
+            "Optional portable execution plan override. The plan digest must "
+            "match promotion_request.plan_sha256."
+        ),
     )
     product_candidate_promotion_execute_parser.add_argument(
         "--deployment-profile",
