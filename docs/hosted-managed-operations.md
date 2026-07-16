@@ -959,6 +959,19 @@ The hosted image itself must pass the wrapper dependency smoke from
 `promotion_execute_dry_run` requires both the PostgreSQL adapter and the JSON
 Schema validator inside the immutable worker image.
 
+The managed request must also pin all three promotion inputs:
+
+```text
+runs/graph_repository_promotion_request.json
+runs/candidate_approval_decision.json
+runs/graph_repository_execution_plan.json
+```
+
+The promotion request pins the plan digest in `plan_sha256`. Hosted execution
+passes the separately transported plan through `--plan`; the wrapper rejects a
+missing or mismatched digest instead of following producer-machine absolute
+paths from `plan_ref` or `runs_dir`.
+
 Authenticate and enqueue exactly one validated
 `promotion_execute_dry_run` request while no worker is running. Record the
 server-issued request id, then open one window:

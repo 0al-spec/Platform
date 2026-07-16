@@ -34,8 +34,9 @@ The managed-operation registry already constrains the operation to:
 
 - command family: `product-candidate-promotion`, `execute`, `--dry-run`, and
   `--open-review-dry-run`;
-- input refs: `runs/graph_repository_promotion_request.json` and
-  `runs/candidate_approval_decision.json`;
+- input refs: `runs/graph_repository_promotion_request.json`,
+  `runs/candidate_approval_decision.json`, and the separately digest-pinned
+  `runs/graph_repository_execution_plan.json`;
 - output refs: `runs/product_candidate_promotion_execution_report.json` and
   `runs/git_service_promotion_execution_report.json`;
 - side-effect class: `git_dry_run`;
@@ -191,3 +192,19 @@ dependencies. CI imports `jsonschema` and `psycopg` from the built hosted image
 so a source checkout with broader development dependencies cannot mask this
 class of deployment defect. A fresh image lock and a fresh clean-VM request are
 required before recording the rollout decision.
+
+### Clean-VM portable plan finding
+
+The next fresh request reached the fixed wrapper but failed before Git Service
+execution because `promotion_request.plan_ref` and the plan's `runs_dir` still
+identified the machine that produced the artifacts. The queue again failed
+closed at `attempt=1`, produced no authoritative outputs, drained its lock, and
+did not mutate Git. That request is also retained as failure evidence and is not
+eligible for a blind retry.
+
+Hosted promotion requests now pin `graph_repository_execution_plan.json` as a
+separate managed input. The fixed executor passes it through the portable
+`--plan` override, and both product promotion and Git Service verify its digest
+against `promotion_request.plan_sha256`. The current workspace-scoped location
+of that pinned plan supplies the effective runs directory; stale absolute
+producer paths no longer become cross-host execution dependencies.

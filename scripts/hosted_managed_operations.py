@@ -202,7 +202,11 @@ MANAGED_OPERATIONS: tuple[ManagedOperationDefinition, ...] = (
     ManagedOperationDefinition(
         operation_id="promotion_execute_dry_run",
         platform_command=("product-candidate-promotion", "execute", "--dry-run", "--open-review-dry-run"),
-        input_refs=("runs/graph_repository_promotion_request.json", "runs/candidate_approval_decision.json"),
+        input_refs=(
+            "runs/graph_repository_promotion_request.json",
+            "runs/candidate_approval_decision.json",
+            "runs/graph_repository_execution_plan.json",
+        ),
         output_reports=(
             "runs/product_candidate_promotion_execution_report.json",
             "runs/git_service_promotion_execution_report.json",
@@ -221,6 +225,7 @@ MANAGED_OPERATIONS: tuple[ManagedOperationDefinition, ...] = (
             "runs/graph_repository_promotion_request.json",
             "runs/candidate_approval_decision.json",
             "runs/product_candidate_promotion_execution_report.json",
+            "runs/graph_repository_execution_plan.json",
         ),
         output_reports=(
             "runs/product_candidate_promotion_execution_report.json",

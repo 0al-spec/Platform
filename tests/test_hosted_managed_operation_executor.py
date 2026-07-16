@@ -206,6 +206,16 @@ class HostedManagedOperationExecutorTests(unittest.TestCase):
         self.assertEqual(set(command_families), {item.operation_id for item in contracts.MANAGED_OPERATIONS})
         self.assertIn("--dry-run", command_families["promotion_execute_dry_run"][0])
         self.assertNotIn("--dry-run", command_families["promotion_review_execute"][0])
+        dry_run_command = command_families["promotion_execute_dry_run"][0]
+        plan_index = dry_run_command.index("--plan")
+        self.assertEqual(
+            Path(dry_run_command[plan_index + 1]).name,
+            "graph_repository_execution_plan.json",
+        )
+        self.assertIn(
+            "runs/graph_repository_execution_plan.json",
+            contracts.operation_by_id("promotion_execute_dry_run").input_refs,
+        )
         self.assertEqual(len(command_families["repair_rerun_execute"]), 2)
 
     def test_worker_executes_fixed_wrapper_and_pins_output_reports(self) -> None:
