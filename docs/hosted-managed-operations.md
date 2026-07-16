@@ -972,6 +972,11 @@ passes the separately transported plan through `--plan`; the wrapper rejects a
 missing or mismatched digest instead of following producer-machine absolute
 paths from `plan_ref` or `runs_dir`.
 
+Promotion-request generation applies the same portability rule only when a
+validated durable binding identifies the plan's current directory as the exact
+`runs/<workspace-id>` location. Legacy or unbound plans continue to use their
+embedded `runs_dir`, and cross-run approval evidence remains blocking.
+
 Authenticate and enqueue exactly one validated
 `promotion_execute_dry_run` request while no worker is running. Record the
 server-issued request id, then open one window:
