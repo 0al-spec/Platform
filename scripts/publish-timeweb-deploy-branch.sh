@@ -29,6 +29,23 @@ else
   )
 fi
 specpm_registry_url="${TIMEWEB_REQUIRED_SPECPM_REGISTRY_URL:-https://specpm.dev}"
+hosted_managed_execution_enabled="${TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED:-false}"
+hosted_managed_executor_url="${TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTOR_URL:-https://managed.specgraph.tech}"
+hosted_managed_args=(
+  --hosted-managed-executor-url "$hosted_managed_executor_url"
+)
+case "${hosted_managed_execution_enabled,,}" in
+  1|true|yes|on)
+    hosted_managed_args+=(--enable-hosted-managed-execution)
+    ;;
+  0|false|no|off|"")
+    hosted_managed_args+=(--disable-hosted-managed-execution)
+    ;;
+  *)
+    echo "TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED must be boolean." >&2
+    exit 2
+    ;;
+esac
 
 if [[ -z "$generated_dir" ]]; then
   echo "Usage: scripts/publish-timeweb-deploy-branch.sh GENERATED_DIR" >&2
@@ -55,7 +72,8 @@ trap cleanup EXIT
   --path "$generated_dir" \
   --artifact-base-url "$artifact_base_url" \
   "${product_workspace_artifact_base_url_args[@]}" \
-  --specpm-registry-url "$specpm_registry_url"
+  --specpm-registry-url "$specpm_registry_url" \
+  "${hosted_managed_args[@]}"
 
 git fetch --quiet "$remote" "$deploy_branch" 2>/dev/null || true
 
@@ -76,7 +94,8 @@ cp -R "$generated_dir"/. "$worktree"/
   --path "$worktree" \
   --artifact-base-url "$artifact_base_url" \
   "${product_workspace_artifact_base_url_args[@]}" \
-  --specpm-registry-url "$specpm_registry_url"
+  --specpm-registry-url "$specpm_registry_url" \
+  "${hosted_managed_args[@]}"
 
 (
   cd "$worktree"

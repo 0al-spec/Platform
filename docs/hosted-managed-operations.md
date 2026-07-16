@@ -779,6 +779,30 @@ recovery, create `probe-after-reboot.json`, and submit the identical canary
 request again as `replay-canary.json`. The replay must preserve request id,
 idempotency key, output refs and `attempt=1`.
 
+For Timeweb SpecSpace, publish the dedicated hosted manifest profile only after
+the executor token has been configured in the Timeweb deployment environment:
+
+```text
+SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN=<same service token stored on the VPS>
+```
+
+Do not commit or pass that value through the Platform workflow. The generated
+Compose manifest converts it into a file-mounted secret and persists only
+SpecSpace-owned queue/request state in a named volume. The Platform workflow
+inputs are non-secret:
+
+```text
+hosted_managed_execution_enabled=true
+hosted_managed_executor_url=https://managed.specgraph.tech
+```
+
+The first production UI canary remains bounded. Submit exactly one
+`review_status_execute` from the Product Workspace, record the server-issued
+request id, and process it with the tracked `bounded-worker` host wrapper.
+Success requires `hosted_managed_ready`, `attempt=1`, a digest-pinned review
+status report, a drained queue, and a stopped worker. This evidence does not
+authorize `continuous-worker` or another operation id.
+
 Before rollback, audit that no active job or lock remains:
 
 ```bash

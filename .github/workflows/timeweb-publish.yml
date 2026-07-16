@@ -39,6 +39,16 @@ on:
         required: true
         default: https://specpm.dev
         type: string
+      hosted_managed_execution_enabled:
+        description: Enable SpecSpace hosted managed execution client and persistent state volume.
+        required: true
+        default: false
+        type: boolean
+      hosted_managed_executor_url:
+        description: HTTPS Platform hosted managed-operation service origin.
+        required: true
+        default: https://managed.specgraph.tech
+        type: string
 
 jobs:
   render-validate-publish:
@@ -84,6 +94,8 @@ jobs:
           --artifact-base-url "${{ inputs.artifact_base_url }}"
           --product-workspace-artifact-base-url "${{ inputs.product_workspace_artifact_base_url }}"
           --specpm-registry-url "${{ inputs.specpm_registry_url }}"
+          --hosted-managed-executor-url "${{ inputs.hosted_managed_executor_url }}"
+          ${{ inputs.hosted_managed_execution_enabled && '--enable-hosted-managed-execution' || '--disable-hosted-managed-execution' }}
           --release-commit "${RELEASE_COMMIT}"
           --release-created-at "${RELEASE_CREATED_AT}"
           --format json
@@ -95,9 +107,13 @@ jobs:
           --artifact-base-url "${{ inputs.artifact_base_url }}"
           --product-workspace-artifact-base-url "${{ inputs.product_workspace_artifact_base_url }}"
           --specpm-registry-url "${{ inputs.specpm_registry_url }}"
+          --hosted-managed-executor-url "${{ inputs.hosted_managed_executor_url }}"
+          ${{ inputs.hosted_managed_execution_enabled && '--enable-hosted-managed-execution' || '--disable-hosted-managed-execution' }}
 
       - name: Validate Timeweb Compose config
         working-directory: dist/platform-timeweb-deploy
+        env:
+          SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: ci-compose-secret-placeholder
         run: docker compose --file docker-compose.yml config
 
       - name: Upload rendered Timeweb deploy tree
@@ -120,4 +136,6 @@ jobs:
           TIMEWEB_REQUIRED_ARTIFACT_BASE_URL: ${{ inputs.artifact_base_url }}
           TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL: ${{ inputs.product_workspace_artifact_base_url }}
           TIMEWEB_REQUIRED_SPECPM_REGISTRY_URL: ${{ inputs.specpm_registry_url }}
+          TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED: ${{ inputs.hosted_managed_execution_enabled }}
+          TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTOR_URL: ${{ inputs.hosted_managed_executor_url }}
         run: scripts/publish-timeweb-deploy-branch.sh dist/platform-timeweb-deploy

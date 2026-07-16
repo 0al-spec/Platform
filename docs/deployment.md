@@ -409,6 +409,26 @@ The rendered tree contains only:
 - `README.md`;
 - `platform-timeweb-deploy.json`.
 
+The default remains read-only. After a separate rollout decision, render the
+hosted SpecSpace client with:
+
+```bash
+scripts/platform.py deploy timeweb-render \
+  --output-dir dist/platform-timeweb-deploy \
+  --image-lock dist/platform-service-images.json \
+  --enable-hosted-managed-execution \
+  --hosted-managed-executor-url https://managed.specgraph.tech
+```
+
+This profile adds one named volume for SpecSpace-owned queue/request state and
+one Compose secret sourced from the deployment environment variable
+`SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN`. The secret value is never rendered
+into Git, the image, or `platform-timeweb-deploy.json`. It does not add a local
+SpecGraph `runs` mirror: hosted Platform remains responsible for resolving and
+validating workspace-scoped artifacts. A published HTTP-provider binding is
+accepted only after SpecSpace validates its workspace identity, digests,
+routing, repository identity, and closed authority boundary.
+
 Guardrails:
 
 - the first service is `app`, because Timeweb proxies the public domain to the
@@ -422,12 +442,16 @@ Guardrails:
   The public UI reaches it through the Compose network as `specspace-api:8001`;
 - API/UI image refs must be digest-pinned and must not use `latest`;
 - no source `build` sections;
-- no bind mounts or named volumes;
+- no bind mounts; named volumes are forbidden in read-only mode and limited to
+  the fixed SpecSpace-owned state volume in hosted mode;
 - no required `${VAR:?message}` interpolation;
 - SpecSpace API must read SpecGraph artifacts through `--artifact-base-url`;
 - SpecSpace API must read SpecPM metadata through `--specpm-registry-url`;
 - SpecSpace API must carry the expected Hyperprompt HTTP compile flag and
   limits.
+- hosted mode must use an HTTPS executor origin, a file-mounted Compose secret,
+  and the fixed persistent state directory; local subprocess execution remains
+  disabled.
 
 ## Timeweb Production Control Plane
 

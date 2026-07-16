@@ -58,6 +58,11 @@ DEFAULT_TIMEWEB_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS = "60"
 DEFAULT_TIMEWEB_HYPERPROMPT_MAX_INPUT_BYTES = "1048576"
 DEFAULT_TIMEWEB_HYPERPROMPT_MAX_OUTPUT_BYTES = "2097152"
 DEFAULT_TIMEWEB_HYPERPROMPT_BUNDLE_RETENTION_COUNT = "20"
+DEFAULT_TIMEWEB_HOSTED_MANAGED_EXECUTOR_URL = "https://managed.specgraph.tech"
+DEFAULT_TIMEWEB_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS = "5"
+TIMEWEB_HOSTED_MANAGED_STATE_VOLUME = "specspace-hosted-managed-state"
+TIMEWEB_HOSTED_MANAGED_STATE_DIR = "/data/specspace-hosted-managed-state"
+TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET = "specspace-hosted-managed-executor-token"
 DEFAULT_PRODUCT_WORKSPACE_ID = "team-decision-log"
 DEFAULT_DEPLOYED_PRODUCT_WORKSPACE_IDS = (
     DEFAULT_PRODUCT_WORKSPACE_ID,
@@ -834,6 +839,13 @@ class TimewebHyperpromptRuntime:
     max_input_bytes: str
     max_output_bytes: str
     bundle_retention_count: str
+
+
+@dataclass(frozen=True)
+class TimewebHostedManagedRuntime:
+    enabled: bool
+    executor_url: str
+    timeout_seconds: str
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -19464,6 +19476,36 @@ def timeweb_hyperprompt_runtime_from_args(args: argparse.Namespace) -> TimewebHy
     )
 
 
+def timeweb_hosted_managed_runtime_from_args(
+    args: argparse.Namespace,
+) -> TimewebHostedManagedRuntime:
+    enabled = bool(getattr(args, "hosted_managed_execution_enabled", False))
+    executor_url = str(getattr(args, "hosted_managed_executor_url", "")).strip().rstrip("/")
+    timeout_seconds = positive_int_string(
+        str(getattr(args, "hosted_managed_executor_timeout_seconds", "")),
+        label="Hosted managed executor timeout seconds",
+    )
+    if enabled:
+        parsed = urllib.parse.urlparse(executor_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise PlatformError(
+                "Hosted managed executor URL must be an HTTPS origin without "
+                "credentials, query, or fragment"
+            )
+    return TimewebHostedManagedRuntime(
+        enabled=enabled,
+        executor_url=executor_url,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def product_workspace_artifact_base_urls_from_args(args: argparse.Namespace) -> dict[str, str]:
     raw_values = getattr(args, "product_workspace_artifact_base_url", None)
     values: list[str] = []
@@ -19543,6 +19585,60 @@ def render_timeweb_hyperprompt_environment(runtime: TimewebHyperpromptRuntime) -
     return "".join(lines)
 
 
+def render_timeweb_hosted_managed_environment(
+    runtime: TimewebHostedManagedRuntime,
+) -> str:
+    if not runtime.enabled:
+        return ""
+    return (
+        '      SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED: "true"\n'
+        f'      SPECSPACE_HOSTED_MANAGED_EXECUTOR_URL: "{runtime.executor_url}"\n'
+        "      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS: "
+        f'"{runtime.timeout_seconds}"\n'
+    )
+
+
+def render_timeweb_hosted_managed_command(
+    runtime: TimewebHostedManagedRuntime,
+) -> str:
+    if not runtime.enabled:
+        return ""
+    return (
+        "      - --enable-hosted-managed-execution\n"
+        "      - --hosted-managed-executor-url\n"
+        f'      - "{runtime.executor_url}"\n'
+        "      - --hosted-managed-executor-token-file\n"
+        f"      - /run/secrets/{TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}\n"
+        "      - --hosted-managed-executor-timeout-seconds\n"
+        f'      - "{runtime.timeout_seconds}"\n'
+        "      - --specspace-state-dir\n"
+        f"      - {TIMEWEB_HOSTED_MANAGED_STATE_DIR}\n"
+    )
+
+
+def render_timeweb_hosted_managed_service(runtime: TimewebHostedManagedRuntime) -> str:
+    if not runtime.enabled:
+        return ""
+    return (
+        "    secrets:\n"
+        f"      - {TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}\n"
+        "    volumes:\n"
+        f"      - {TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:{TIMEWEB_HOSTED_MANAGED_STATE_DIR}\n"
+    )
+
+
+def render_timeweb_hosted_managed_top_level(runtime: TimewebHostedManagedRuntime) -> str:
+    if not runtime.enabled:
+        return ""
+    return (
+        "\nsecrets:\n"
+        f"  {TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}:\n"
+        "    environment: SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN\n"
+        "\nvolumes:\n"
+        f"  {TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:\n"
+    )
+
+
 def render_timeweb_compose(
     *,
     api_image_ref: str,
@@ -19552,6 +19648,7 @@ def render_timeweb_compose(
     specpm_registry_url: str,
     release_commit: str,
     hyperprompt_runtime: TimewebHyperpromptRuntime,
+    hosted_managed_runtime: TimewebHostedManagedRuntime,
 ) -> str:
     product_workspace_args = "".join(
         "      - --product-workspace-artifact-base-url\n"
@@ -19576,6 +19673,7 @@ def render_timeweb_compose(
         f"      SPECSPACE_UI_IMAGE_REF: \"{ui_image_ref}\"\n"
         f"      SPECSPACE_RELEASE_COMMIT: \"{release_commit}\"\n"
         f"{render_timeweb_hyperprompt_environment(hyperprompt_runtime)}"
+        f"{render_timeweb_hosted_managed_environment(hosted_managed_runtime)}"
         "    command:\n"
         "      - python\n"
         "      - viewer/server.py\n"
@@ -19588,16 +19686,20 @@ def render_timeweb_compose(
         "      - --artifact-base-url\n"
         f"      - \"{artifact_base_url}\"\n"
         f"{product_workspace_args}"
+        f"{render_timeweb_hosted_managed_command(hosted_managed_runtime)}"
         "      - --specpm-registry-url\n"
         f"      - \"{specpm_registry_url}\"\n"
         "    expose:\n"
         "      - \"8001\"\n"
+        f"{render_timeweb_hosted_managed_service(hosted_managed_runtime)}"
+        f"{render_timeweb_hosted_managed_top_level(hosted_managed_runtime)}"
     )
 
 
 def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
     image_refs = resolve_timeweb_image_refs(args)
     hyperprompt_runtime = timeweb_hyperprompt_runtime_from_args(args)
+    hosted_managed_runtime = timeweb_hosted_managed_runtime_from_args(args)
 
     output_dir = Path(args.output_dir)
     safe_output_dir(output_dir)
@@ -19626,6 +19728,7 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
             specpm_registry_url=args.specpm_registry_url,
             release_commit=release_commit,
             hyperprompt_runtime=hyperprompt_runtime,
+            hosted_managed_runtime=hosted_managed_runtime,
         ),
         encoding="utf-8",
     )
@@ -19646,6 +19749,10 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         f"- SpecPM registry source: `{args.specpm_registry_url}`\n"
         f"- HTTP Hyperprompt compile: "
         f"`{'enabled' if hyperprompt_runtime.http_compile_enabled else 'disabled'}`\n"
+        f"- Hosted managed execution: "
+        f"`{'enabled' if hosted_managed_runtime.enabled else 'disabled'}`\n"
+        f"- Hosted managed executor: "
+        f"`{hosted_managed_runtime.executor_url if hosted_managed_runtime.enabled else '(not used)'}`\n"
         f"- Hyperprompt scratch workspace: "
         f"`{hyperprompt_runtime.work_dir if hyperprompt_runtime.http_compile_enabled else '(not used)'}`\n\n"
         "## Notes\n\n"
@@ -19684,6 +19791,15 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                 "hyperprompt_max_output_bytes": hyperprompt_runtime.max_output_bytes,
                 "hyperprompt_bundle_retention_count": (
                     hyperprompt_runtime.bundle_retention_count
+                ),
+                "hosted_managed_execution_enabled": hosted_managed_runtime.enabled,
+                "hosted_managed_executor_url": (
+                    hosted_managed_runtime.executor_url
+                    if hosted_managed_runtime.enabled
+                    else None
+                ),
+                "hosted_managed_executor_timeout_seconds": (
+                    hosted_managed_runtime.timeout_seconds
                 ),
                 "specpm_registry_url": args.specpm_registry_url,
             },
@@ -19839,6 +19955,7 @@ def validate_timeweb_manifest_tree(
     product_workspace_artifact_base_urls: dict[str, str],
     specpm_registry_url: str,
     hyperprompt_runtime: TimewebHyperpromptRuntime,
+    hosted_managed_runtime: TimewebHostedManagedRuntime,
 ) -> list[str]:
     target_file = "docker-compose.yml"
     compose_path = root / target_file
@@ -19864,7 +19981,9 @@ def validate_timeweb_manifest_tree(
     lines = text.splitlines()
     if re.search(r"(?m)^[ \t]*build:", text):
         errors.append(f"{target_file} must not build from source")
-    if re.search(r"(?m)^[ \t]*volumes:", text):
+    if not hosted_managed_runtime.enabled and re.search(
+        r"(?m)^[ \t]*volumes:", text
+    ):
         errors.append(f"{target_file} must not declare volumes")
     if re.search(r"\$\{[^}]*\?", text):
         errors.append(f"{target_file} must not use required env interpolation")
@@ -19955,6 +20074,71 @@ def validate_timeweb_manifest_tree(
                     f"to {expected}, got {actual!r}"
                 )
 
+    hosted_command_tokens = {
+        "--enable-hosted-managed-execution",
+        "--hosted-managed-executor-url",
+        "--hosted-managed-executor-token-file",
+        "--hosted-managed-executor-timeout-seconds",
+        "--specspace-state-dir",
+    }
+    present_hosted_command_tokens = hosted_command_tokens.intersection(api_command)
+    if hosted_managed_runtime.enabled:
+        expected_environment = {
+            "SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED": "true",
+            "SPECSPACE_HOSTED_MANAGED_EXECUTOR_URL": hosted_managed_runtime.executor_url,
+            "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS": (
+                hosted_managed_runtime.timeout_seconds
+            ),
+        }
+        for key, expected in expected_environment.items():
+            if api_environment.get(key) != expected:
+                errors.append(
+                    f"{target_file} specspace-api environment must set {key} "
+                    f"to {expected}, got {api_environment.get(key)!r}"
+                )
+        expected_command_values = {
+            "--hosted-managed-executor-url": hosted_managed_runtime.executor_url,
+            "--hosted-managed-executor-token-file": (
+                f"/run/secrets/{TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}"
+            ),
+            "--hosted-managed-executor-timeout-seconds": (
+                hosted_managed_runtime.timeout_seconds
+            ),
+            "--specspace-state-dir": TIMEWEB_HOSTED_MANAGED_STATE_DIR,
+        }
+        if "--enable-hosted-managed-execution" not in api_command:
+            errors.append(f"{target_file} must enable hosted managed execution")
+        for flag, expected in expected_command_values.items():
+            if command_value_after(api_command, flag) != expected:
+                errors.append(
+                    f"{target_file} {flag} must be {expected}, got "
+                    f"{command_value_after(api_command, flag)!r}"
+                )
+        required_fragments = (
+            f"      - {TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}\n",
+            f"      - {TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:"
+            f"{TIMEWEB_HOSTED_MANAGED_STATE_DIR}\n",
+            f"  {TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}:\n"
+            "    environment: SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN\n",
+            f"  {TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:\n",
+        )
+        for fragment in required_fragments:
+            if fragment not in text:
+                errors.append(
+                    f"{target_file} hosted managed profile is missing {fragment.strip()!r}"
+                )
+        if re.search(r"(?m)^\s+(?:source|type):\s*bind\s*$", text):
+            errors.append(f"{target_file} hosted managed profile must not use bind mounts")
+    else:
+        if present_hosted_command_tokens:
+            errors.append(
+                f"{target_file} must not configure hosted managed command flags"
+            )
+        if any(key.startswith("SPECSPACE_HOSTED_MANAGED_") for key in api_environment):
+            errors.append(
+                f"{target_file} must not configure hosted managed environment"
+            )
+
     for service_name in ("app", "specspace-api"):
         image = image_for_service(blocks, service_name)
         if image is None:
@@ -20000,12 +20184,14 @@ def validate_timeweb_manifest_tree(
 def deploy_timeweb_render(args: argparse.Namespace) -> int:
     manifest = write_timeweb_manifest(args)
     hyperprompt_runtime = timeweb_hyperprompt_runtime_from_args(args)
+    hosted_managed_runtime = timeweb_hosted_managed_runtime_from_args(args)
     errors = validate_timeweb_manifest_tree(
         manifest.output_dir,
         artifact_base_url=args.artifact_base_url,
         product_workspace_artifact_base_urls=product_workspace_artifact_base_urls_from_args(args),
         specpm_registry_url=args.specpm_registry_url,
         hyperprompt_runtime=hyperprompt_runtime,
+        hosted_managed_runtime=hosted_managed_runtime,
     )
     if errors:
         raise PlatformError("generated Timeweb manifest is invalid: " + "; ".join(errors))
@@ -20029,12 +20215,14 @@ def deploy_timeweb_render(args: argparse.Namespace) -> int:
 def deploy_timeweb_validate(args: argparse.Namespace) -> int:
     root = Path(args.path)
     hyperprompt_runtime = timeweb_hyperprompt_runtime_from_args(args)
+    hosted_managed_runtime = timeweb_hosted_managed_runtime_from_args(args)
     errors = validate_timeweb_manifest_tree(
         root,
         artifact_base_url=args.artifact_base_url,
         product_workspace_artifact_base_urls=product_workspace_artifact_base_urls_from_args(args),
         specpm_registry_url=args.specpm_registry_url,
         hyperprompt_runtime=hyperprompt_runtime,
+        hosted_managed_runtime=hosted_managed_runtime,
     )
     payload = {
         "action": "timeweb-validate",
@@ -23541,6 +23729,45 @@ def build_parser() -> argparse.ArgumentParser:
             help="Number of SpecSpace-owned Hyperprompt scratch bundles to retain.",
         )
 
+    def add_timeweb_hosted_managed_args(command_parser: argparse.ArgumentParser) -> None:
+        command_parser.set_defaults(
+            hosted_managed_execution_enabled=bool_from_env(
+                "SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED",
+                default=False,
+            )
+        )
+        command_parser.add_argument(
+            "--enable-hosted-managed-execution",
+            dest="hosted_managed_execution_enabled",
+            action="store_true",
+            help=(
+                "Render the fail-closed hosted Platform executor client, a "
+                "persistent SpecSpace-owned state volume, and a Compose secret."
+            ),
+        )
+        command_parser.add_argument(
+            "--disable-hosted-managed-execution",
+            dest="hosted_managed_execution_enabled",
+            action="store_false",
+            help="Render the default read-only SpecSpace production profile.",
+        )
+        command_parser.add_argument(
+            "--hosted-managed-executor-url",
+            default=os.environ.get(
+                "SPECSPACE_HOSTED_MANAGED_EXECUTOR_URL",
+                DEFAULT_TIMEWEB_HOSTED_MANAGED_EXECUTOR_URL,
+            ),
+            help="HTTPS Platform hosted managed-operation service origin.",
+        )
+        command_parser.add_argument(
+            "--hosted-managed-executor-timeout-seconds",
+            default=os.environ.get(
+                "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS",
+                DEFAULT_TIMEWEB_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS,
+            ),
+            help="Bounded HTTP timeout for SpecSpace hosted executor calls.",
+        )
+
     timeweb_render_parser = deploy_subcommands.add_parser(
         "timeweb-render",
         help="Write a Timeweb Cloud Apps manifest-only deploy tree.",
@@ -23610,6 +23837,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="UTC release timestamp to embed in deployment metadata.",
     )
     add_timeweb_hyperprompt_args(timeweb_render_parser)
+    add_timeweb_hosted_managed_args(timeweb_render_parser)
     timeweb_render_parser.add_argument(
         "--format",
         choices=["table", "json"],
@@ -23659,6 +23887,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Required readonly SpecPM registry URL.",
     )
     add_timeweb_hyperprompt_args(timeweb_validate_parser)
+    add_timeweb_hosted_managed_args(timeweb_validate_parser)
     timeweb_validate_parser.add_argument(
         "--format",
         choices=["table", "json"],
