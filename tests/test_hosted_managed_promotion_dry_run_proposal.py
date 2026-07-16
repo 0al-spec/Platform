@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import unittest
 
 from scripts import hosted_managed_operations as operations
@@ -65,6 +66,25 @@ class HostedManagedPromotionDryRunProposalTests(unittest.TestCase):
         self.assertIn(
             "promotion-dry-run-worker-window-policy.json",
             compose,
+        )
+
+    def test_hosted_runtime_includes_promotion_wrapper_dependencies(self) -> None:
+        requirements = (self.root / "requirements-hosted.txt").read_text(
+            encoding="utf-8"
+        )
+        workflow = (
+            self.root / ".github" / "workflows" / "deploy-bundle.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("jsonschema>=", requirements)
+        self.assertIn("psycopg[binary]>=", requirements)
+        self.assertIn("import jsonschema, psycopg", workflow)
+        self.assertIsNotNone(
+            re.search(
+                r"(?m)^  platform-deploy-bundle:\n"
+                r"    needs: hosted-managed-contract$",
+                workflow,
+            )
         )
 
 

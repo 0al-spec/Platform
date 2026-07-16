@@ -954,6 +954,11 @@ sudo /usr/bin/python3 \
   --operation-profile promotion-dry-run
 ```
 
+The hosted image itself must pass the wrapper dependency smoke from
+`platform-deploy-bundle`. A successful local `.venv` run is insufficient:
+`promotion_execute_dry_run` requires both the PostgreSQL adapter and the JSON
+Schema validator inside the immutable worker image.
+
 Authenticate and enqueue exactly one validated
 `promotion_execute_dry_run` request while no worker is running. Record the
 server-issued request id, then open one window:

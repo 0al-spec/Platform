@@ -64,6 +64,11 @@ jobs:
           docker build --file Dockerfile.hosted-managed
           --tag 0al/platform-hosted-managed:ci .
 
+      - name: Verify hosted wrapper runtime dependencies
+        run: >-
+          docker run --rm 0al/platform-hosted-managed:ci
+          python3 -c 'import jsonschema, psycopg'
+
       - name: Build capability-free hosted ingress image
         run: |
           docker pull caddy:2-alpine
@@ -125,6 +130,7 @@ jobs:
         run: make hosted-managed-production-compose-smoke PYTHON=python3
 
   platform-deploy-bundle:
+    needs: hosted-managed-contract
     runs-on: ubuntu-latest
     steps:
       - name: Check out Platform
