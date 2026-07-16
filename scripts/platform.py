@@ -12771,6 +12771,32 @@ def product_candidate_promotion_plan_runs_dir(
     return runs_dir.resolve()
 
 
+def product_candidate_promotion_bound_plan_runs_dir(
+    *,
+    plan_path: Path,
+    workspace_binding_context: dict[str, Any] | None,
+    expected_workspace_id: str,
+) -> Path | None:
+    if not workspace_binding_context:
+        return None
+    raw_run_dir_ref = workspace_binding_context.get("platform_default_run_dir_ref")
+    if not isinstance(raw_run_dir_ref, str) or not raw_run_dir_ref.strip():
+        return None
+    run_dir_ref = Path(raw_run_dir_ref)
+    if (
+        run_dir_ref.is_absolute()
+        or ".." in run_dir_ref.parts
+        or len(run_dir_ref.parts) < 2
+        or run_dir_ref.parts[0] != "runs"
+        or run_dir_ref.as_posix() != f"runs/{expected_workspace_id}"
+    ):
+        return None
+    current_runs_dir = plan_path.resolve().parent
+    if tuple(current_runs_dir.parts[-len(run_dir_ref.parts) :]) != run_dir_ref.parts:
+        return None
+    return current_runs_dir
+
+
 def product_candidate_promotion_explicit_plan_diagnostics(
     *,
     promotion_request: dict[str, Any],
@@ -12836,11 +12862,17 @@ def product_candidate_promotion_plan_source_diagnostics(
     plan: dict[str, Any],
     approval_decision_path: Path,
     approval_decision: dict[str, Any],
+    workspace_binding_context: dict[str, Any] | None = None,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
-    plan_runs_dir = product_candidate_promotion_plan_runs_dir(
+    plan_runs_dir = product_candidate_promotion_bound_plan_runs_dir(
         plan_path=plan_path,
-        plan=plan,
+        workspace_binding_context=workspace_binding_context,
+        expected_workspace_id=str(
+            nested_mapping(approval_decision, "workspace").get("workspace_id") or ""
+        ),
+    ) or product_candidate_promotion_plan_runs_dir(
+        plan_path=plan_path, plan=plan
     )
     if plan_runs_dir is None:
         return [
@@ -13083,6 +13115,14 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
                 subject_prefix="workspace_binding",
             )
         )
+    portable_plan_binding_context = (
+        workspace_binding_context
+        if getattr(args, "workspace_initialization", None)
+        and not any(
+            diagnostic.level == "ERROR" for diagnostic in binding_diagnostics
+        )
+        else None
+    )
     diagnostics = [
         *product_candidate_promotion_decision_diagnostics(approval_decision),
         *product_candidate_promotion_plan_source_diagnostics(
@@ -13090,6 +13130,7 @@ def product_candidate_promotion_request(args: argparse.Namespace) -> int:
             plan=plan,
             approval_decision_path=approval_decision_path,
             approval_decision=approval_decision,
+            workspace_binding_context=portable_plan_binding_context,
         ),
         *graph_repository_promotion_request_diagnostics(
             plan,

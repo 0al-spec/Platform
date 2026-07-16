@@ -208,3 +208,13 @@ separate managed input. The fixed executor passes it through the portable
 against `promotion_request.plan_sha256`. The current workspace-scoped location
 of that pinned plan supplies the effective runs directory; stale absolute
 producer paths no longer become cross-host execution dependencies.
+
+The following clean-VM request-generation preflight exposed the same host-path
+assumption one step earlier: approval source refs were checked against the
+plan's embedded `runs_dir` even though the validated binding and transported
+plan both identified the current `runs/<workspace-id>` directory. Promotion
+request generation now accepts that current directory only when it exactly
+matches an explicitly selected, validated initialization report. A compact
+binding copied into an approval decision is insufficient on its own. Unbound
+plans retain legacy behavior, and a plan paired with approval evidence from
+another run remains rejected.
