@@ -913,6 +913,147 @@ class PlatformDeployTests(unittest.TestCase):
             )
             self.assertTrue(json.loads(result.stdout)["valid"])
 
+    def test_timeweb_render_can_enable_hosted_managed_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-execution",
+                "--hosted-managed-executor-url",
+                "https://managed.specgraph.tech",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-execution",
+                "--hosted-managed-executor-url",
+                "https://managed.specgraph.tech",
+                "--format",
+                "json",
+            )
+            compose = (output_dir / "docker-compose.yml").read_text(encoding="utf-8")
+            manifest = json.loads(
+                (output_dir / "platform-timeweb-deploy.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 0, validate.stderr)
+        self.assertIn("--enable-hosted-managed-execution", compose)
+        self.assertIn(
+            "environment: SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN",
+            compose,
+        )
+        self.assertIn(
+            "specspace-hosted-managed-state:/data/specspace-hosted-managed-state",
+            compose,
+        )
+        self.assertNotIn("hosted-token-", compose)
+        self.assertTrue(manifest["hosted_managed_execution_enabled"])
+        self.assertEqual(
+            manifest["hosted_managed_executor_url"],
+            "https://managed.specgraph.tech",
+        )
+
+    def test_timeweb_validate_requires_matching_hosted_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-execution",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--disable-hosted-managed-execution",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 1, validate.stderr)
+        self.assertFalse(json.loads(validate.stdout)["valid"])
+
+    def test_timeweb_validate_rejects_extra_hosted_bind_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-execution",
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose.replace(
+                    "    depends_on:\n      - specspace-api\n",
+                    "    depends_on:\n      - specspace-api\n"
+                    "    volumes:\n      - /etc:/host-etc\n",
+                ),
+                encoding="utf-8",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-execution",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 1, validate.stderr)
+        payload = json.loads(validate.stdout)
+        self.assertIn(
+            "docker-compose.yml hosted app must not declare volumes",
+            payload["errors"],
+        )
+
+    def test_timeweb_render_rejects_non_https_hosted_executor(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(Path(root) / "timeweb"),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-execution",
+                "--hosted-managed-executor-url",
+                "http://managed.specgraph.tech",
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must be an HTTPS origin", result.stderr)
+
     def test_timeweb_render_treats_bare_root_product_base_as_default(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"
@@ -1017,6 +1158,9 @@ class PlatformDeployTests(unittest.TestCase):
             '"hosted-operation-canary=$default_hosted_operation_canary_artifact_base_url"',
             publish_script,
         )
+        self.assertIn("hosted_managed_execution_enabled:", workflow)
+        self.assertIn("TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED", workflow)
+        self.assertIn("TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED", publish_script)
 
     def test_timeweb_render_rejects_mutable_image_ref(self) -> None:
         with tempfile.TemporaryDirectory() as root:

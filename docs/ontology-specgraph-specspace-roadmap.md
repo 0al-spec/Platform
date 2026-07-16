@@ -327,6 +327,13 @@ The current execution order is:
      worker is stopped, and another window requires a new decision;
    - connect the enabled hosted operations to SpecSpace lifecycle actions and
      observability before proposing any irreversible Git or publication action.
+     The deployment contract now has a fail-closed Timeweb hosted profile with
+     an HTTPS executor, runtime-injected Compose secret, persistent
+     SpecSpace-owned state, and provider-binding validation. The remaining
+     rollout evidence is one UI-originated `review_status_execute` processed in
+     a bounded production worker window, followed by queue drain, rollback
+     verification, probe, and backup. Continuous read-only execution remains a
+     later operating-policy decision.
    Every allowlist expansion remains a separate rollout with operation-specific
    confirmation, idempotency, monitoring, recovery, backup, and rollback
    evidence.
