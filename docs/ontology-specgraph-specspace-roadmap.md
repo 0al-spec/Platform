@@ -342,6 +342,14 @@ The current execution order is:
      explicit digest-pinned evidence and cannot be confused with the promotion
      execution that opened the candidate PR. Continuous read-only execution
      remains a later operating-policy decision.
+   - reduce production artifact-refresh latency: publishing the small
+     review-status evidence update still kept the static SFTP deployment active
+     for about 13 minutes, so incremental staging must avoid unrelated bundle
+     churn and metadata transfer;
+   - reduce Product Workspace HTTP-provider fan-out: the production workspace
+     projection currently takes roughly 30-35 seconds to assemble, which delays
+     managed-operation refresh even when queue execution itself finishes in
+     about two seconds.
    Every allowlist expansion remains a separate rollout with operation-specific
    confirmation, idempotency, monitoring, recovery, backup, and rollback
    evidence.
