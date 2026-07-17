@@ -20,12 +20,6 @@ services:
       SPECSPACE_HYPERPROMPT_MAX_INPUT_BYTES: "1048576"
       SPECSPACE_HYPERPROMPT_MAX_OUTPUT_BYTES: "2097152"
       SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT: "20"
-      SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED: "true"
-      SPECSPACE_HOSTED_MANAGED_EXECUTOR_URL: "https://managed.specgraph.tech"
-      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS: "5"
-      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: "${SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN}"
-      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "ephemeral"
-      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "review_status_execute"
     command:
       - python
       - viewer/server.py
@@ -41,17 +35,6 @@ services:
       - "hosted-operation-canary=https://specgraph.tech/workspaces/hosted-operation-canary"
       - --product-workspace-artifact-base-url
       - "team-decision-log=https://specgraph.tech/workspaces/team-decision-log"
-      - --enable-hosted-managed-execution
-      - --hosted-managed-executor-url
-      - "https://managed.specgraph.tech"
-      - --hosted-managed-executor-timeout-seconds
-      - "5"
-      - --specspace-state-dir
-      - /tmp/specspace-hosted-managed-state
-      - --hosted-managed-state-durability
-      - ephemeral
-      - --hosted-managed-operation-allowlist
-      - review_status_execute
       - --specpm-registry-url
       - "https://specpm.dev"
     expose:
