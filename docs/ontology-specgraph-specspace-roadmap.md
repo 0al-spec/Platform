@@ -20,7 +20,7 @@ repository that owns the behavior:
 
 ## Current Anchors
 
-As of 2026-07-09:
+As of 2026-07-18:
 
 - Ontology PR `#53` is merged: `ontologyc` adapter report artifact line.
 - Ontology PR `#54` is merged: Hypercode IR v2 ontology package import.
@@ -103,18 +103,18 @@ As of 2026-07-09:
   - Platform PR `#67` reads those artifacts as report-only telemetry in product
     publish/smoke/approval reports without replacing the real repair, approval,
     or promotion gates.
-  - The next Platform slice surfaces Metrics contract metadata in those compact
-    summaries, so operators can see the report schema, validation schema,
-    validator id/version, and compatibility policy that made the telemetry
-    trustworthy.
-- The idea-to-spec product direction now has a working local managed lifecycle:
+  - Metrics contract metadata is now present in the compact Platform summaries,
+    so operators can see the report schema, validation schema, validator
+    id/version, and compatibility policy that made the telemetry trustworthy.
+- The idea-to-spec product direction now has a working local and hosted-canary
+  managed lifecycle:
   SpecSpace can create a product workspace, collect raw idea and clarification
   state, call backend-managed Platform wrappers, show repair/approval/promotion
-  progress, and display read-model publication after Git review. The next work
-  is quality and production hardening: deterministic next-action ranking,
-  fallback-free clarification templates, durable workspace bindings, and moving
-  the local managed executor pattern toward hosted/queue-backed service
-  execution.
+  progress, and display read-model publication after Git review. Deterministic
+  next-action ranking, fallback-free clarification, durable workspace binding,
+  and hosted/queue-backed execution are implemented. The next major boundary is
+  durable external storage for SpecSpace-owned mutable state before continuous
+  production managed mode.
 
 The product intent is to reduce hallucinated terms, misunderstood domain
 language, wrong aliases, wrong relation directions, and hidden missing concepts
@@ -249,12 +249,18 @@ This separates the read path from the write path:
 
 The current execution order is:
 
-1. **Quality-guided next action ranking.** SpecSpace now has many accurate
-   guided paths and managed operation rows. The next UI coordination slice is a
-   deterministic primary action plus secondary actions model that ranks stale
-   state, failed operations, blocking clarification/repair, structural-depth
-   improvement, approval, promotion, and publication without creating execution
-   authority.
+Items 1-4 and 6 are completed foundations. Item 5 is the next major
+cross-repository milestone; item 7 can proceed in parallel when ONT-040 is
+available, and item 8 remains deliberately deferred. Operational measurements
+inside item 4 do not expand production authority.
+
+1. **Quality-guided next action ranking.** Implemented in SpecSpace. The
+   Product Workspace exposes one deterministic primary action plus bounded
+   secondary actions across stale state, failed operations, blocking
+   clarification/repair, structural-depth improvement, approval, promotion, and
+   publication without creating execution authority. Superseded failed
+   operations no longer outrank a later successful lifecycle stage, including
+   terminal review and publication operations.
 2. **Fallback-free real idea clarification.** Implemented across SpecGraph,
    SpecSpace, and Platform. Workspace-bound templates now expose
    `answers_required`, `clarification_not_required`, or
@@ -353,35 +359,42 @@ The current execution order is:
      explicit digest-pinned evidence and cannot be confused with the promotion
      execution that opened the candidate PR. Continuous read-only execution
      remains a later operating-policy decision.
-   - reduce production artifact-refresh latency: publishing the small
-     review-status evidence update still kept the static SFTP deployment active
-     for about 13 minutes, so incremental staging must avoid unrelated bundle
-     churn and metadata transfer;
-   - reduce Product Workspace HTTP-provider fan-out: the production workspace
-     projection currently takes roughly 30-35 seconds to assemble, which delays
-     managed-operation refresh even when queue execution itself finishes in
-     about two seconds.
+   - bounded parallel static upload is implemented in SpecGraph PR `#692`.
+     Measure the next production publications to confirm the transfer-time
+     effect; producer-side timestamp churn remains a separate follow-up and
+     manifest digest verification must not be weakened;
+   - bounded concurrent Product Workspace artifact loading is implemented in
+     SpecSpace PR `#400`. Measure production projection latency after rollout
+     and treat the provider limits as resource bounds, not permission to fetch
+     arbitrary artifact refs.
    Every allowlist expansion remains a separate rollout with operation-specific
    confirmation, idempotency, monitoring, recovery, backup, and rollback
    evidence.
-5. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
+5. **External SpecSpace mutable-state backend.** Next major cross-repo
+   milestone. Continuous production managed mode must store drafts, answers,
+   execution requests, approval intents, and compact receipts through an
+   authenticated state service backed by PostgreSQL beside hosted Platform.
+   The state store needs a separate database/schema and least-privileged role,
+   workspace-scoped versioned records, revision/CAS semantics, idempotency,
+   privacy controls, migration/export, retention, and backup/restore evidence.
+   It remains operator-intent storage; Platform reports remain lifecycle
+   authority.
+6. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
    machine ids for refs and promotion paths while exposing deterministic,
    privacy-checked display aliases in candidate overview and topology artifacts;
    SpecSpace uses them as presentation metadata without changing identity.
-6. **Ontology applicability in product review.** Continue compiler-backed
+7. **Ontology applicability in product review.** Continue compiler-backed
    layers, `modelApplicability`, and change classification so product
    candidates can explain which ontology layer and applicability frame each
    claim depends on.
-7. **Bound product-repository synchronization.** Planned as a Git Service
+8. **Bound product-repository synchronization.** Deferred until the production
+   state and managed-execution boundaries are durable. It remains a Git Service
    capability, not a generic shell command. Platform should first inspect a
    repository and its configured remote without changing local refs, then offer
    separately authorized fetch and fast-forward operations. Repository root,
    remote alias, remote URL, default branch, expected local HEAD, and expected
    remote HEAD must come from a validated repository/workspace binding rather
-   than browser input or untrusted `.git/config`. A hosted worker can operate
-   only on a checkout mounted into its execution environment; synchronizing a
-   repository on an operator laptop requires a separate local agent or using the
-   shared Git remote as the exchange boundary.
+   than browser input or untrusted `.git/config`.
 
 Platform should not introduce a separate task-tracking CLI yet. Markdown
 roadmaps plus GitHub PR history remain the source of truth. If automation is
@@ -781,9 +794,9 @@ The next valuable implementation choices are:
      The Product Workspace now has guided paths for workspace initialization,
      idea intake, clarification continuation, repair rerun, approval, promotion
      request/execution, review status, read-model publication, managed
-     operations observability, and managed-mode readiness. The next UX
-     refinement is lifecycle-wide action ranking so those paths do not compete
-     for the top-level next safe action.
+     operations observability, and managed-mode readiness. Lifecycle-wide action
+     ranking and superseded-failure handling are implemented, so those paths no
+     longer compete for the top-level next safe action.
    - **Platform smoke profiles.** Done. `product-repair-rerun smoke` supports
      `strict`, `diagnostic-blocked`, and `happy-path-promotion-dry-run`
      expectation profiles so expected gate blocks are not confused with
