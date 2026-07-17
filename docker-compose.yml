@@ -2,30 +2,24 @@ name: specspace
 
 services:
   app:
-    image: "ghcr.io/0al-spec/specspace-ui@sha256:0a80e26cbfadf40ddaacbbf64e4340b492d2968a69c6df340f0a24e5af6ed42b"
+    image: "ghcr.io/0al-spec/specspace-ui@sha256:67c26ee7a6c61fd76516cd53058969d3bbbb633df111e6f718f8601daff56023"
     ports:
       - "8080:80"
     depends_on:
       - specspace-api
 
   specspace-api:
-    image: "ghcr.io/0al-spec/specspace-api@sha256:d814800cb3ce8c2595bd2edf86ce4c730d75d05aafddeaddfe8365f415a02882"
+    image: "ghcr.io/0al-spec/specspace-api@sha256:ff175890d3153b38a5c5a8f1f8c1c221dc0689fc220a7f4554b515aaaece09b3"
     environment:
-      SPECSPACE_API_IMAGE_REF: "ghcr.io/0al-spec/specspace-api@sha256:d814800cb3ce8c2595bd2edf86ce4c730d75d05aafddeaddfe8365f415a02882"
-      SPECSPACE_UI_IMAGE_REF: "ghcr.io/0al-spec/specspace-ui@sha256:0a80e26cbfadf40ddaacbbf64e4340b492d2968a69c6df340f0a24e5af6ed42b"
-      SPECSPACE_RELEASE_COMMIT: "08f127ca9f63adcac9b10c39f79174c10fe102ad"
+      SPECSPACE_API_IMAGE_REF: "ghcr.io/0al-spec/specspace-api@sha256:ff175890d3153b38a5c5a8f1f8c1c221dc0689fc220a7f4554b515aaaece09b3"
+      SPECSPACE_UI_IMAGE_REF: "ghcr.io/0al-spec/specspace-ui@sha256:67c26ee7a6c61fd76516cd53058969d3bbbb633df111e6f718f8601daff56023"
+      SPECSPACE_RELEASE_COMMIT: "02237ca1e682130c8bb9d8c7bf881399f2a4ae17"
       SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED: "true"
       SPECSPACE_HYPERPROMPT_WORK_DIR: "/tmp"
       SPECSPACE_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS: "60"
       SPECSPACE_HYPERPROMPT_MAX_INPUT_BYTES: "1048576"
       SPECSPACE_HYPERPROMPT_MAX_OUTPUT_BYTES: "2097152"
       SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT: "20"
-      SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED: "true"
-      SPECSPACE_HOSTED_MANAGED_EXECUTOR_URL: "https://managed.specgraph.tech"
-      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS: "5"
-      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: "${SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN}"
-      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "ephemeral"
-      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "review_status_execute"
     command:
       - python
       - viewer/server.py
@@ -41,17 +35,6 @@ services:
       - "hosted-operation-canary=https://specgraph.tech/workspaces/hosted-operation-canary"
       - --product-workspace-artifact-base-url
       - "team-decision-log=https://specgraph.tech/workspaces/team-decision-log"
-      - --enable-hosted-managed-execution
-      - --hosted-managed-executor-url
-      - "https://managed.specgraph.tech"
-      - --hosted-managed-executor-timeout-seconds
-      - "5"
-      - --specspace-state-dir
-      - /tmp/specspace-hosted-managed-state
-      - --hosted-managed-state-durability
-      - ephemeral
-      - --hosted-managed-operation-allowlist
-      - review_status_execute
       - --specpm-registry-url
       - "https://specpm.dev"
     expose:
