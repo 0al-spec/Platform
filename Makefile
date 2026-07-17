@@ -1,6 +1,6 @@
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
-.PHONY: python-quality test hosted-managed-contract hosted-managed-compose-contract hosted-managed-runtime-compose-contract hosted-managed-production-compose-contract hosted-managed-production-contract hosted-managed-production-worker-window-contract hosted-managed-production-deploy-contract hosted-managed-production-backup-cycle hosted-managed-backup-retention-contract hosted-managed-tls-contract hosted-managed-secrets-contract hosted-managed-checkout-contract hosted-managed-image-lock-contract hosted-managed-postgres-integration hosted-managed-compose-smoke hosted-managed-production-compose-smoke
+.PHONY: python-quality test hosted-managed-contract specspace-state-contract hosted-managed-compose-contract hosted-managed-runtime-compose-contract hosted-managed-production-compose-contract hosted-managed-production-contract hosted-managed-production-worker-window-contract hosted-managed-production-deploy-contract hosted-managed-production-backup-cycle hosted-managed-backup-retention-contract hosted-managed-tls-contract hosted-managed-secrets-contract hosted-managed-checkout-contract hosted-managed-image-lock-contract hosted-managed-postgres-integration specspace-state-postgres-integration hosted-managed-compose-smoke hosted-managed-production-compose-smoke
 
 python-quality:
 	$(PYTHON) -m unittest discover -s tests
@@ -12,7 +12,11 @@ hosted-managed-contract:
 	$(PYTHON) -m unittest \
 		tests.test_hosted_managed_operation_canary \
 		tests.test_hosted_managed_operation_service \
-		tests.test_hosted_managed_operation_queue
+		tests.test_hosted_managed_operation_queue \
+		tests.test_specspace_state_store
+
+specspace-state-contract:
+	$(PYTHON) -m unittest tests.test_specspace_state_store
 
 hosted-managed-compose-contract:
 	$(PYTHON) scripts/validate_hosted_managed_compose.py
@@ -59,7 +63,14 @@ hosted-managed-image-lock-contract:
 hosted-managed-postgres-integration:
 	@test -n "$(PLATFORM_TEST_POSTGRES_URL)" || \
 		(echo "PLATFORM_TEST_POSTGRES_URL is required" >&2; exit 2)
-	$(PYTHON) -m unittest tests.test_hosted_managed_operation_postgres
+	$(PYTHON) -m unittest \
+		tests.test_hosted_managed_operation_postgres \
+		tests.test_specspace_state_postgres
+
+specspace-state-postgres-integration:
+	@test -n "$(PLATFORM_TEST_POSTGRES_URL)" || \
+		(echo "PLATFORM_TEST_POSTGRES_URL is required" >&2; exit 2)
+	$(PYTHON) -m unittest tests.test_specspace_state_postgres
 
 hosted-managed-compose-smoke:
 	$(PYTHON) scripts/hosted_managed_compose_smoke.py

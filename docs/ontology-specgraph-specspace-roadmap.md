@@ -372,15 +372,18 @@ Operational measurements inside item 4 do not expand production authority.
    Every allowlist expansion remains a separate rollout with operation-specific
    confirmation, idempotency, monitoring, recovery, backup, and rollback
    evidence.
-5. **External SpecSpace mutable-state backend.** Next major cross-repo
-   milestone. Continuous production managed mode must store drafts, answers,
-   execution requests, approval intents, and compact receipts through an
-   authenticated state service backed by PostgreSQL beside hosted Platform.
-   The state store needs a separate database/schema and least-privileged role,
-   workspace-scoped versioned records, revision/CAS semantics, idempotency,
-   privacy controls, migration/export, retention, and backup/restore evidence.
-   It remains operator-intent storage; Platform reports remain lifecycle
-   authority.
+5. **External SpecSpace mutable-state backend.** Implementation in progress.
+   Platform now defines the first narrow service contract in
+   [External SpecSpace State Service](specspace-state-service.md): authenticated
+   workspace-scoped records, canonical content digests, revision/CAS,
+   idempotency, explicit lifecycle states, bounded history retention,
+   mode-`0600` export/import, PostgreSQL and SQLite adapters, and a private
+   workspace-scoped worker mirror. The production deployment still stays
+   read-only until SpecSpace consumes this API, file-backed state migration and
+   provider-failure behavior are proven, the service receives a separate
+   database/role and backup path, and restore/concurrency/replay evidence is
+   captured. It remains operator-intent storage; Platform reports remain
+   lifecycle authority.
 6. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
    machine ids for refs and promotion paths while exposing deterministic,
    privacy-checked display aliases in candidate overview and topology artifacts;

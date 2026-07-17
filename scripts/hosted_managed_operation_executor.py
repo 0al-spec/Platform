@@ -148,6 +148,12 @@ class FilesystemManagedOperationResolver:
     def resolve_logical_ref(self, logical_ref: str, workspace_id: str) -> Path:
         if logical_ref.startswith("specspace-state://"):
             relative = logical_ref.removeprefix("specspace-state://")
+            workspace_scoped = _safe_child(
+                self.state_dir,
+                f"{workspace_id}/{relative}",
+            )
+            if workspace_scoped.is_file():
+                return workspace_scoped
             return _safe_child(self.state_dir, relative)
         if logical_ref.startswith("runs/"):
             relative = logical_ref.removeprefix("runs/")

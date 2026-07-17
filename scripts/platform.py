@@ -29,6 +29,8 @@ try:
     from scripts import hosted_managed_operation_queue
     from scripts import hosted_managed_operation_service
     from scripts import hosted_managed_worker_window
+    from scripts import specspace_state_service
+    from scripts import specspace_state_store
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_operation_executor
     import hosted_managed_operation_canary
@@ -36,6 +38,8 @@ except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo r
     import hosted_managed_operation_queue
     import hosted_managed_operation_service
     import hosted_managed_worker_window
+    import specspace_state_service
+    import specspace_state_store
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -16753,6 +16757,283 @@ def managed_operation_validate_request(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
+def _state_database_from_args(args: argparse.Namespace) -> str:
+    database_arg = getattr(args, "database", None)
+    database_url_file = getattr(args, "database_url_file", None)
+    if database_arg and database_url_file:
+        raise PlatformError(
+            "SpecSpace state database must use either --database or "
+            "--database-url-file"
+        )
+    if database_url_file:
+        try:
+            database = Path(database_url_file).read_text(
+                encoding="utf-8"
+            ).strip()
+        except OSError as exc:
+            raise PlatformError(
+                "SpecSpace state database URL file is unreadable"
+            ) from exc
+    elif database_arg:
+        database = str(database_arg)
+    else:
+        raise PlatformError("SpecSpace state database storage is required")
+    if getattr(args, "state_adapter", "sqlite") == "sqlite":
+        path = Path(database).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        database = str(path)
+    return database
+
+
+def _open_specspace_state_store(
+    args: argparse.Namespace,
+) -> specspace_state_store.SpecSpaceStateStore:
+    try:
+        return specspace_state_store.open_state_store(
+            adapter=args.state_adapter,
+            database=_state_database_from_args(args),
+        )
+    except (specspace_state_store.StateStoreError, RuntimeError) as exc:
+        raise PlatformError(str(exc)) from exc
+
+
+def specspace_state_init(args: argparse.Namespace) -> int:
+    store = _open_specspace_state_store(args)
+    try:
+        ready = store.health()
+    finally:
+        store.close()
+    report = {
+        "artifact_kind": "platform_specspace_state_initialization_report",
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "ok": ready,
+        "adapter": args.state_adapter,
+        "contract_ref": specspace_state_store.CONTRACT_REF,
+        "summary": {
+            "status": (
+                "specspace_state_backend_ready"
+                if ready
+                else "specspace_state_backend_unavailable"
+            )
+        },
+        "authority_boundary": specspace_state_service.authority_boundary(),
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if ready else 1
+
+
+def _specspace_state_auth_token(args: argparse.Namespace) -> str:
+    token = os.environ.get(args.auth_token_env, "")
+    if args.auth_token_file:
+        if token:
+            raise PlatformError(
+                "SpecSpace state token must use either environment or file input, "
+                "not both"
+            )
+        try:
+            token = Path(args.auth_token_file).read_text(
+                encoding="utf-8"
+            ).strip()
+        except OSError as exc:
+            raise PlatformError("SpecSpace state token file is unreadable") from exc
+    if len(token) < 32:
+        raise PlatformError(
+            f"{args.auth_token_env} must contain a state service token of at "
+            "least 32 characters"
+        )
+    return token
+
+
+def specspace_state_serve(args: argparse.Namespace) -> int:
+    store = _open_specspace_state_store(args)
+    store.close()
+    store_factory = lambda: _open_specspace_state_store(args)
+    service = specspace_state_service.SpecSpaceStateService(
+        store_factory=store_factory,
+        adapter=args.state_adapter,
+        mirror_root=Path(args.mirror_root),
+        now_iso=utc_now_iso,
+    )
+    try:
+        server = specspace_state_service.create_server(
+            host=args.host,
+            port=args.port,
+            service=service,
+            auth_token=_specspace_state_auth_token(args),
+        )
+    except specspace_state_service.StateServiceError as exc:
+        raise PlatformError(str(exc)) from exc
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+def specspace_state_export(args: argparse.Namespace) -> int:
+    store = _open_specspace_state_store(args)
+    try:
+        records = store.list_records(include_deleted=True)
+    finally:
+        store.close()
+    payload = {
+        "artifact_kind": "platform_specspace_state_export",
+        "schema_version": 1,
+        "contract_ref": specspace_state_store.EXPORT_CONTRACT_REF,
+        "generated_at": utc_now_iso(),
+        "records": [
+            specspace_state_store.record_projection(
+                record,
+                include_content=True,
+            )
+            for record in records
+        ],
+        "summary": {
+            "record_count": len(records),
+            "workspace_count": len(
+                {record["workspace_id"] for record in records}
+            ),
+        },
+        "authority_boundary": specspace_state_service.authority_boundary(),
+    }
+    output = Path(args.output).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.chmod(0o600)
+    temporary.replace(output)
+    report = {
+        "artifact_kind": "platform_specspace_state_export_report",
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "ok": True,
+        "record_count": len(records),
+        "output_sha256": file_sha256(output),
+        "summary": {"status": "specspace_state_export_written"},
+        "authority_boundary": specspace_state_service.authority_boundary(),
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
+def specspace_state_import(args: argparse.Namespace) -> int:
+    source = load_json_mapping(
+        Path(args.input).resolve(),
+        label="SpecSpace state export",
+    )
+    if (
+        source.get("artifact_kind") != "platform_specspace_state_export"
+        or source.get("contract_ref") != specspace_state_store.EXPORT_CONTRACT_REF
+    ):
+        raise PlatformError("SpecSpace state export contract is invalid")
+    records = source.get("records")
+    if not isinstance(records, list):
+        raise PlatformError("SpecSpace state export records must be an array")
+    imported = 0
+    unchanged = 0
+    store = _open_specspace_state_store(args)
+    try:
+        for item in records:
+            if not isinstance(item, dict):
+                raise PlatformError("SpecSpace state export record is invalid")
+            workspace_id = str(item.get("workspace_id") or "")
+            record_key = str(item.get("record_key") or "")
+            current = store.get(
+                workspace_id,
+                record_key,
+                include_deleted=True,
+            )
+            if (
+                current is not None
+                and current.get("content_sha256") == item.get("content_sha256")
+                and current.get("lifecycle_state") == item.get("lifecycle_state")
+            ):
+                unchanged += 1
+                continue
+            if current is not None and not args.replace:
+                raise PlatformError(
+                    "SpecSpace state import would replace an existing record; "
+                    "use --replace only after reviewing the export"
+                )
+            content = item.get("content")
+            if item.get("lifecycle_state") == "deleted":
+                content = {}
+            if not isinstance(content, dict):
+                raise PlatformError(
+                    "SpecSpace state export record content is invalid"
+                )
+            digest = specspace_state_store.content_sha256(content)
+            idempotency_key = (
+                f"migration:{workspace_id}:{record_key}:{digest}"
+            )
+            if len(idempotency_key) > 256:
+                idempotency_key = (
+                    f"migration:{workspace_id}:"
+                    f"{hashlib.sha256(record_key.encode()).hexdigest()}:{digest}"
+                )
+            store.mutate(
+                specspace_state_store.StateMutation(
+                    workspace_id=workspace_id,
+                    record_key=record_key,
+                    expected_revision=(
+                        int(current["revision"]) if current is not None else 0
+                    ),
+                    idempotency_key=idempotency_key,
+                    lifecycle_state=str(item.get("lifecycle_state") or ""),
+                    content=content,
+                    supplied_content_sha256=digest,
+                ),
+                now_iso=utc_now_iso(),
+            )
+            imported += 1
+    except specspace_state_store.StateStoreError as exc:
+        raise PlatformError(str(exc)) from exc
+    finally:
+        store.close()
+    report = {
+        "artifact_kind": "platform_specspace_state_import_report",
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "ok": True,
+        "summary": {
+            "status": "specspace_state_import_completed",
+            "imported_count": imported,
+            "unchanged_count": unchanged,
+        },
+        "authority_boundary": specspace_state_service.authority_boundary(),
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
+def specspace_state_prune(args: argparse.Namespace) -> int:
+    store = _open_specspace_state_store(args)
+    try:
+        deleted = store.prune_versions(retain_latest=args.retain_latest)
+    finally:
+        store.close()
+    report = {
+        "artifact_kind": "platform_specspace_state_retention_report",
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "ok": True,
+        "summary": {
+            "status": "specspace_state_history_pruned",
+            "deleted_version_count": deleted,
+            "retained_latest_per_record": args.retain_latest,
+        },
+        "authority_boundary": specspace_state_service.authority_boundary(),
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
 def _open_managed_operation_queue(
     args: argparse.Namespace,
 ) -> hosted_managed_operation_queue.ManagedOperationQueue:
@@ -21374,6 +21655,82 @@ def build_parser() -> argparse.ArgumentParser:
         description="Operate local 0AL Platform metadata.",
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
+
+    specspace_state_parser = subcommands.add_parser(
+        "specspace-state",
+        help="Operate the private, versioned SpecSpace state backend.",
+    )
+    specspace_state_subcommands = specspace_state_parser.add_subparsers(
+        dest="specspace_state_command",
+        required=True,
+    )
+    specspace_state_storage = argparse.ArgumentParser(add_help=False)
+    specspace_state_storage.add_argument("--database")
+    specspace_state_storage.add_argument(
+        "--database-url-file",
+        help=(
+            "Mounted secret file containing the PostgreSQL URL; the URL is "
+            "never reported."
+        ),
+    )
+    specspace_state_storage.add_argument(
+        "--state-adapter",
+        choices=("sqlite", "postgresql"),
+        default="sqlite",
+    )
+    specspace_state_init_parser = specspace_state_subcommands.add_parser(
+        "init",
+        help="Initialize and health-check the private state backend.",
+        parents=[specspace_state_storage],
+    )
+    specspace_state_init_parser.set_defaults(func=specspace_state_init)
+    specspace_state_serve_parser = specspace_state_subcommands.add_parser(
+        "serve",
+        help="Serve the authenticated SpecSpace state API.",
+        parents=[specspace_state_storage],
+    )
+    specspace_state_serve_parser.add_argument("--mirror-root", required=True)
+    specspace_state_serve_parser.add_argument("--host", default="127.0.0.1")
+    specspace_state_serve_parser.add_argument("--port", type=int, default=8092)
+    specspace_state_serve_parser.add_argument(
+        "--auth-token-env",
+        default="PLATFORM_SPECSPACE_STATE_TOKEN",
+    )
+    specspace_state_serve_parser.add_argument(
+        "--auth-token-file",
+        help="Mounted secret file containing the state API bearer token.",
+    )
+    specspace_state_serve_parser.set_defaults(func=specspace_state_serve)
+    specspace_state_export_parser = specspace_state_subcommands.add_parser(
+        "export",
+        help="Write a mode-0600 migration/backup export.",
+        parents=[specspace_state_storage],
+    )
+    specspace_state_export_parser.add_argument("--output", required=True)
+    specspace_state_export_parser.set_defaults(func=specspace_state_export)
+    specspace_state_import_parser = specspace_state_subcommands.add_parser(
+        "import",
+        help="Import a validated state export without changing workspace identity.",
+        parents=[specspace_state_storage],
+    )
+    specspace_state_import_parser.add_argument("--input", required=True)
+    specspace_state_import_parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Replace existing records through CAS after explicit review.",
+    )
+    specspace_state_import_parser.set_defaults(func=specspace_state_import)
+    specspace_state_prune_parser = specspace_state_subcommands.add_parser(
+        "prune",
+        help="Retain a bounded number of historical revisions per record.",
+        parents=[specspace_state_storage],
+    )
+    specspace_state_prune_parser.add_argument(
+        "--retain-latest",
+        type=int,
+        default=20,
+    )
+    specspace_state_prune_parser.set_defaults(func=specspace_state_prune)
 
     managed_operation_parser = subcommands.add_parser(
         "managed-operation",
