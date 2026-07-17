@@ -786,15 +786,26 @@ the executor token has been configured in the Timeweb deployment environment:
 SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN=<same service token stored on the VPS>
 ```
 
-Do not commit or pass that value through the Platform workflow. The generated
-Compose manifest converts it into a file-mounted secret and persists only
-SpecSpace-owned queue/request state in a named volume. The Platform workflow
-inputs are non-secret:
+Do not commit or pass that value through the Platform workflow. Timeweb Cloud
+Apps rejects Compose `volumes` and Compose `secrets`, so the bounded canary
+profile references the Timeweb global environment variable directly and stores
+only SpecSpace-owned request/receipt state under `/tmp`. That state is
+explicitly ephemeral and must not be treated as restart-persistent. Platform's
+PostgreSQL queue and authoritative reports remain durable.
+
+The Platform workflow inputs are non-secret:
 
 ```text
-hosted_managed_execution_enabled=true
+hosted_managed_execution_enabled=false
+hosted_managed_bounded_canary_enabled=true
 hosted_managed_executor_url=https://managed.specgraph.tech
 ```
+
+The generated profile contains no token value, no `volumes`, and no `secrets`.
+It sets the SpecSpace client-side maximum allowlist to exactly
+`review_status_execute`. The ordinary durable hosted profile remains available
+for Compose runtimes that support named volumes and file-mounted secrets; do not
+publish that profile to Timeweb Cloud Apps.
 
 The first production UI canary remains bounded. Submit exactly one
 `review_status_execute` from the Product Workspace, record the server-issued

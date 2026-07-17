@@ -993,6 +993,206 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(validate.returncode, 1, validate.stderr)
         self.assertFalse(json.loads(validate.stdout)["valid"])
 
+    def test_timeweb_render_bounded_canary_is_sanitizer_compatible(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-bounded-canary",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-bounded-canary",
+                "--format",
+                "json",
+            )
+            compose = (output_dir / "docker-compose.yml").read_text(encoding="utf-8")
+            manifest = json.loads(
+                (output_dir / "platform-timeweb-deploy.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 0, validate.stderr)
+        self.assertNotIn("\nvolumes:", compose)
+        self.assertNotIn("\nsecrets:", compose)
+        self.assertNotIn("--hosted-managed-executor-token-file", compose)
+        self.assertIn(
+            'SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: '
+            '"${SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN}"',
+            compose,
+        )
+        self.assertIn(
+            'SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "ephemeral"',
+            compose,
+        )
+        self.assertIn(
+            'SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "review_status_execute"',
+            compose,
+        )
+        self.assertIn("/tmp/specspace-hosted-managed-state", compose)
+        self.assertEqual(
+            manifest["hosted_managed_execution_profile"],
+            "timeweb_bounded_canary",
+        )
+        self.assertEqual(manifest["hosted_managed_state_durability"], "ephemeral")
+        self.assertEqual(
+            manifest["hosted_managed_operation_allowlist"],
+            ["review_status_execute"],
+        )
+
+    def test_timeweb_bounded_canary_rejects_forbidden_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-bounded-canary",
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose_path.write_text(
+                compose_path.read_text(encoding="utf-8").replace(
+                    "    expose:\n      - \"8001\"\n",
+                    "    volumes:\n      - state:/tmp/state\n"
+                    "    expose:\n      - \"8001\"\n",
+                )
+                + "\nvolumes:\n  state:\n",
+                encoding="utf-8",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-bounded-canary",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 1, validate.stderr)
+        errors = json.loads(validate.stdout)["errors"]
+        self.assertTrue(any("must not declare volumes" in error for error in errors))
+
+    def test_timeweb_bounded_canary_rejects_empty_forbidden_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-bounded-canary",
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose_path.write_text(
+                compose_path.read_text(encoding="utf-8")
+                + "\nvolumes: []\nsecrets: {}\n",
+                encoding="utf-8",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-bounded-canary",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 1, validate.stderr)
+        errors = json.loads(validate.stdout)["errors"]
+        self.assertTrue(
+            any("must not declare top-level volumes" in error for error in errors)
+        )
+        self.assertTrue(
+            any("must not declare top-level secrets" in error for error in errors)
+        )
+
+    def test_timeweb_bounded_canary_rolls_back_to_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            bounded = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-bounded-canary",
+            )
+            read_only = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--disable-hosted-managed-execution",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--disable-hosted-managed-execution",
+                "--format",
+                "json",
+            )
+            compose = (output_dir / "docker-compose.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(bounded.returncode, 0, bounded.stderr)
+        self.assertEqual(read_only.returncode, 0, read_only.stderr)
+        self.assertEqual(validate.returncode, 0, validate.stderr)
+        self.assertNotIn("SPECSPACE_HOSTED_MANAGED_", compose)
+        self.assertNotIn("--enable-hosted-managed-execution", compose)
+        self.assertNotIn("review_status_execute", compose)
+        self.assertNotIn("/tmp/specspace-hosted-managed-state", compose)
+
+    def test_timeweb_rejects_durable_and_bounded_profiles_together(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(Path(root) / "timeweb"),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-execution",
+                "--enable-hosted-managed-bounded-canary",
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("mutually exclusive", result.stderr)
+
     def test_timeweb_validate_rejects_extra_hosted_bind_volume(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"
@@ -1159,8 +1359,17 @@ class PlatformDeployTests(unittest.TestCase):
             publish_script,
         )
         self.assertIn("hosted_managed_execution_enabled:", workflow)
+        self.assertIn("hosted_managed_bounded_canary_enabled:", workflow)
         self.assertIn("TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED", workflow)
+        self.assertIn(
+            "TIMEWEB_REQUIRED_HOSTED_MANAGED_BOUNDED_CANARY_ENABLED",
+            workflow,
+        )
         self.assertIn("TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED", publish_script)
+        self.assertIn(
+            "TIMEWEB_REQUIRED_HOSTED_MANAGED_BOUNDED_CANARY_ENABLED",
+            publish_script,
+        )
 
     def test_timeweb_render_rejects_mutable_image_ref(self) -> None:
         with tempfile.TemporaryDirectory() as root:

@@ -63,6 +63,9 @@ DEFAULT_TIMEWEB_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS = "5"
 TIMEWEB_HOSTED_MANAGED_STATE_VOLUME = "specspace-hosted-managed-state"
 TIMEWEB_HOSTED_MANAGED_STATE_DIR = "/data/specspace-hosted-managed-state"
 TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET = "specspace-hosted-managed-executor-token"
+TIMEWEB_BOUNDED_CANARY_STATE_DIR = "/tmp/specspace-hosted-managed-state"
+TIMEWEB_BOUNDED_CANARY_OPERATION_ID = "review_status_execute"
+TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE = "${SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN}"
 DEFAULT_PRODUCT_WORKSPACE_ID = "team-decision-log"
 DEFAULT_DEPLOYED_PRODUCT_WORKSPACE_IDS = (
     DEFAULT_PRODUCT_WORKSPACE_ID,
@@ -844,6 +847,7 @@ class TimewebHyperpromptRuntime:
 @dataclass(frozen=True)
 class TimewebHostedManagedRuntime:
     enabled: bool
+    profile: str
     executor_url: str
     timeout_seconds: str
 
@@ -19832,7 +19836,23 @@ def timeweb_hyperprompt_runtime_from_args(args: argparse.Namespace) -> TimewebHy
 def timeweb_hosted_managed_runtime_from_args(
     args: argparse.Namespace,
 ) -> TimewebHostedManagedRuntime:
-    enabled = bool(getattr(args, "hosted_managed_execution_enabled", False))
+    durable_enabled = bool(getattr(args, "hosted_managed_execution_enabled", False))
+    bounded_canary_enabled = bool(
+        getattr(args, "hosted_managed_bounded_canary_enabled", False)
+    )
+    if durable_enabled and bounded_canary_enabled:
+        raise PlatformError(
+            "Timeweb durable hosted execution and bounded canary profiles are "
+            "mutually exclusive"
+        )
+    enabled = durable_enabled or bounded_canary_enabled
+    profile = (
+        "timeweb_bounded_canary"
+        if bounded_canary_enabled
+        else "durable"
+        if durable_enabled
+        else "read_only"
+    )
     executor_url = str(getattr(args, "hosted_managed_executor_url", "")).strip().rstrip("/")
     timeout_seconds = positive_int_string(
         str(getattr(args, "hosted_managed_executor_timeout_seconds", "")),
@@ -19854,6 +19874,7 @@ def timeweb_hosted_managed_runtime_from_args(
             )
     return TimewebHostedManagedRuntime(
         enabled=enabled,
+        profile=profile,
         executor_url=executor_url,
         timeout_seconds=timeout_seconds,
     )
@@ -19943,12 +19964,21 @@ def render_timeweb_hosted_managed_environment(
 ) -> str:
     if not runtime.enabled:
         return ""
-    return (
+    environment = (
         '      SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED: "true"\n'
         f'      SPECSPACE_HOSTED_MANAGED_EXECUTOR_URL: "{runtime.executor_url}"\n'
         "      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS: "
         f'"{runtime.timeout_seconds}"\n'
     )
+    if runtime.profile == "timeweb_bounded_canary":
+        environment += (
+            "      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: "
+            f'"{TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE}"\n'
+            '      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "ephemeral"\n'
+            "      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "
+            f'"{TIMEWEB_BOUNDED_CANARY_OPERATION_ID}"\n'
+        )
+    return environment
 
 
 def render_timeweb_hosted_managed_command(
@@ -19956,21 +19986,33 @@ def render_timeweb_hosted_managed_command(
 ) -> str:
     if not runtime.enabled:
         return ""
-    return (
+    command = (
         "      - --enable-hosted-managed-execution\n"
         "      - --hosted-managed-executor-url\n"
         f'      - "{runtime.executor_url}"\n'
-        "      - --hosted-managed-executor-token-file\n"
-        f"      - /run/secrets/{TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}\n"
         "      - --hosted-managed-executor-timeout-seconds\n"
         f'      - "{runtime.timeout_seconds}"\n'
         "      - --specspace-state-dir\n"
-        f"      - {TIMEWEB_HOSTED_MANAGED_STATE_DIR}\n"
     )
+    if runtime.profile == "timeweb_bounded_canary":
+        command += (
+            f"      - {TIMEWEB_BOUNDED_CANARY_STATE_DIR}\n"
+            "      - --hosted-managed-state-durability\n"
+            "      - ephemeral\n"
+            "      - --hosted-managed-operation-allowlist\n"
+            f"      - {TIMEWEB_BOUNDED_CANARY_OPERATION_ID}\n"
+        )
+    else:
+        command += (
+            f"      - {TIMEWEB_HOSTED_MANAGED_STATE_DIR}\n"
+            "      - --hosted-managed-executor-token-file\n"
+            f"      - /run/secrets/{TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}\n"
+        )
+    return command
 
 
 def render_timeweb_hosted_managed_service(runtime: TimewebHostedManagedRuntime) -> str:
-    if not runtime.enabled:
+    if not runtime.enabled or runtime.profile == "timeweb_bounded_canary":
         return ""
     return (
         "    secrets:\n"
@@ -19981,7 +20023,7 @@ def render_timeweb_hosted_managed_service(runtime: TimewebHostedManagedRuntime) 
 
 
 def render_timeweb_hosted_managed_top_level(runtime: TimewebHostedManagedRuntime) -> str:
-    if not runtime.enabled:
+    if not runtime.enabled or runtime.profile == "timeweb_bounded_canary":
         return ""
     return (
         "\nsecrets:\n"
@@ -20146,6 +20188,19 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                     hyperprompt_runtime.bundle_retention_count
                 ),
                 "hosted_managed_execution_enabled": hosted_managed_runtime.enabled,
+                "hosted_managed_execution_profile": hosted_managed_runtime.profile,
+                "hosted_managed_state_durability": (
+                    "ephemeral"
+                    if hosted_managed_runtime.profile == "timeweb_bounded_canary"
+                    else "persistent"
+                    if hosted_managed_runtime.enabled
+                    else None
+                ),
+                "hosted_managed_operation_allowlist": (
+                    [TIMEWEB_BOUNDED_CANARY_OPERATION_ID]
+                    if hosted_managed_runtime.profile == "timeweb_bounded_canary"
+                    else None
+                ),
                 "hosted_managed_executor_url": (
                     hosted_managed_runtime.executor_url
                     if hosted_managed_runtime.enabled
@@ -20302,6 +20357,13 @@ def top_level_mapping_keys(lines: list[str], section_name: str) -> list[str]:
     return keys
 
 
+def top_level_mapping_present(lines: list[str], section_name: str) -> bool:
+    return any(
+        re.match(rf"^{re.escape(section_name)}:\s*(?:.*)?$", line) is not None
+        for line in lines
+    )
+
+
 def compose_port_host_part(port: str) -> str | None:
     value = port.strip().strip('"').strip("'")
     if not value or ":" not in value:
@@ -20449,6 +20511,8 @@ def validate_timeweb_manifest_tree(
         "--hosted-managed-executor-url",
         "--hosted-managed-executor-token-file",
         "--hosted-managed-executor-timeout-seconds",
+        "--hosted-managed-state-durability",
+        "--hosted-managed-operation-allowlist",
         "--specspace-state-dir",
     }
     present_hosted_command_tokens = hosted_command_tokens.intersection(api_command)
@@ -20460,22 +20524,48 @@ def validate_timeweb_manifest_tree(
                 hosted_managed_runtime.timeout_seconds
             ),
         }
+        expected_command_values = {
+            "--hosted-managed-executor-url": hosted_managed_runtime.executor_url,
+            "--hosted-managed-executor-timeout-seconds": (
+                hosted_managed_runtime.timeout_seconds
+            ),
+        }
+        if hosted_managed_runtime.profile == "timeweb_bounded_canary":
+            expected_environment.update(
+                {
+                    "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN": (
+                        TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE
+                    ),
+                    "SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY": "ephemeral",
+                    "SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST": (
+                        TIMEWEB_BOUNDED_CANARY_OPERATION_ID
+                    ),
+                }
+            )
+            expected_command_values.update(
+                {
+                    "--specspace-state-dir": TIMEWEB_BOUNDED_CANARY_STATE_DIR,
+                    "--hosted-managed-state-durability": "ephemeral",
+                    "--hosted-managed-operation-allowlist": (
+                        TIMEWEB_BOUNDED_CANARY_OPERATION_ID
+                    ),
+                }
+            )
+        else:
+            expected_command_values.update(
+                {
+                    "--hosted-managed-executor-token-file": (
+                        f"/run/secrets/{TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}"
+                    ),
+                    "--specspace-state-dir": TIMEWEB_HOSTED_MANAGED_STATE_DIR,
+                }
+            )
         for key, expected in expected_environment.items():
             if api_environment.get(key) != expected:
                 errors.append(
                     f"{target_file} specspace-api environment must set {key} "
                     f"to {expected}, got {api_environment.get(key)!r}"
                 )
-        expected_command_values = {
-            "--hosted-managed-executor-url": hosted_managed_runtime.executor_url,
-            "--hosted-managed-executor-token-file": (
-                f"/run/secrets/{TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}"
-            ),
-            "--hosted-managed-executor-timeout-seconds": (
-                hosted_managed_runtime.timeout_seconds
-            ),
-            "--specspace-state-dir": TIMEWEB_HOSTED_MANAGED_STATE_DIR,
-        }
         if "--enable-hosted-managed-execution" not in api_command:
             errors.append(f"{target_file} must enable hosted managed execution")
         for flag, expected in expected_command_values.items():
@@ -20484,48 +20574,85 @@ def validate_timeweb_manifest_tree(
                     f"{target_file} {flag} must be {expected}, got "
                     f"{command_value_after(api_command, flag)!r}"
                 )
-        required_fragments = (
-            f"      - {TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}\n",
-            f"      - {TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:"
-            f"{TIMEWEB_HOSTED_MANAGED_STATE_DIR}\n",
-            f"  {TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}:\n"
-            "    environment: SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN\n",
-            f"  {TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:\n",
-        )
-        for fragment in required_fragments:
-            if fragment not in text:
+        if hosted_managed_runtime.profile == "timeweb_bounded_canary":
+            if "--hosted-managed-executor-token-file" in api_command:
                 errors.append(
-                    f"{target_file} hosted managed profile is missing {fragment.strip()!r}"
+                    f"{target_file} bounded canary must receive the token from "
+                    "the Timeweb global environment"
                 )
-        expected_api_volumes = [
-            f"{TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:{TIMEWEB_HOSTED_MANAGED_STATE_DIR}"
-        ]
-        actual_api_volumes = list_values_for_service_section(
-            blocks,
-            "specspace-api",
-            "volumes",
-        )
-        if actual_api_volumes != expected_api_volumes:
-            errors.append(
-                f"{target_file} hosted specspace-api volumes must equal "
-                f"{expected_api_volumes}, got {actual_api_volumes}"
+            for service_name in set(blocks):
+                service_volumes = list_values_for_service_section(
+                    blocks,
+                    service_name,
+                    "volumes",
+                )
+                if service_volumes:
+                    errors.append(
+                        f"{target_file} bounded canary {service_name} must not "
+                        "declare volumes"
+                    )
+                service_secrets = list_values_for_service_section(
+                    blocks,
+                    service_name,
+                    "secrets",
+                )
+                if service_secrets:
+                    errors.append(
+                        f"{target_file} bounded canary {service_name} must not "
+                        "declare secrets"
+                    )
+            if top_level_mapping_present(lines, "volumes"):
+                errors.append(
+                    f"{target_file} bounded canary must not declare top-level volumes"
+                )
+            if top_level_mapping_present(lines, "secrets"):
+                errors.append(
+                    f"{target_file} bounded canary must not declare top-level secrets"
+                )
+        else:
+            required_fragments = (
+                f"      - {TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}\n",
+                f"      - {TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:"
+                f"{TIMEWEB_HOSTED_MANAGED_STATE_DIR}\n",
+                f"  {TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET}:\n"
+                "    environment: SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN\n",
+                f"  {TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:\n",
             )
-        for service_name in set(blocks) - {"specspace-api"}:
-            service_volumes = list_values_for_service_section(
+            for fragment in required_fragments:
+                if fragment not in text:
+                    errors.append(
+                        f"{target_file} hosted managed profile is missing "
+                        f"{fragment.strip()!r}"
+                    )
+            expected_api_volumes = [
+                f"{TIMEWEB_HOSTED_MANAGED_STATE_VOLUME}:{TIMEWEB_HOSTED_MANAGED_STATE_DIR}"
+            ]
+            actual_api_volumes = list_values_for_service_section(
                 blocks,
-                service_name,
+                "specspace-api",
                 "volumes",
             )
-            if service_volumes:
+            if actual_api_volumes != expected_api_volumes:
                 errors.append(
-                    f"{target_file} hosted {service_name} must not declare volumes"
+                    f"{target_file} hosted specspace-api volumes must equal "
+                    f"{expected_api_volumes}, got {actual_api_volumes}"
                 )
-        top_level_volumes = top_level_mapping_keys(lines, "volumes")
-        if top_level_volumes != [TIMEWEB_HOSTED_MANAGED_STATE_VOLUME]:
-            errors.append(
-                f"{target_file} hosted top-level volumes must equal "
-                f"{[TIMEWEB_HOSTED_MANAGED_STATE_VOLUME]}, got {top_level_volumes}"
-            )
+            for service_name in set(blocks) - {"specspace-api"}:
+                service_volumes = list_values_for_service_section(
+                    blocks,
+                    service_name,
+                    "volumes",
+                )
+                if service_volumes:
+                    errors.append(
+                        f"{target_file} hosted {service_name} must not declare volumes"
+                    )
+            top_level_volumes = top_level_mapping_keys(lines, "volumes")
+            if top_level_volumes != [TIMEWEB_HOSTED_MANAGED_STATE_VOLUME]:
+                errors.append(
+                    f"{target_file} hosted top-level volumes must equal "
+                    f"{[TIMEWEB_HOSTED_MANAGED_STATE_VOLUME]}, got {top_level_volumes}"
+                )
         if re.search(r"(?m)^\s+(?:source|type):\s*bind\s*$", text):
             errors.append(f"{target_file} hosted managed profile must not use bind mounts")
     else:
@@ -24193,7 +24320,8 @@ def build_parser() -> argparse.ArgumentParser:
             hosted_managed_execution_enabled=bool_from_env(
                 "SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED",
                 default=False,
-            )
+            ),
+            hosted_managed_bounded_canary_enabled=False,
         )
         command_parser.add_argument(
             "--enable-hosted-managed-execution",
@@ -24209,6 +24337,15 @@ def build_parser() -> argparse.ArgumentParser:
             dest="hosted_managed_execution_enabled",
             action="store_false",
             help="Render the default read-only SpecSpace production profile.",
+        )
+        command_parser.add_argument(
+            "--enable-hosted-managed-bounded-canary",
+            dest="hosted_managed_bounded_canary_enabled",
+            action="store_true",
+            help=(
+                "Render the Timeweb-compatible ephemeral hosted profile with no "
+                "Compose volumes or secrets and only review_status_execute enabled."
+            ),
         )
         command_parser.add_argument(
             "--hosted-managed-executor-url",

@@ -409,6 +409,25 @@ The rendered tree contains only:
 - `README.md`;
 - `platform-timeweb-deploy.json`.
 
+For the one-operation production canary, render the Timeweb-compatible bounded
+profile:
+
+```bash
+scripts/platform.py deploy timeweb-render \
+  --output-dir dist/platform-timeweb-deploy \
+  --image-lock dist/platform-service-images.json \
+  --enable-hosted-managed-bounded-canary
+```
+
+This profile is intentionally narrower than the ordinary durable hosted
+profile. It has no Compose `volumes` or `secrets`, references
+`SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN` only as a Timeweb global environment
+variable, stores SpecSpace request state under `/tmp`, and enables only
+`review_status_execute`. A container restart loses the SpecSpace-side compact
+receipt state; the Platform PostgreSQL queue and authoritative reports remain
+the recovery source. Roll back by rendering again with
+`--disable-hosted-managed-execution`.
+
 The default remains read-only. After a separate rollout decision, render the
 hosted SpecSpace client with:
 

@@ -40,7 +40,12 @@ on:
         default: https://specpm.dev
         type: string
       hosted_managed_execution_enabled:
-        description: Enable SpecSpace hosted managed execution client and persistent state volume.
+        description: Enable the durable hosted profile for Compose runtimes that support volumes and secrets.
+        required: true
+        default: false
+        type: boolean
+      hosted_managed_bounded_canary_enabled:
+        description: Enable the Timeweb-compatible ephemeral review-status canary profile without volumes or Compose secrets.
         required: true
         default: false
         type: boolean
@@ -96,6 +101,7 @@ jobs:
           --specpm-registry-url "${{ inputs.specpm_registry_url }}"
           --hosted-managed-executor-url "${{ inputs.hosted_managed_executor_url }}"
           ${{ inputs.hosted_managed_execution_enabled && '--enable-hosted-managed-execution' || '--disable-hosted-managed-execution' }}
+          ${{ inputs.hosted_managed_bounded_canary_enabled && '--enable-hosted-managed-bounded-canary' || '' }}
           --release-commit "${RELEASE_COMMIT}"
           --release-created-at "${RELEASE_CREATED_AT}"
           --format json
@@ -109,6 +115,7 @@ jobs:
           --specpm-registry-url "${{ inputs.specpm_registry_url }}"
           --hosted-managed-executor-url "${{ inputs.hosted_managed_executor_url }}"
           ${{ inputs.hosted_managed_execution_enabled && '--enable-hosted-managed-execution' || '--disable-hosted-managed-execution' }}
+          ${{ inputs.hosted_managed_bounded_canary_enabled && '--enable-hosted-managed-bounded-canary' || '' }}
 
       - name: Validate Timeweb Compose config
         working-directory: dist/platform-timeweb-deploy
@@ -137,5 +144,6 @@ jobs:
           TIMEWEB_REQUIRED_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL: ${{ inputs.product_workspace_artifact_base_url }}
           TIMEWEB_REQUIRED_SPECPM_REGISTRY_URL: ${{ inputs.specpm_registry_url }}
           TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED: ${{ inputs.hosted_managed_execution_enabled }}
+          TIMEWEB_REQUIRED_HOSTED_MANAGED_BOUNDED_CANARY_ENABLED: ${{ inputs.hosted_managed_bounded_canary_enabled }}
           TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTOR_URL: ${{ inputs.hosted_managed_executor_url }}
         run: scripts/publish-timeweb-deploy-branch.sh dist/platform-timeweb-deploy
