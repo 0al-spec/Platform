@@ -327,9 +327,12 @@ The current execution order is:
      worker is stopped, and another window requires a new decision;
    - connect the enabled hosted operations to SpecSpace lifecycle actions and
      observability before proposing any irreversible Git or publication action.
-     The deployment contract now has a fail-closed Timeweb hosted profile with
-     an HTTPS executor, runtime-injected Compose secret, persistent
-     SpecSpace-owned state, and provider-binding validation. The remaining
+     The deployment contract now has a fail-closed Timeweb bounded-canary
+     profile with an HTTPS executor, a Timeweb global environment token
+     reference, no Compose volumes/secrets, an exact
+     `review_status_execute` client allowlist, explicitly ephemeral
+     SpecSpace-owned state, and provider-binding validation. Durable queue state
+     and authoritative reports remain Platform-owned. The remaining
      rollout evidence is one UI-originated `review_status_execute` processed in
      a bounded production worker window, followed by queue drain, rollback
      verification, probe, and backup. A probe-only review object now has an

@@ -30,6 +30,7 @@ else
 fi
 specpm_registry_url="${TIMEWEB_REQUIRED_SPECPM_REGISTRY_URL:-https://specpm.dev}"
 hosted_managed_execution_enabled="${TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED:-false}"
+hosted_managed_bounded_canary_enabled="${TIMEWEB_REQUIRED_HOSTED_MANAGED_BOUNDED_CANARY_ENABLED:-false}"
 hosted_managed_executor_url="${TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTOR_URL:-https://managed.specgraph.tech}"
 hosted_managed_args=(
   --hosted-managed-executor-url "$hosted_managed_executor_url"
@@ -43,6 +44,17 @@ case "${hosted_managed_execution_enabled,,}" in
     ;;
   *)
     echo "TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED must be boolean." >&2
+    exit 2
+    ;;
+esac
+case "${hosted_managed_bounded_canary_enabled,,}" in
+  1|true|yes|on)
+    hosted_managed_args+=(--enable-hosted-managed-bounded-canary)
+    ;;
+  0|false|no|off|"")
+    ;;
+  *)
+    echo "TIMEWEB_REQUIRED_HOSTED_MANAGED_BOUNDED_CANARY_ENABLED must be boolean." >&2
     exit 2
     ;;
 esac
