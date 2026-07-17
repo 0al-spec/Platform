@@ -250,9 +250,11 @@ This separates the read path from the write path:
 The current execution order is:
 
 Items 1-4 and 6 are completed foundations. Item 5 is the next major
-cross-repository milestone; item 7 can proceed in parallel when ONT-040 is
-available, and item 8 remains deliberately deferred. Operational measurements
-inside item 4 do not expand production authority.
+cross-repository milestone, and item 8 remains deliberately deferred.
+Ontology applicability contract analysis may proceed in parallel because
+ONT-040 is available, but the downstream SpecGraph/SpecSpace consumer release
+in item 7 follows the durable-state production rollout gate defined below.
+Operational measurements inside item 4 do not expand production authority.
 
 1. **Quality-guided next action ranking.** Implemented in SpecSpace. The
    Product Workspace exposes one deterministic primary action plus bounded
@@ -396,6 +398,35 @@ inside item 4 do not expand production authority.
    remote HEAD must come from a validated repository/workspace binding rather
    than browser input or untrusted `.git/config`.
 
+## Near-Term Cross-Repo Release Order
+
+The next major slices must land in this order:
+
+1. **Durable SpecSpace state.** Platform defines an authenticated,
+   workspace-scoped state service with versioned records, CAS revisions,
+   idempotency, explicit lifecycle states, privacy controls, migration/export,
+   retention, and backup/restore support. SpecSpace consumes that service while
+   preserving its browser-facing API and authority boundary. Local files remain
+   a development adapter and private worker mirror, not production authority.
+2. **Production managed-mode rollout.** Enable continuous managed operations
+   only after file-state migration, restart persistence, concurrent-write
+   behavior, provider-failure handling, encrypted backup, restore, and rollback
+   are proven. Start with the existing read-only operation allowlist and a
+   stopped worker, then use one bounded window before considering continuous
+   worker operation or any wider allowlist.
+3. **Ontology applicability consumers.** Ontology ONT-040 is already merged and
+   remains the source of truth for `ModelApplicabilityProfile` and review-only
+   structural change classification. SpecGraph should import that compiler
+   output without inventing another vocabulary; SpecSpace should then expose
+   applicability, assumptions, invalidation triggers, and classified changes as
+   read-only review evidence. Applicability metadata must not become a score,
+   runtime policy, ontology write, or promotion gate.
+
+The transition criterion between items 1 and 2 is operational evidence, not
+artifact presence. The transition criterion between items 2 and 3 is a stable
+production state/execution boundary so ontology UX work does not hide unresolved
+durability risks.
+
 Platform should not introduce a separate task-tracking CLI yet. Markdown
 roadmaps plus GitHub PR history remain the source of truth. If automation is
 needed, prefer small read-only status commands in `scripts/platform.py` over a
@@ -421,8 +452,9 @@ versioned compiler contract rather than invent their own layer vocabulary.
 
 ### 2. Ontology 040: Model Applicability And Structural Change Classification
 
-Status: planned in Ontology PR `#60`; implementation is the next compiler-side
-slice.
+Status: planning landed in Ontology PR `#60`; implementation landed in
+Ontology PR `#61`. Downstream SpecGraph and SpecSpace consumption is the next
+cross-repo slice after the durable production state rollout.
 
 After layer metadata exists, the compiler should define a minimal
 `ModelApplicabilityProfile` and review-only structural change classification.
