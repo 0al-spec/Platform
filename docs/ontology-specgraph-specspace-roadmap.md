@@ -300,6 +300,17 @@ The current execution order is:
    production allowlist requires a separate rollout decision; neither follows
    automatically from canary sign-off.
    The next hosted rollout sequence is deliberately incremental:
+   - keep the Timeweb production profile
+     `read_only_no_mutable_state`. Before continuous production managed mode,
+     implement an authenticated external SpecSpace state service backed by
+     PostgreSQL beside hosted Platform, with a separate database/schema and
+     least-privileged role, CAS/revision semantics, privacy controls,
+     migration/export, and backup/restore evidence. Timeweb container state and
+     Compose volumes are not an accepted durability boundary;
+   - observe Timeweb application disk usage across the next five production
+     deploys, review the trend after three, and ask Timeweb to clean retained
+     images/layers/containers or provide an automatic retention policy if
+     unexplained growth continues;
    - keep backup failure classification deterministic when the encryption
      process closes its input early, and preserve a contract-tested startup
      health budget for the development/CI Compose profile that installs hosted

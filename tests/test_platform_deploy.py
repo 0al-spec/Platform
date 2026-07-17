@@ -853,6 +853,14 @@ class PlatformDeployTests(unittest.TestCase):
             self.assertTrue(manifest["hyperprompt_http_compile_enabled"])
             self.assertEqual(manifest["hyperprompt_work_dir"], "/tmp")
             self.assertEqual(manifest["hyperprompt_compile_timeout_seconds"], "60")
+            self.assertEqual(
+                manifest["specspace_state_profile"],
+                "read_only_no_mutable_state",
+            )
+            self.assertIn(
+                "SpecSpace mutable state profile: `read_only_no_mutable_state`",
+                (output_dir / "README.md").read_text(encoding="utf-8"),
+            )
 
     def test_timeweb_render_can_set_product_workspace_artifact_base_urls(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -961,6 +969,10 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertNotIn("hosted-token-", compose)
         self.assertTrue(manifest["hosted_managed_execution_enabled"])
         self.assertEqual(
+            manifest["specspace_state_profile"],
+            "persistent_local_volume",
+        )
+        self.assertEqual(
             manifest["hosted_managed_executor_url"],
             "https://managed.specgraph.tech",
         )
@@ -1047,6 +1059,7 @@ class PlatformDeployTests(unittest.TestCase):
             "timeweb_bounded_canary",
         )
         self.assertEqual(manifest["hosted_managed_state_durability"], "ephemeral")
+        self.assertEqual(manifest["specspace_state_profile"], "ephemeral_canary")
         self.assertEqual(
             manifest["hosted_managed_operation_allowlist"],
             ["review_status_execute"],
@@ -1577,6 +1590,49 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(render.returncode, 0, render.stderr)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(json.loads(result.stdout)["valid"])
+
+    def test_timeweb_validate_rejects_mutable_state_in_read_only_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose_path.write_text(
+                compose_path.read_text(encoding="utf-8").replace(
+                    f'      SPECSPACE_API_IMAGE_REF: "{API_IMAGE}"\n',
+                    f'      SPECSPACE_API_IMAGE_REF: "{API_IMAGE}"\n'
+                    '      SPECSPACE_STATE_DIR: "/data/specspace-state"\n',
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        errors = json.loads(result.stdout)["errors"]
+        self.assertTrue(
+            any(
+                "read-only profile must not configure persistent mutable state"
+                in error
+                and "SPECSPACE_STATE_DIR" in error
+                for error in errors
+            )
+        )
 
     def test_timeweb_validate_rejects_non_manifest_tree(self) -> None:
         with tempfile.TemporaryDirectory() as root:

@@ -20109,6 +20109,13 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         "%Y-%m-%dT%H:%M:%SZ"
     )
     release_commit = args.release_commit or "unknown"
+    specspace_state_profile = (
+        "ephemeral_canary"
+        if hosted_managed_runtime.profile == "timeweb_bounded_canary"
+        else "persistent_local_volume"
+        if hosted_managed_runtime.enabled
+        else "read_only_no_mutable_state"
+    )
     product_workspace_artifact_base_urls = product_workspace_artifact_base_urls_from_args(args)
     compose_file = output_dir / "docker-compose.yml"
     readme = output_dir / "README.md"
@@ -20146,6 +20153,8 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         f"`{'enabled' if hyperprompt_runtime.http_compile_enabled else 'disabled'}`\n"
         f"- Hosted managed execution: "
         f"`{'enabled' if hosted_managed_runtime.enabled else 'disabled'}`\n"
+        f"- SpecSpace mutable state profile: "
+        f"`{specspace_state_profile}`\n"
         f"- Hosted managed executor: "
         f"`{hosted_managed_runtime.executor_url if hosted_managed_runtime.enabled else '(not used)'}`\n"
         f"- Hyperprompt scratch workspace: "
@@ -20189,6 +20198,7 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                 ),
                 "hosted_managed_execution_enabled": hosted_managed_runtime.enabled,
                 "hosted_managed_execution_profile": hosted_managed_runtime.profile,
+                "specspace_state_profile": specspace_state_profile,
                 "hosted_managed_state_durability": (
                     "ephemeral"
                     if hosted_managed_runtime.profile == "timeweb_bounded_canary"
@@ -20663,6 +20673,20 @@ def validate_timeweb_manifest_tree(
         if any(key.startswith("SPECSPACE_HOSTED_MANAGED_") for key in api_environment):
             errors.append(
                 f"{target_file} must not configure hosted managed environment"
+            )
+        mutable_state_environment = sorted(
+            key
+            for key in api_environment
+            if re.fullmatch(
+                r"SPECSPACE_(?:[A-Z0-9]+_)*STATE_(?:DIR|DIRECTORY|DURABILITY)",
+                key,
+            )
+        )
+        if mutable_state_environment:
+            errors.append(
+                f"{target_file} read-only profile must not configure persistent "
+                "mutable state environment: "
+                + ", ".join(mutable_state_environment)
             )
 
     for service_name in ("app", "specspace-api"):

@@ -472,6 +472,57 @@ Guardrails:
   and the fixed persistent state directory; local subprocess execution remains
   disabled.
 
+### Timeweb Storage Contract
+
+The production read-only profile is stateless at the SpecSpace application
+boundary. A growing Timeweb disk does not by itself mean that product workspace
+state is stored in the application container: Timeweb may retain old Docker
+images, layers, containers, deployment cache, or logs outside the active
+Compose filesystem.
+
+| Data | Production location | Survives an App redeploy | Contract |
+| --- | --- | --- | --- |
+| Product and candidate artifacts | `specgraph.tech/workspaces/<workspace-id>` | Yes, outside Timeweb App | Read-only SpecGraph public artifacts and digests |
+| Canonical specs and history | SpecGraph Git repository | Yes, outside Timeweb App | Git review and publication lifecycle |
+| Platform queue and authoritative reports | Hosted Platform PostgreSQL and VPS artifact root | Yes, outside Timeweb App | Platform remains lifecycle authority |
+| SpecSpace HTTP/provider cache | Process memory | No | Rebuilt from remote artifacts |
+| Hyperprompt compile scratch | Container `/tmp`, retention bounded to 20 bundles | No | Disposable scratch only |
+| Legacy dialog directory | Container `/data/dialogs`, no volume in read-only profile | No | Must not be treated as durable product state |
+| SpecSpace mutable drafts, requests, and intents | Disabled in read-only profile | No local persistence | Requires an approved external state backend before production managed mode |
+
+The generated `platform-timeweb-deploy.json` records
+`specspace_state_profile=read_only_no_mutable_state` for this profile. The
+validator rejects Compose volumes, hosted managed command flags, hosted managed
+environment, and SpecSpace state-directory/durability environment variables.
+The bounded canary remains a separate profile with explicitly ephemeral `/tmp`
+state. The ordinary durable hosted profile is not compatible with Timeweb Cloud
+Apps because that platform rejects its required Compose volume and secret
+mounts.
+
+### Timeweb Disk Observation And Cleanup Policy
+
+Track the next five production deployments in
+[the bounded disk observation log](timeweb-disk-observation-log.md). Review the
+trend after deployment three. Escalate earlier if disk usage reaches 80 percent.
+
+The historical symptom is consistent with platform-retained Docker data:
+Timeweb support removed old container data on 2026-07-03 and recovered more than
+9 GB without restoring application-owned workspace state. If the new
+observation again shows monotonic unexplained growth, ask Timeweb support to:
+
+1. report which images, layers, containers, deployment cache, or logs consume
+   the application disk;
+2. remove unused deployment data while preserving the active application,
+   domain, and global environment variables;
+3. state whether an automatic image/container retention or prune policy can be
+   enabled.
+
+Do not use `docker system prune` instructions for this Cloud Apps deployment
+unless Timeweb explicitly provides supported host access. The App is deployed
+from digest-pinned prebuilt images and has no `build:` section, so image
+production is already outside the Timeweb host; provider-side retention remains
+the likely source of repeated deploy growth.
+
 ## Timeweb Production Control Plane
 
 The production control plane is split by ownership boundary:
