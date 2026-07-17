@@ -250,9 +250,11 @@ This separates the read path from the write path:
 The current execution order is:
 
 Items 1-4 and 6 are completed foundations. Item 5 is the next major
-cross-repository milestone; item 7 can proceed in parallel when ONT-040 is
-available, and item 8 remains deliberately deferred. Operational measurements
-inside item 4 do not expand production authority.
+cross-repository milestone, and item 8 remains deliberately deferred.
+Ontology applicability contract analysis may proceed in parallel because
+ONT-040 is available, but the downstream SpecGraph/SpecSpace consumer release
+in item 7 follows the durable-state production rollout gate defined below.
+Operational measurements inside item 4 do not expand production authority.
 
 1. **Quality-guided next action ranking.** Implemented in SpecSpace. The
    Product Workspace exposes one deterministic primary action plus bounded
