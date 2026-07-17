@@ -15,7 +15,7 @@ this log.
 
 | Deploy | UTC timestamp | Release commit | API/UI image digests | Used before | Used after or at +24h | Delta | Result / notes |
 | --- | --- | --- | --- | ---: | ---: | ---: | --- |
-| 1 | pending | pending | pending | pending | pending | pending | pending |
+| 1 | 2026-07-17T21:06:34Z | `7a8c3d83` | API `f8f6578fb94a`; UI `7d8e99f55bdc` | not recorded | 15.01 GB | baseline | About 50.0% used; 15 GB free of 30 GB. Production smoke passed 17/17 checks. |
 | 2 | pending | pending | pending | pending | pending | pending | pending |
 | 3 | pending | pending | pending | pending | pending | pending | trend review due |
 | 4 | pending | pending | pending | pending | pending | pending | pending |
