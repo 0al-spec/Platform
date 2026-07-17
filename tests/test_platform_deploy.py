@@ -1091,6 +1091,46 @@ class PlatformDeployTests(unittest.TestCase):
         errors = json.loads(validate.stdout)["errors"]
         self.assertTrue(any("must not declare volumes" in error for error in errors))
 
+    def test_timeweb_bounded_canary_rejects_empty_forbidden_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-bounded-canary",
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose_path.write_text(
+                compose_path.read_text(encoding="utf-8")
+                + "\nvolumes: []\nsecrets: {}\n",
+                encoding="utf-8",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-bounded-canary",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 1, validate.stderr)
+        errors = json.loads(validate.stdout)["errors"]
+        self.assertTrue(
+            any("must not declare top-level volumes" in error for error in errors)
+        )
+        self.assertTrue(
+            any("must not declare top-level secrets" in error for error in errors)
+        )
+
     def test_timeweb_bounded_canary_rolls_back_to_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"

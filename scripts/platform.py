@@ -20357,6 +20357,13 @@ def top_level_mapping_keys(lines: list[str], section_name: str) -> list[str]:
     return keys
 
 
+def top_level_mapping_present(lines: list[str], section_name: str) -> bool:
+    return any(
+        re.match(rf"^{re.escape(section_name)}:\s*(?:.*)?$", line) is not None
+        for line in lines
+    )
+
+
 def compose_port_host_part(port: str) -> str | None:
     value = port.strip().strip('"').strip("'")
     if not value or ":" not in value:
@@ -20594,11 +20601,11 @@ def validate_timeweb_manifest_tree(
                         f"{target_file} bounded canary {service_name} must not "
                         "declare secrets"
                     )
-            if top_level_mapping_keys(lines, "volumes"):
+            if top_level_mapping_present(lines, "volumes"):
                 errors.append(
                     f"{target_file} bounded canary must not declare top-level volumes"
                 )
-            if top_level_mapping_keys(lines, "secrets"):
+            if top_level_mapping_present(lines, "secrets"):
                 errors.append(
                     f"{target_file} bounded canary must not declare top-level secrets"
                 )
