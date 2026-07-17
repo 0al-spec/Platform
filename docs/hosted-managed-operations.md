@@ -1,5 +1,11 @@
 # Hosted Managed Operations
 
+Private SpecSpace drafts and request state use the separate
+[External SpecSpace State Service](specspace-state-service.md) contract. Queue
+rows and Platform output reports are not a substitute for that state backend,
+and enabling the state service does not enable workers or expand the operation
+allowlist.
+
 Platform owns the transport-neutral contract for moving SpecSpace managed
 operations from a local backend subprocess boundary to a hosted or queue-backed
 worker. The queue is an adapter. Existing Platform wrappers remain the only
