@@ -786,6 +786,46 @@ the executor token has been configured in the Timeweb deployment environment:
 SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN=<same service token stored on the VPS>
 ```
 
+### External SpecSpace Mutable-State Backend Prerequisite
+
+Continuous production managed mode must not store SpecSpace-owned drafts,
+execution requests, approval intents, or compact queue receipts in the Timeweb
+container filesystem. The current production profile therefore remains
+read-only; the bounded canary uses explicitly ephemeral state and is not a
+durability solution.
+
+The intended deployment boundary is:
+
+```text
+SpecSpace API
+→ authenticated SpecSpace state service
+→ PostgreSQL beside hosted Platform
+```
+
+The state service may use the same PostgreSQL host or cluster as Platform, but
+it must use a separate database or schema and a separate least-privileged role.
+PostgreSQL must not be exposed publicly. SpecSpace reaches the service over
+authenticated TLS; browser clients do not receive database credentials or a
+direct database endpoint.
+
+The external state contract must provide:
+
+- workspace-scoped keys, state kind, object id, and schema version;
+- revision or compare-and-swap semantics for concurrent edits;
+- content digests, timestamps, lifecycle state, and idempotency keys;
+- explicit `consumed` and `superseded` transitions for request/intent replay;
+- privacy handling for raw idea text and operator answers;
+- audit evidence without turning SpecSpace state into lifecycle authority;
+- backup, restore, retention, deletion, and migration procedures.
+
+Platform authoritative reports remain the source of execution completion.
+External SpecSpace state remains operator-owned intent and UI continuity.
+Production managed mode is blocked until the adapter/API contract, TLS and
+authentication, concurrency tests, export/migration path, backup/restore smoke,
+retention policy, and managed-mode readiness projection have all been
+implemented and verified. Enabling a local Timeweb volume is not an acceptable
+substitute.
+
 Do not commit or pass that value through the Platform workflow. Timeweb Cloud
 Apps rejects Compose `volumes` and Compose `secrets`, so the bounded canary
 profile references the Timeweb global environment variable directly and stores
