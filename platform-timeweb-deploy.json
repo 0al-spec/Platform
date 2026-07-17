@@ -2,14 +2,12 @@
   "artifact_base_url": "https://specgraph.tech",
   "artifact_kind": "platform_timeweb_deploy_manifest",
   "compose_file": "docker-compose.yml",
-  "hosted_managed_execution_enabled": true,
-  "hosted_managed_execution_profile": "timeweb_bounded_canary",
+  "hosted_managed_execution_enabled": false,
+  "hosted_managed_execution_profile": "read_only",
   "hosted_managed_executor_timeout_seconds": "5",
-  "hosted_managed_executor_url": "https://managed.specgraph.tech",
-  "hosted_managed_operation_allowlist": [
-    "review_status_execute"
-  ],
-  "hosted_managed_state_durability": "ephemeral",
+  "hosted_managed_executor_url": null,
+  "hosted_managed_operation_allowlist": null,
+  "hosted_managed_state_durability": null,
   "hyperprompt_bundle_retention_count": "20",
   "hyperprompt_compile_timeout_seconds": "60",
   "hyperprompt_http_compile_enabled": true,
@@ -22,10 +20,10 @@
     "team-decision-log": "https://specgraph.tech/workspaces/team-decision-log"
   },
   "readme": "README.md",
-  "release_commit": "02237ca1e682130c8bb9d8c7bf881399f2a4ae17",
-  "release_created_at": "2026-07-17T13:35:14Z",
+  "release_commit": "44c26b6206c36394520cf1f1f30c102809221621",
+  "release_created_at": "2026-07-17T14:06:14Z",
   "schema_version": 1,
   "specpm_registry_url": "https://specpm.dev",
-  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:ff175890d3153b38a5c5a8f1f8c1c221dc0689fc220a7f4554b515aaaece09b3",
-  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:67c26ee7a6c61fd76516cd53058969d3bbbb633df111e6f718f8601daff56023"
+  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:8c8b52c881d0e798d5fad9aaf35f3a1fcc9c430ab922b141b886b771806d4f8c",
+  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:662689fa3afd574c9459c92ed69981e0a517fbc3bf408de459a7f76181eca149"
 }
