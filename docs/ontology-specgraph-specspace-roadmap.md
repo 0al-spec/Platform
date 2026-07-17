@@ -332,13 +332,16 @@ The current execution order is:
      reference, no Compose volumes/secrets, an exact
      `review_status_execute` client allowlist, explicitly ephemeral
      SpecSpace-owned state, and provider-binding validation. Durable queue state
-     and authoritative reports remain Platform-owned. The remaining
-     rollout evidence is one UI-originated `review_status_execute` processed in
-     a bounded production worker window, followed by queue drain, rollback
-     verification, probe, and backup. A probe-only review object now has an
-     explicit digest-pinned evidence artifact and cannot be confused with the
-     promotion execution that opened the candidate PR. Continuous read-only
-     execution remains a later operating-policy decision.
+     and authoritative reports remain Platform-owned. The UI-originated
+     production `review_status_execute` has now completed through the Timeweb
+     Product Workspace and one bounded VPS worker window. A stale PR-head probe
+     first failed closed; refreshed evidence and a new UI request then completed
+     at `attempt=1` with a digest-pinned authoritative report, drained queue,
+     stopped worker, rollback to `read_only`, backup/restore smoke, encrypted
+     off-host export, and a healthy final probe. A probe-only review object has
+     explicit digest-pinned evidence and cannot be confused with the promotion
+     execution that opened the candidate PR. Continuous read-only execution
+     remains a later operating-policy decision.
    Every allowlist expansion remains a separate rollout with operation-specific
    confirmation, idempotency, monitoring, recovery, backup, and rollback
    evidence.

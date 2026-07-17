@@ -814,6 +814,29 @@ Success requires `hosted_managed_ready`, `attempt=1`, a digest-pinned review
 status report, a drained queue, and a stopped worker. This evidence does not
 authorize `continuous-worker` or another operation id.
 
+The first Timeweb-originated production UI canary completed on 2026-07-17
+against the dedicated `hosted-operation-canary` workspace and SpecGraph review
+PR `#690`. The initial request correctly failed closed at `attempt=1` because
+the probe evidence pinned an earlier PR head. Operators refreshed the
+probe-only evidence and created a new UI request instead of retrying the
+terminal request. Replacement request
+`managed-operation://hosted-operation-canary/review_status_execute/8cf6546ff3c52e078df6f7c6`
+completed in bounded window `review-status-ui-20260717t142806z` at
+`attempt=1`. Its authoritative review-status report pinned SHA-256
+`7898ff6cfdf0125d9aa419671f1cb416bdc4b8925e8bd3c8e61e38447ef034d4`,
+observed PR `#690` as open at head
+`824af11c02bcbab38e99a92e0c4e762bde23dbf4`, and remained
+`review_probe_only=true`.
+
+The queue drained with no active workspace lock, the one-shot worker stopped,
+and no candidate worktree, commit, review, merge, read model, canonical spec
+mutation, or Ontology write was created by the canary. SpecSpace was then
+returned to `read_only` with zero enabled operations. Backup cycle
+`production-20260717t143320z`, isolated restore smoke, encrypted off-host
+export, archive digest verification, the production product smoke, and the
+post-operation probe passed. This record closes the Timeweb bounded-canary
+window; it does not authorize continuous execution or an allowlist expansion.
+
 Before rollback, audit that no active job or lock remains:
 
 ```bash
