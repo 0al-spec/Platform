@@ -46,6 +46,26 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
                 "private_artifact_publication": False,
                 "specspace_direct_git_write": False,
             },
+            "workspace_binding": self.workspace_binding(),
+        }
+
+    def workspace_binding(self) -> dict:
+        return {
+            "status": "ready",
+            "workspace_id": publication.WORKSPACE_ID,
+            "binding_id": (
+                f"product-workspace-binding://{publication.WORKSPACE_ID}"
+            ),
+            "binding_revision_sha256": "c" * 64,
+            "source_sha256": "d" * 64,
+            "authority_boundary": {
+                "may_create_git_commit": False,
+                "may_execute_platform": False,
+                "may_execute_specgraph": False,
+                "may_open_pull_request": False,
+                "may_publish_read_model": False,
+                "report_only": True,
+            },
         }
 
     def review_evidence(self, execution_digest: str) -> dict:
@@ -83,6 +103,7 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
                 "writes_ontology_packages": False,
                 "accepts_ontology_terms": False,
             },
+            "workspace_binding": self.workspace_binding(),
         }
 
     def review_status(self) -> dict:
@@ -215,6 +236,16 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
         self.assertNotIn("/Users", rendered)
         self.assertEqual(packet["summary"]["report_count"], 1)
         self.assertEqual(packet["report"]["review_number"], 690)
+        self.assertEqual(
+            packet["report"]["workspace_binding"],
+            {
+                "status": "ready",
+                "workspace_id": publication.WORKSPACE_ID,
+                "binding_id": (
+                    f"product-workspace-binding://{publication.WORKSPACE_ID}"
+                ),
+            },
+        )
 
     def test_review_status_requires_digest_pinned_attempt_one(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -292,6 +323,38 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
             write_json(evidence, self.review_evidence(sha256(execution)))
 
             with self.assertRaisesRegex(publication.PublicationError, "expands authority"):
+                publication.build_review_object_report(
+                    evidence_path=evidence.resolve(),
+                    execution_report_path=execution.resolve(),
+                )
+
+    def test_review_object_rejects_foreign_workspace_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            execution = root / "execution.json"
+            evidence = root / "evidence.json"
+            write_json(execution, self.execution_report())
+            payload = self.review_evidence(sha256(execution))
+            payload["workspace_binding"]["workspace_id"] = "foreign-workspace"
+            write_json(evidence, payload)
+
+            with self.assertRaisesRegex(publication.PublicationError, "binding"):
+                publication.build_review_object_report(
+                    evidence_path=evidence.resolve(),
+                    execution_report_path=execution.resolve(),
+                )
+
+    def test_review_object_rejects_binding_revision_drift_from_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            execution = root / "execution.json"
+            evidence = root / "evidence.json"
+            write_json(execution, self.execution_report())
+            payload = self.review_evidence(sha256(execution))
+            payload["workspace_binding"]["binding_revision_sha256"] = "e" * 64
+            write_json(evidence, payload)
+
+            with self.assertRaisesRegex(publication.PublicationError, "does not match"):
                 publication.build_review_object_report(
                     evidence_path=evidence.resolve(),
                     execution_report_path=execution.resolve(),
