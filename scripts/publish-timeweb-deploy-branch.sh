@@ -31,9 +31,12 @@ fi
 specpm_registry_url="${TIMEWEB_REQUIRED_SPECPM_REGISTRY_URL:-https://specpm.dev}"
 hosted_managed_execution_enabled="${TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED:-false}"
 hosted_managed_bounded_canary_enabled="${TIMEWEB_REQUIRED_HOSTED_MANAGED_BOUNDED_CANARY_ENABLED:-false}"
+hosted_managed_external_state_enabled="${TIMEWEB_REQUIRED_HOSTED_MANAGED_EXTERNAL_STATE_ENABLED:-false}"
 hosted_managed_executor_url="${TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTOR_URL:-https://managed.specgraph.tech}"
+external_state_url="${TIMEWEB_REQUIRED_EXTERNAL_STATE_URL:-https://managed.specgraph.tech/specspace-state}"
 hosted_managed_args=(
   --hosted-managed-executor-url "$hosted_managed_executor_url"
+  --external-state-url "$external_state_url"
 )
 case "${hosted_managed_execution_enabled,,}" in
   1|true|yes|on)
@@ -55,6 +58,17 @@ case "${hosted_managed_bounded_canary_enabled,,}" in
     ;;
   *)
     echo "TIMEWEB_REQUIRED_HOSTED_MANAGED_BOUNDED_CANARY_ENABLED must be boolean." >&2
+    exit 2
+    ;;
+esac
+case "${hosted_managed_external_state_enabled,,}" in
+  1|true|yes|on)
+    hosted_managed_args+=(--enable-hosted-managed-external-state)
+    ;;
+  0|false|no|off|"")
+    ;;
+  *)
+    echo "TIMEWEB_REQUIRED_HOSTED_MANAGED_EXTERNAL_STATE_ENABLED must be boolean." >&2
     exit 2
     ;;
 esac

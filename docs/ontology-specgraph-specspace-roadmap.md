@@ -385,16 +385,21 @@ Operational measurements inside item 4 do not expand production authority.
    dual-database backup/restore smoke, and a controlled environment-inventory
    upgrade. Production execution remains disabled until deployment, migration,
    restart persistence, bounded canary, encrypted off-host backup, and rollback
-   evidence are captured. The service remains operator-intent storage;
-   Platform reports remain lifecycle authority.
+   evidence are captured. The production VPS now runs the isolated PostgreSQL
+   state service with its worker stopped. The remaining cutover is the
+   sanitizer-compatible Timeweb external-state profile, migration/restart
+   evidence, dual-database backup, and one bounded read-only canary. The service
+   remains operator-intent storage; Platform reports remain lifecycle authority.
 6. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
    machine ids for refs and promotion paths while exposing deterministic,
    privacy-checked display aliases in candidate overview and topology artifacts;
    SpecSpace uses them as presentation metadata without changing identity.
-7. **Ontology applicability in product review.** Continue compiler-backed
-   layers, `modelApplicability`, and change classification so product
-   candidates can explain which ontology layer and applicability frame each
-   claim depends on.
+7. **Ontology applicability in product review.** Implemented as proposal `0216`.
+   SpecGraph imports ONT-040 compiler output into a review-only Candidate
+   Overview section without inventing another vocabulary; SpecSpace exposes
+   applicability scopes, assumptions, invalidation triggers, and classified
+   changes without turning them into a score, runtime policy, ontology write,
+   or promotion gate.
 8. **Bound product-repository synchronization.** Deferred until the production
    state and managed-execution boundaries are durable. It remains a Git Service
    capability, not a generic shell command. Platform should first inspect a
@@ -421,13 +426,10 @@ The next major slices must land in this order:
    behavior, provider-failure handling, encrypted backup, restore, and rollback;
    then use one bounded `review_status_execute` window before considering a
    continuous worker or any wider allowlist.
-3. **Ontology applicability consumers.** Ontology ONT-040 is already merged and
-   remains the source of truth for `ModelApplicabilityProfile` and review-only
-   structural change classification. SpecGraph should import that compiler
-   output without inventing another vocabulary; SpecSpace should then expose
-   applicability, assumptions, invalidation triggers, and classified changes as
-   read-only review evidence. Applicability metadata must not become a score,
-   runtime policy, ontology write, or promotion gate.
+3. **Ontology applicability consumers.** Completed. Ontology ONT-040 remains
+   the source of truth for `ModelApplicabilityProfile` and review-only
+   structural change classification; SpecGraph proposal `0216` and the
+   SpecSpace consumer are merged.
 
 The transition criterion between items 1 and 2 is operational evidence, not
 artifact presence. The transition criterion between items 2 and 3 is a stable

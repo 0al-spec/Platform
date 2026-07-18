@@ -64,12 +64,18 @@ DEFAULT_TIMEWEB_HYPERPROMPT_MAX_OUTPUT_BYTES = "2097152"
 DEFAULT_TIMEWEB_HYPERPROMPT_BUNDLE_RETENTION_COUNT = "20"
 DEFAULT_TIMEWEB_HOSTED_MANAGED_EXECUTOR_URL = "https://managed.specgraph.tech"
 DEFAULT_TIMEWEB_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS = "5"
+DEFAULT_TIMEWEB_EXTERNAL_STATE_URL = (
+    "https://managed.specgraph.tech/specspace-state"
+)
+DEFAULT_TIMEWEB_EXTERNAL_STATE_TIMEOUT_SECONDS = "5"
 TIMEWEB_HOSTED_MANAGED_STATE_VOLUME = "specspace-hosted-managed-state"
 TIMEWEB_HOSTED_MANAGED_STATE_DIR = "/data/specspace-hosted-managed-state"
 TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET = "specspace-hosted-managed-executor-token"
 TIMEWEB_BOUNDED_CANARY_STATE_DIR = "/tmp/specspace-hosted-managed-state"
 TIMEWEB_BOUNDED_CANARY_OPERATION_ID = "review_status_execute"
 TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE = "${SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN}"
+TIMEWEB_EXTERNAL_STATE_CACHE_DIR = "/tmp/specspace-external-state-cache"
+TIMEWEB_EXTERNAL_STATE_TOKEN_REFERENCE = "${SPECSPACE_EXTERNAL_STATE_TOKEN}"
 DEFAULT_PRODUCT_WORKSPACE_ID = "team-decision-log"
 DEFAULT_DEPLOYED_PRODUCT_WORKSPACE_IDS = (
     DEFAULT_PRODUCT_WORKSPACE_ID,
@@ -854,6 +860,8 @@ class TimewebHostedManagedRuntime:
     profile: str
     executor_url: str
     timeout_seconds: str
+    external_state_url: str
+    external_state_timeout_seconds: str
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -20121,15 +20129,27 @@ def timeweb_hosted_managed_runtime_from_args(
     bounded_canary_enabled = bool(
         getattr(args, "hosted_managed_bounded_canary_enabled", False)
     )
-    if durable_enabled and bounded_canary_enabled:
-        raise PlatformError(
-            "Timeweb durable hosted execution and bounded canary profiles are "
-            "mutually exclusive"
+    external_state_enabled = bool(
+        getattr(args, "hosted_managed_external_state_enabled", False)
+    )
+    if sum(
+        int(enabled)
+        for enabled in (
+            durable_enabled,
+            bounded_canary_enabled,
+            external_state_enabled,
         )
-    enabled = durable_enabled or bounded_canary_enabled
+    ) > 1:
+        raise PlatformError(
+            "Timeweb durable, bounded canary, and external-state hosted "
+            "execution profiles are mutually exclusive"
+        )
+    enabled = durable_enabled or bounded_canary_enabled or external_state_enabled
     profile = (
         "timeweb_bounded_canary"
         if bounded_canary_enabled
+        else "timeweb_external_state"
+        if external_state_enabled
         else "durable"
         if durable_enabled
         else "read_only"
@@ -20153,11 +20173,34 @@ def timeweb_hosted_managed_runtime_from_args(
                 "Hosted managed executor URL must be an HTTPS origin without "
                 "credentials, query, or fragment"
             )
+    external_state_url = (
+        str(getattr(args, "external_state_url", "")).strip().rstrip("/")
+    )
+    external_state_timeout_seconds = positive_int_string(
+        str(getattr(args, "external_state_timeout_seconds", "")),
+        label="External SpecSpace state timeout seconds",
+    )
+    if external_state_enabled:
+        parsed = urllib.parse.urlparse(external_state_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise PlatformError(
+                "External SpecSpace state URL must be an HTTPS URL without "
+                "credentials, query, or fragment"
+            )
     return TimewebHostedManagedRuntime(
         enabled=enabled,
         profile=profile,
         executor_url=executor_url,
         timeout_seconds=timeout_seconds,
+        external_state_url=external_state_url,
+        external_state_timeout_seconds=external_state_timeout_seconds,
     )
 
 
@@ -20259,6 +20302,21 @@ def render_timeweb_hosted_managed_environment(
             "      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "
             f'"{TIMEWEB_BOUNDED_CANARY_OPERATION_ID}"\n'
         )
+    elif runtime.profile == "timeweb_external_state":
+        environment += (
+            "      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: "
+            f'"{TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE}"\n'
+            '      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "persistent"\n'
+            "      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "
+            f'"{TIMEWEB_BOUNDED_CANARY_OPERATION_ID}"\n'
+            '      SPECSPACE_EXTERNAL_STATE_ENABLED: "true"\n'
+            f'      SPECSPACE_EXTERNAL_STATE_URL: "{runtime.external_state_url}"\n'
+            "      SPECSPACE_EXTERNAL_STATE_TOKEN: "
+            f'"{TIMEWEB_EXTERNAL_STATE_TOKEN_REFERENCE}"\n'
+            "      SPECSPACE_EXTERNAL_STATE_TIMEOUT_SECONDS: "
+            f'"{runtime.external_state_timeout_seconds}"\n'
+            f'      SPECSPACE_STATE_DIR: "{TIMEWEB_EXTERNAL_STATE_CACHE_DIR}"\n'
+        )
     return environment
 
 
@@ -20283,6 +20341,19 @@ def render_timeweb_hosted_managed_command(
             "      - --hosted-managed-operation-allowlist\n"
             f"      - {TIMEWEB_BOUNDED_CANARY_OPERATION_ID}\n"
         )
+    elif runtime.profile == "timeweb_external_state":
+        command += (
+            f"      - {TIMEWEB_EXTERNAL_STATE_CACHE_DIR}\n"
+            "      - --hosted-managed-state-durability\n"
+            "      - persistent\n"
+            "      - --hosted-managed-operation-allowlist\n"
+            f"      - {TIMEWEB_BOUNDED_CANARY_OPERATION_ID}\n"
+            "      - --enable-external-state\n"
+            "      - --external-state-url\n"
+            f'      - "{runtime.external_state_url}"\n'
+            "      - --external-state-timeout-seconds\n"
+            f'      - "{runtime.external_state_timeout_seconds}"\n'
+        )
     else:
         command += (
             f"      - {TIMEWEB_HOSTED_MANAGED_STATE_DIR}\n"
@@ -20293,7 +20364,10 @@ def render_timeweb_hosted_managed_command(
 
 
 def render_timeweb_hosted_managed_service(runtime: TimewebHostedManagedRuntime) -> str:
-    if not runtime.enabled or runtime.profile == "timeweb_bounded_canary":
+    if not runtime.enabled or runtime.profile in {
+        "timeweb_bounded_canary",
+        "timeweb_external_state",
+    }:
         return ""
     return (
         "    secrets:\n"
@@ -20304,7 +20378,10 @@ def render_timeweb_hosted_managed_service(runtime: TimewebHostedManagedRuntime) 
 
 
 def render_timeweb_hosted_managed_top_level(runtime: TimewebHostedManagedRuntime) -> str:
-    if not runtime.enabled or runtime.profile == "timeweb_bounded_canary":
+    if not runtime.enabled or runtime.profile in {
+        "timeweb_bounded_canary",
+        "timeweb_external_state",
+    }:
         return ""
     return (
         "\nsecrets:\n"
@@ -20393,6 +20470,8 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
     specspace_state_profile = (
         "ephemeral_canary"
         if hosted_managed_runtime.profile == "timeweb_bounded_canary"
+        else "external_postgresql"
+        if hosted_managed_runtime.profile == "timeweb_external_state"
         else "persistent_local_volume"
         if hosted_managed_runtime.enabled
         else "read_only_no_mutable_state"
@@ -20489,7 +20568,16 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                 ),
                 "hosted_managed_operation_allowlist": (
                     [TIMEWEB_BOUNDED_CANARY_OPERATION_ID]
-                    if hosted_managed_runtime.profile == "timeweb_bounded_canary"
+                    if hosted_managed_runtime.profile
+                    in {"timeweb_bounded_canary", "timeweb_external_state"}
+                    else None
+                ),
+                "specspace_external_state_enabled": (
+                    hosted_managed_runtime.profile == "timeweb_external_state"
+                ),
+                "specspace_external_state_url": (
+                    hosted_managed_runtime.external_state_url
+                    if hosted_managed_runtime.profile == "timeweb_external_state"
                     else None
                 ),
                 "hosted_managed_executor_url": (
@@ -20805,6 +20893,10 @@ def validate_timeweb_manifest_tree(
         "--hosted-managed-state-durability",
         "--hosted-managed-operation-allowlist",
         "--specspace-state-dir",
+        "--enable-external-state",
+        "--external-state-url",
+        "--external-state-token-file",
+        "--external-state-timeout-seconds",
     }
     present_hosted_command_tokens = hosted_command_tokens.intersection(api_command)
     if hosted_managed_runtime.enabled:
@@ -20842,6 +20934,44 @@ def validate_timeweb_manifest_tree(
                     ),
                 }
             )
+        elif hosted_managed_runtime.profile == "timeweb_external_state":
+            expected_environment.update(
+                {
+                    "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN": (
+                        TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE
+                    ),
+                    "SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY": "persistent",
+                    "SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST": (
+                        TIMEWEB_BOUNDED_CANARY_OPERATION_ID
+                    ),
+                    "SPECSPACE_EXTERNAL_STATE_ENABLED": "true",
+                    "SPECSPACE_EXTERNAL_STATE_URL": (
+                        hosted_managed_runtime.external_state_url
+                    ),
+                    "SPECSPACE_EXTERNAL_STATE_TOKEN": (
+                        TIMEWEB_EXTERNAL_STATE_TOKEN_REFERENCE
+                    ),
+                    "SPECSPACE_EXTERNAL_STATE_TIMEOUT_SECONDS": (
+                        hosted_managed_runtime.external_state_timeout_seconds
+                    ),
+                    "SPECSPACE_STATE_DIR": TIMEWEB_EXTERNAL_STATE_CACHE_DIR,
+                }
+            )
+            expected_command_values.update(
+                {
+                    "--specspace-state-dir": TIMEWEB_EXTERNAL_STATE_CACHE_DIR,
+                    "--hosted-managed-state-durability": "persistent",
+                    "--hosted-managed-operation-allowlist": (
+                        TIMEWEB_BOUNDED_CANARY_OPERATION_ID
+                    ),
+                    "--external-state-url": (
+                        hosted_managed_runtime.external_state_url
+                    ),
+                    "--external-state-timeout-seconds": (
+                        hosted_managed_runtime.external_state_timeout_seconds
+                    ),
+                }
+            )
         else:
             expected_command_values.update(
                 {
@@ -20865,10 +20995,27 @@ def validate_timeweb_manifest_tree(
                     f"{target_file} {flag} must be {expected}, got "
                     f"{command_value_after(api_command, flag)!r}"
                 )
-        if hosted_managed_runtime.profile == "timeweb_bounded_canary":
+        if hosted_managed_runtime.profile == "timeweb_external_state":
+            if "--enable-external-state" not in api_command:
+                errors.append(
+                    f"{target_file} external-state profile must enable external state"
+                )
+            for forbidden_flag in (
+                "--hosted-managed-executor-token-file",
+                "--external-state-token-file",
+            ):
+                if forbidden_flag in api_command:
+                    errors.append(
+                        f"{target_file} external-state Timeweb profile must receive "
+                        f"{forbidden_flag} credential from the global environment"
+                    )
+        if hosted_managed_runtime.profile in {
+            "timeweb_bounded_canary",
+            "timeweb_external_state",
+        }:
             if "--hosted-managed-executor-token-file" in api_command:
                 errors.append(
-                    f"{target_file} bounded canary must receive the token from "
+                    f"{target_file} Timeweb hosted profile must receive the token from "
                     "the Timeweb global environment"
                 )
             for service_name in set(blocks):
@@ -20879,7 +21026,7 @@ def validate_timeweb_manifest_tree(
                 )
                 if service_volumes:
                     errors.append(
-                        f"{target_file} bounded canary {service_name} must not "
+                        f"{target_file} Timeweb hosted {service_name} must not "
                         "declare volumes"
                     )
                 service_secrets = list_values_for_service_section(
@@ -20889,16 +21036,18 @@ def validate_timeweb_manifest_tree(
                 )
                 if service_secrets:
                     errors.append(
-                        f"{target_file} bounded canary {service_name} must not "
+                        f"{target_file} Timeweb hosted {service_name} must not "
                         "declare secrets"
                     )
             if top_level_mapping_present(lines, "volumes"):
                 errors.append(
-                    f"{target_file} bounded canary must not declare top-level volumes"
+                    f"{target_file} Timeweb hosted profile must not declare "
+                    "top-level volumes"
                 )
             if top_level_mapping_present(lines, "secrets"):
                 errors.append(
-                    f"{target_file} bounded canary must not declare top-level secrets"
+                    f"{target_file} Timeweb hosted profile must not declare "
+                    "top-level secrets"
                 )
         else:
             required_fragments = (
@@ -20954,6 +21103,10 @@ def validate_timeweb_manifest_tree(
         if any(key.startswith("SPECSPACE_HOSTED_MANAGED_") for key in api_environment):
             errors.append(
                 f"{target_file} must not configure hosted managed environment"
+            )
+        if any(key.startswith("SPECSPACE_EXTERNAL_STATE_") for key in api_environment):
+            errors.append(
+                f"{target_file} read-only profile must not configure external state"
             )
         mutable_state_environment = sorted(
             key
@@ -24703,6 +24856,7 @@ def build_parser() -> argparse.ArgumentParser:
                 default=False,
             ),
             hosted_managed_bounded_canary_enabled=False,
+            hosted_managed_external_state_enabled=False,
         )
         command_parser.add_argument(
             "--enable-hosted-managed-execution",
@@ -24729,6 +24883,15 @@ def build_parser() -> argparse.ArgumentParser:
             ),
         )
         command_parser.add_argument(
+            "--enable-hosted-managed-external-state",
+            dest="hosted_managed_external_state_enabled",
+            action="store_true",
+            help=(
+                "Render the Timeweb-compatible persistent hosted profile backed "
+                "by the authenticated external SpecSpace state service."
+            ),
+        )
+        command_parser.add_argument(
             "--hosted-managed-executor-url",
             default=os.environ.get(
                 "SPECSPACE_HOSTED_MANAGED_EXECUTOR_URL",
@@ -24743,6 +24906,22 @@ def build_parser() -> argparse.ArgumentParser:
                 DEFAULT_TIMEWEB_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS,
             ),
             help="Bounded HTTP timeout for SpecSpace hosted executor calls.",
+        )
+        command_parser.add_argument(
+            "--external-state-url",
+            default=os.environ.get(
+                "SPECSPACE_EXTERNAL_STATE_URL",
+                DEFAULT_TIMEWEB_EXTERNAL_STATE_URL,
+            ),
+            help="HTTPS external SpecSpace state service URL.",
+        )
+        command_parser.add_argument(
+            "--external-state-timeout-seconds",
+            default=os.environ.get(
+                "SPECSPACE_EXTERNAL_STATE_TIMEOUT_SECONDS",
+                DEFAULT_TIMEWEB_EXTERNAL_STATE_TIMEOUT_SECONDS,
+            ),
+            help="Bounded HTTP timeout for external SpecSpace state calls.",
         )
 
     timeweb_render_parser = deploy_subcommands.add_parser(

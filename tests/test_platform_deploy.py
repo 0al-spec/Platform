@@ -1065,6 +1065,92 @@ class PlatformDeployTests(unittest.TestCase):
             ["review_status_execute"],
         )
 
+    def test_timeweb_render_external_state_is_persistent_and_sanitizer_compatible(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-external-state",
+                "--hosted-managed-executor-url",
+                "https://managed.specgraph.tech",
+                "--external-state-url",
+                "https://managed.specgraph.tech/specspace-state",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-external-state",
+                "--hosted-managed-executor-url",
+                "https://managed.specgraph.tech",
+                "--external-state-url",
+                "https://managed.specgraph.tech/specspace-state",
+                "--format",
+                "json",
+            )
+            compose = (output_dir / "docker-compose.yml").read_text(encoding="utf-8")
+            manifest = json.loads(
+                (output_dir / "platform-timeweb-deploy.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 0, validate.stderr)
+        self.assertNotIn("\nvolumes:", compose)
+        self.assertNotIn("\nsecrets:", compose)
+        self.assertNotIn("--hosted-managed-executor-token-file", compose)
+        self.assertNotIn("--external-state-token-file", compose)
+        self.assertIn(
+            'SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: '
+            '"${SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN}"',
+            compose,
+        )
+        self.assertIn(
+            'SPECSPACE_EXTERNAL_STATE_TOKEN: "${SPECSPACE_EXTERNAL_STATE_TOKEN}"',
+            compose,
+        )
+        self.assertIn(
+            'SPECSPACE_EXTERNAL_STATE_URL: '
+            '"https://managed.specgraph.tech/specspace-state"',
+            compose,
+        )
+        self.assertIn(
+            'SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "persistent"',
+            compose,
+        )
+        self.assertIn(
+            'SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "review_status_execute"',
+            compose,
+        )
+        self.assertIn("--enable-external-state", compose)
+        self.assertIn("/tmp/specspace-external-state-cache", compose)
+        self.assertEqual(
+            manifest["hosted_managed_execution_profile"],
+            "timeweb_external_state",
+        )
+        self.assertEqual(manifest["hosted_managed_state_durability"], "persistent")
+        self.assertEqual(manifest["specspace_state_profile"], "external_postgresql")
+        self.assertTrue(manifest["specspace_external_state_enabled"])
+        self.assertEqual(
+            manifest["specspace_external_state_url"],
+            "https://managed.specgraph.tech/specspace-state",
+        )
+        self.assertEqual(
+            manifest["hosted_managed_operation_allowlist"],
+            ["review_status_execute"],
+        )
+
     def test_timeweb_bounded_canary_rejects_forbidden_volume(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"
@@ -1201,6 +1287,26 @@ class PlatformDeployTests(unittest.TestCase):
                 UI_IMAGE,
                 "--enable-hosted-managed-execution",
                 "--enable-hosted-managed-bounded-canary",
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("mutually exclusive", result.stderr)
+
+    def test_timeweb_rejects_bounded_and_external_state_profiles_together(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(Path(root) / "timeweb"),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-bounded-canary",
+                "--enable-hosted-managed-external-state",
             )
 
         self.assertEqual(result.returncode, 2)
@@ -1373,16 +1479,28 @@ class PlatformDeployTests(unittest.TestCase):
         )
         self.assertIn("hosted_managed_execution_enabled:", workflow)
         self.assertIn("hosted_managed_bounded_canary_enabled:", workflow)
+        self.assertIn("hosted_managed_external_state_enabled:", workflow)
+        self.assertIn("external_state_url:", workflow)
         self.assertIn("TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED", workflow)
         self.assertIn(
             "TIMEWEB_REQUIRED_HOSTED_MANAGED_BOUNDED_CANARY_ENABLED",
             workflow,
         )
+        self.assertIn(
+            "TIMEWEB_REQUIRED_HOSTED_MANAGED_EXTERNAL_STATE_ENABLED",
+            workflow,
+        )
+        self.assertIn("TIMEWEB_REQUIRED_EXTERNAL_STATE_URL", workflow)
         self.assertIn("TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED", publish_script)
         self.assertIn(
             "TIMEWEB_REQUIRED_HOSTED_MANAGED_BOUNDED_CANARY_ENABLED",
             publish_script,
         )
+        self.assertIn(
+            "TIMEWEB_REQUIRED_HOSTED_MANAGED_EXTERNAL_STATE_ENABLED",
+            publish_script,
+        )
+        self.assertIn("TIMEWEB_REQUIRED_EXTERNAL_STATE_URL", publish_script)
 
     def test_timeweb_render_rejects_mutable_image_ref(self) -> None:
         with tempfile.TemporaryDirectory() as root:
