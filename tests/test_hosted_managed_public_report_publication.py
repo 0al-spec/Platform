@@ -473,6 +473,33 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
                     source_report_path=source.resolve(),
                 )
 
+    def test_review_status_requires_positive_pinned_operation_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "status.json"
+            window = root / "window.json"
+            write_json(source, self.review_status())
+
+            for value in (False, None):
+                payload = self.worker_window(sha256(source))
+                if value is None:
+                    payload["authority_boundary"].pop(
+                        "executes_one_pinned_allowlisted_operation"
+                    )
+                else:
+                    payload["authority_boundary"][
+                        "executes_one_pinned_allowlisted_operation"
+                    ] = value
+                write_json(window, payload)
+                with self.assertRaisesRegex(
+                    publication.PublicationError,
+                    "does not pin",
+                ):
+                    publication.build_review_status_report(
+                        worker_window_path=window.resolve(),
+                        source_report_path=source.resolve(),
+                    )
+
     def test_review_status_preserves_probe_without_publication_authority(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

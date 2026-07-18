@@ -546,6 +546,7 @@ def _validate_worker_window(
             "includes_local_paths": False,
         }
         or authority.get("platform_output_reports_are_authoritative") is not True
+        or authority.get("executes_one_pinned_allowlisted_operation") is not True
         or not _strict_false_boundary(
             authority,
             required=(
