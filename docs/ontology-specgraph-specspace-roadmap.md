@@ -370,6 +370,13 @@ Operational measurements inside item 4 do not expand production authority.
      Measure the next production publications to confirm the transfer-time
      effect; producer-side timestamp churn remains a separate follow-up and
      manifest digest verification must not be weakened;
+   - migrate public SpecGraph artifacts from the current FTP/FTPS/SFTP origin
+     to S3-compatible object storage with HTTPS/CDN delivery. Keep hosted
+     Platform private reports and execution state outside the public origin.
+     Require dual publication, manifest-path and SHA-256 parity, SpecSpace
+     production smoke against the candidate origin, bounded retention,
+     least-privileged write credentials, documented rollback, and an explicit
+     DNS/artifact-base cutover decision before removing the legacy transfer;
    - bounded concurrent Product Workspace artifact loading is implemented in
      SpecSpace PR `#400`. Measure production projection latency after rollout
      and treat the provider limits as resource bounds, not permission to fetch
