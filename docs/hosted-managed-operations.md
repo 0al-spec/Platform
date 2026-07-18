@@ -885,7 +885,10 @@ The projection removes commands, command results, local paths, raw request
 payloads, secret values, and arbitrary diagnostic text. Review-status
 publication additionally requires one completed bounded worker window,
 `attempt=1`, a drained queue, a SHA-256-pinned authoritative report, and
-`review_probe_only=false`. Both report kinds are pinned to
+an explicit `review_probe_only` marker. A probe-only report is published only
+as diagnostic review evidence: it may move the workspace to
+`waiting_for_review_merge`, but it can never authorize read-model publication,
+including after the probed PR is merged. Both report kinds are pinned to
 `graph-candidate/hosted-operation-canary`; a similarly named foreign candidate
 branch is rejected.
 

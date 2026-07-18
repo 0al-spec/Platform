@@ -425,6 +425,25 @@ Operational measurements inside item 4 do not expand production authority.
    remote alias, remote URL, default branch, expected local HEAD, and expected
    remote HEAD must come from a validated repository/workspace binding rather
    than browser input or untrusted `.git/config`.
+9. **Git forge portability and GitHub dependency reduction.** Deferred behind
+   production operational hardening and S3-compatible artifact publication.
+   GitHub remains the canonical public forge, review surface, Actions provider,
+   and OCI registry for the current Open Source deployment.
+   - **P2: provider-neutral contracts.** Remove hardcoded GitHub assumptions
+     from core review and publication contracts without changing the deployed
+     forge. Introduce an explicit review-provider identity, portable review/head/
+     merge refs, repository mirror and disaster-recovery procedures, and a
+     publication adapter that does not require GitHub `workflow_dispatch`.
+     Preserve GitHub as the active provider while proving dual-provider fixtures
+     and fail-closed behavior for unknown providers.
+   - **P3: self-hosted forge evaluation.** Run a disposable Forgejo evaluation
+     with one mirrored test repository, Pull Request lifecycle, an isolated
+     runner, OCI image publication, backup/restore, and measured operator cost.
+     Do not colocate an untrusted CI runner with Platform databases or secrets.
+     A canonical repository migration requires a separate decision after mirror
+     parity, recovery evidence, contributor-impact review, and rollback are
+     demonstrated. GitHub should remain available as a public mirror unless a
+     later decision explicitly removes it.
 
 ## Near-Term Cross-Repo Release Order
 
