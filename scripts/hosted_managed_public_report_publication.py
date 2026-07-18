@@ -177,10 +177,16 @@ def _public_workspace_binding(value: Any, *, workspace_id: str) -> dict[str, str
     binding = _record(value)
     authority = _record(binding.get("authority_boundary"))
     binding_id = f"product-workspace-binding://{workspace_id}"
+    binding_revision = _text(binding.get("binding_revision_sha256"))
+    source_digest = _text(binding.get("source_sha256"))
     if (
         binding.get("status") != "ready"
         or binding.get("workspace_id") != workspace_id
         or binding.get("binding_id") != binding_id
+        or binding_revision is None
+        or SHA256_RE.fullmatch(binding_revision) is None
+        or source_digest is None
+        or SHA256_RE.fullmatch(source_digest) is None
         or authority.get("report_only") is not True
         or not _strict_false_boundary(
             authority,
@@ -409,10 +415,26 @@ def build_review_object_report(
     ):
         raise PublicationError("review object evidence is not public-publication ready")
     workspace_id, candidate_id, candidate_branch = evidence_identity
-    workspace_binding = _public_workspace_binding(
+    evidence_binding = _public_workspace_binding(
         evidence.get("workspace_binding"),
         workspace_id=workspace_id,
     )
+    workspace_binding = _public_workspace_binding(
+        execution.get("workspace_binding"),
+        workspace_id=workspace_id,
+    )
+    evidence_binding_source = _record(evidence.get("workspace_binding"))
+    execution_binding_source = _record(execution.get("workspace_binding"))
+    if (
+        evidence_binding != workspace_binding
+        or evidence_binding_source.get("binding_revision_sha256")
+        != execution_binding_source.get("binding_revision_sha256")
+        or evidence_binding_source.get("source_sha256")
+        != execution_binding_source.get("source_sha256")
+    ):
+        raise PublicationError(
+            "review object workspace binding does not match promotion execution"
+        )
     report = {
         "schema_version": 1,
         "artifact_kind": REVIEW_OBJECT_KIND,
