@@ -368,16 +368,40 @@ def run_smoke() -> dict[str, Any]:
                 path="/specspace-state/v1/health",
             )
             state_write = _write_state_record(ingress_port)
-            mirror_path = (
-                Path(temp_dir)
-                / "state"
-                / STATE_WORKSPACE_ID
-                / STATE_RECORD_KEY
+            _run(
+                [
+                    *compose,
+                    "exec",
+                    "--no-TTY",
+                    "managed-operation-service",
+                    "test",
+                    "-f",
+                    (
+                        "/data/specspace-state/"
+                        f"{STATE_WORKSPACE_ID}/{STATE_RECORD_KEY}"
+                    ),
+                ],
+                environment=environment,
             )
-            if not mirror_path.is_file():
-                raise RuntimeError(
-                    "SpecSpace state service did not materialize its private mirror"
-                )
+            _run(
+                [
+                    *compose,
+                    "exec",
+                    "--no-TTY",
+                    "specspace-state-service",
+                    "python3",
+                    "-c",
+                    (
+                        "from pathlib import Path;"
+                        "p=Path('/data/specspace-state/"
+                        f"{STATE_WORKSPACE_ID}/{STATE_RECORD_KEY}');"
+                        "assert p.is_file();"
+                        "p.chmod(0o666);"
+                        "p.parent.chmod(0o777)"
+                    ),
+                ],
+                environment=environment,
+            )
             worker_health = json.loads(
                 _run(
                     [
@@ -417,6 +441,26 @@ def run_smoke() -> dict[str, Any]:
                     ],
                     environment=environment,
                 )
+            )
+            _run(
+                [
+                    *maintenance,
+                    "run",
+                    "--rm",
+                    "--no-deps",
+                    "managed-operation-maintenance",
+                    "python3",
+                    "-c",
+                    (
+                        "from pathlib import Path;"
+                        "r=Path('/backups/compose-smoke');"
+                        "assert (r/'specspace-state.json').is_file();"
+                        "[(p.chmod(0o777) if p.is_dir() else p.chmod(0o666)) "
+                        "for p in r.rglob('*')];"
+                        "r.chmod(0o777)"
+                    ),
+                ],
+                environment=environment,
             )
             restore_report = json.loads(
                 _run(
