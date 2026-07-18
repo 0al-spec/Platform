@@ -20796,6 +20796,10 @@ def validate_timeweb_manifest_tree(
         r"(?m)^[ \t]*volumes:", text
     ):
         errors.append(f"{target_file} must not declare volumes")
+    if not hosted_managed_runtime.enabled and re.search(
+        r"(?m)^[ \t]*secrets:", text
+    ):
+        errors.append(f"{target_file} must not declare secrets")
     if re.search(r"\$\{[^}]*\?", text):
         errors.append(f"{target_file} must not use required env interpolation")
     if "/app/deploy/specspace-demo" in text:

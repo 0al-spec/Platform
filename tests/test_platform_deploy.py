@@ -1005,6 +1005,47 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(validate.returncode, 1, validate.stderr)
         self.assertFalse(json.loads(validate.stdout)["valid"])
 
+    def test_timeweb_read_only_rejects_compose_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose_path.write_text(
+                compose_path.read_text(encoding="utf-8").replace(
+                    "    expose:\n      - \"8001\"\n",
+                    "    secrets:\n"
+                    "      - stale-secret\n"
+                    "    expose:\n"
+                    "      - \"8001\"\n",
+                )
+                + "\nsecrets:\n  stale-secret:\n    file: /tmp/stale-secret\n",
+                encoding="utf-8",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 1, validate.stderr)
+        self.assertIn(
+            "docker-compose.yml must not declare secrets",
+            json.loads(validate.stdout)["errors"],
+        )
+
     def test_timeweb_render_bounded_canary_is_sanitizer_compatible(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"
