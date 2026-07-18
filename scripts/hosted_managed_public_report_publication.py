@@ -556,7 +556,10 @@ def _validate_worker_window(
                 "retries_irreversible_operations",
                 "queue_status_is_lifecycle_evidence",
             ),
-            allowed_true=("platform_output_reports_are_authoritative",),
+            allowed_true=(
+                "executes_one_pinned_allowlisted_operation",
+                "platform_output_reports_are_authoritative",
+            ),
         )
     ):
         raise PublicationError("bounded worker window does not pin one ready review report")
@@ -581,15 +584,20 @@ def build_review_status_report(
         pull_request.get("number"),
     )
     review_state = _text(source.get("review_state"))
+    review_probe_only = source.get("review_probe_only")
     expected_pull_request_state = {
         "open": "OPEN",
         "closed": "CLOSED",
         "merged": "MERGED",
     }.get(review_state)
     expected_summary_status = (
-        "ready_for_read_model_publication"
-        if review_state == "merged"
-        else "waiting_for_review_merge"
+        "review_probe_completed"
+        if review_probe_only is True
+        else (
+            "ready_for_read_model_publication"
+            if review_state == "merged"
+            else "waiting_for_review_merge"
+        )
     )
     review_merged = review_state == "merged"
     if (
@@ -598,7 +606,7 @@ def build_review_status_report(
         or source.get("ok") is not True
         or source.get("workflow_lane") != "product_idea_to_spec"
         or expected_pull_request_state is None
-        or source.get("review_probe_only") is not False
+        or not isinstance(review_probe_only, bool)
         or pull_request.get("headRefName") != candidate_branch
         or pull_request.get("state") != expected_pull_request_state
         or _text(graph_review.get("review_url")) != review_url
@@ -637,7 +645,7 @@ def build_review_status_report(
             "runs/product_candidate_promotion_execution_report.json"
         ),
         "review_object_evidence_ref": REVIEW_OBJECT_REF,
-        "review_probe_only": False,
+        "review_probe_only": review_probe_only,
         "review_state": review_state,
         "review_decision": _text(source.get("review_decision")) or "",
         "pull_request": pull_request,

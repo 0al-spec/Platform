@@ -204,6 +204,7 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
             },
             "authority_boundary": {
                 "platform_output_reports_are_authoritative": True,
+                "executes_one_pinned_allowlisted_operation": True,
                 "accepts_arbitrary_commands": False,
                 "expands_operation_allowlist": False,
                 "executes_unpinned_requests": False,
@@ -471,6 +472,28 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
                     worker_window_path=window.resolve(),
                     source_report_path=source.resolve(),
                 )
+
+    def test_review_status_preserves_probe_without_publication_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "status.json"
+            window = root / "window.json"
+            payload = self.review_status()
+            payload["review_probe_only"] = True
+            payload["summary"]["status"] = "review_probe_completed"
+            write_json(source, payload)
+            write_json(window, self.worker_window(sha256(source)))
+
+            report, _provenance = publication.build_review_status_report(
+                worker_window_path=window.resolve(),
+                source_report_path=source.resolve(),
+            )
+
+        self.assertTrue(report["review_probe_only"])
+        self.assertEqual(report["review_state"], "open")
+        self.assertEqual(report["summary"]["status"], "review_probe_completed")
+        self.assertFalse(report["summary"]["review_merged"])
+        self.assertFalse(report["summary"]["read_model_published"])
 
     def test_review_status_rejects_probe_foreign_branch_and_state_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
