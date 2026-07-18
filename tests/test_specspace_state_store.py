@@ -234,6 +234,77 @@ class SpecSpaceStateServiceTests(unittest.TestCase):
             },
         )
 
+    def test_health_uses_cached_mirror_summary_without_waiting_for_mutation_lock(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            list_record_calls = 0
+
+            class CountingSQLiteStore(store_module.SQLiteSpecSpaceStateStore):
+                def list_records(
+                    self,
+                    *,
+                    workspace_id: str | None = None,
+                    include_deleted: bool = False,
+                ) -> list[dict]:
+                    nonlocal list_record_calls
+                    list_record_calls += 1
+                    return super().list_records(
+                        workspace_id=workspace_id,
+                        include_deleted=include_deleted,
+                    )
+
+            database = root / "state.sqlite3"
+            service = service_module.SpecSpaceStateService(
+                store_factory=lambda: CountingSQLiteStore(database),
+                adapter="sqlite",
+                mirror_root=root / "mirror",
+                now_iso=lambda: "2026-07-18T00:00:00Z",
+            )
+            startup_list_record_calls = list_record_calls
+            health_result: list[dict] = []
+            with service._mirror_lock:
+                thread = threading.Thread(
+                    target=lambda: health_result.append(service.health()),
+                    daemon=True,
+                )
+                thread.start()
+                thread.join(timeout=2)
+                health_completed_while_mutation_lock_held = not thread.is_alive()
+            thread.join(timeout=2)
+
+        self.assertEqual(startup_list_record_calls, 1)
+        self.assertEqual(list_record_calls, startup_list_record_calls)
+        self.assertTrue(health_completed_while_mutation_lock_held)
+        self.assertTrue(health_result[0]["ok"])
+        self.assertEqual(health_result[0]["mirror_record_count"], 0)
+
+    def test_materialization_failure_marks_cached_mirror_unready(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            service = self.build_service(root)
+
+            def fail_materialization(_record: dict) -> None:
+                raise RuntimeError("materialization failed")
+
+            service._materialize = fail_materialization
+            with self.assertRaisesRegex(RuntimeError, "materialization failed"):
+                service.mutate(
+                    {
+                        "workspace_id": WORKSPACE_ID,
+                        "record_key": RECORD_KEY,
+                        "expected_revision": 0,
+                        "idempotency_key": "state-write:workspace-a:failure-0001",
+                        "lifecycle_state": "active",
+                        "content": mutation().content,
+                    }
+                )
+            health = service.health()
+
+        self.assertFalse(health["ok"])
+        self.assertFalse(health["mirror_ready"])
+
     def test_http_service_persists_private_record_and_materializes_scoped_mirror(
         self,
     ) -> None:
@@ -276,19 +347,43 @@ class SpecSpaceStateServiceTests(unittest.TestCase):
                     "/v1/health",
                     authorized=False,
                 )
+                mirror = root / "mirror" / WORKSPACE_ID / RECORD_KEY
+                mirror_payload = json.loads(mirror.read_text(encoding="utf-8"))
+                deleted = self.request(
+                    base_url,
+                    "/v1/specspace-state/record",
+                    method="DELETE",
+                    payload={
+                        "workspace_id": WORKSPACE_ID,
+                        "record_key": RECORD_KEY,
+                        "expected_revision": 1,
+                        "idempotency_key": "state-delete:workspace-a:http-0001",
+                    },
+                )
+                deleted_health = self.request(
+                    base_url,
+                    "/v1/health",
+                    authorized=False,
+                )
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
                 server.server_close()
 
             mirror = root / "mirror" / WORKSPACE_ID / RECORD_KEY
-            mirror_payload = json.loads(mirror.read_text(encoding="utf-8"))
+            mirror_exists_after_delete = mirror.exists()
 
         self.assertTrue(report["ok"])
         self.assertEqual(report["record"]["revision"], 1)
         self.assertEqual(record["record"]["content"], mutation().content)
         self.assertEqual(mirror_payload, mutation().content)
         self.assertTrue(health["ok"])
+        self.assertEqual(health["mirror_record_count"], 1)
+        self.assertTrue(deleted["ok"])
+        self.assertEqual(deleted["record"]["revision"], 2)
+        self.assertTrue(deleted_health["ok"])
+        self.assertEqual(deleted_health["mirror_record_count"], 0)
+        self.assertFalse(mirror_exists_after_delete)
         self.assertNotIn("raw_idea", json.dumps(health))
 
     def test_http_service_requires_auth_and_reports_cas_conflict_without_content(
