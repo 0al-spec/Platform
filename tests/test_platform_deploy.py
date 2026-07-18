@@ -1081,11 +1081,7 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertNotIn("\nvolumes:", compose)
         self.assertNotIn("\nsecrets:", compose)
         self.assertNotIn("--hosted-managed-executor-token-file", compose)
-        self.assertIn(
-            'SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: '
-            '"${SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN}"',
-            compose,
-        )
+        self.assertNotIn("SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN", compose)
         self.assertIn(
             'SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "ephemeral"',
             compose,
@@ -1104,6 +1100,10 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(
             manifest["hosted_managed_operation_allowlist"],
             ["review_status_execute"],
+        )
+        self.assertEqual(
+            manifest["required_runtime_environment_variables"],
+            ["SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN"],
         )
 
     def test_timeweb_render_external_state_is_persistent_and_sanitizer_compatible(
@@ -1152,15 +1152,8 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertNotIn("\nsecrets:", compose)
         self.assertNotIn("--hosted-managed-executor-token-file", compose)
         self.assertNotIn("--external-state-token-file", compose)
-        self.assertIn(
-            'SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: '
-            '"${SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN}"',
-            compose,
-        )
-        self.assertIn(
-            'SPECSPACE_EXTERNAL_STATE_TOKEN: "${SPECSPACE_EXTERNAL_STATE_TOKEN}"',
-            compose,
-        )
+        self.assertNotIn("SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN", compose)
+        self.assertNotIn("SPECSPACE_EXTERNAL_STATE_TOKEN", compose)
         self.assertIn(
             'SPECSPACE_EXTERNAL_STATE_URL: '
             '"https://managed.specgraph.tech/specspace-state"',
@@ -1190,6 +1183,64 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(
             manifest["hosted_managed_operation_allowlist"],
             ["review_status_execute"],
+        )
+        self.assertEqual(
+            manifest["required_runtime_environment_variables"],
+            [
+                "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN",
+                "SPECSPACE_EXTERNAL_STATE_TOKEN",
+            ],
+        )
+
+    def test_timeweb_external_state_rejects_compose_secret_interpolation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-external-state",
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose_path.write_text(
+                compose_path.read_text(encoding="utf-8").replace(
+                    '      SPECSPACE_EXTERNAL_STATE_ENABLED: "true"\n',
+                    '      SPECSPACE_EXTERNAL_STATE_ENABLED: "true"\n'
+                    "      SPECSPACE_EXTERNAL_STATE_TOKEN: "
+                    '"${SPECSPACE_EXTERNAL_STATE_TOKEN}"\n',
+                ),
+                encoding="utf-8",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-external-state",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 1, validate.stderr)
+        errors = json.loads(validate.stdout)["errors"]
+        self.assertIn(
+            "docker-compose.yml Timeweb hosted profile must receive "
+            "SPECSPACE_EXTERNAL_STATE_TOKEN from the App Platform runtime and "
+            "must not declare it in Compose",
+            errors,
+        )
+        self.assertIn(
+            "docker-compose.yml Timeweb hosted profile must not interpolate "
+            "SPECSPACE_EXTERNAL_STATE_TOKEN through Compose",
+            errors,
         )
 
     def test_timeweb_bounded_canary_rejects_forbidden_volume(self) -> None:

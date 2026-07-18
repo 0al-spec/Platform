@@ -905,7 +905,11 @@ SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN
 SPECSPACE_EXTERNAL_STATE_TOKEN
 ```
 
-The rendered manifest references those names but never contains either value.
+Both global variables must also be attached to the SpecSpace application.
+Timeweb injects them into the running container; the rendered Compose file must
+not declare or interpolate either variable because Compose expansion happens
+before App runtime-variable injection. The generated deployment metadata lists
+the required variable names without containing either value.
 It sets persistent hosted durability, uses `/tmp/specspace-external-state-cache`
 only for private materialization, and keeps the SpecSpace client allowlist at
 `review_status_execute`. Platform's worker remains stopped except during a

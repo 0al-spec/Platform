@@ -73,9 +73,9 @@ TIMEWEB_HOSTED_MANAGED_STATE_DIR = "/data/specspace-hosted-managed-state"
 TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET = "specspace-hosted-managed-executor-token"
 TIMEWEB_BOUNDED_CANARY_STATE_DIR = "/tmp/specspace-hosted-managed-state"
 TIMEWEB_BOUNDED_CANARY_OPERATION_ID = "review_status_execute"
-TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE = "${SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN}"
+TIMEWEB_HOSTED_MANAGED_TOKEN_ENV = "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN"
 TIMEWEB_EXTERNAL_STATE_CACHE_DIR = "/tmp/specspace-external-state-cache"
-TIMEWEB_EXTERNAL_STATE_TOKEN_REFERENCE = "${SPECSPACE_EXTERNAL_STATE_TOKEN}"
+TIMEWEB_EXTERNAL_STATE_TOKEN_ENV = "SPECSPACE_EXTERNAL_STATE_TOKEN"
 DEFAULT_PRODUCT_WORKSPACE_ID = "team-decision-log"
 DEFAULT_DEPLOYED_PRODUCT_WORKSPACE_IDS = (
     DEFAULT_PRODUCT_WORKSPACE_ID,
@@ -20296,28 +20296,35 @@ def render_timeweb_hosted_managed_environment(
     )
     if runtime.profile == "timeweb_bounded_canary":
         environment += (
-            "      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: "
-            f'"{TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE}"\n'
             '      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "ephemeral"\n'
             "      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "
             f'"{TIMEWEB_BOUNDED_CANARY_OPERATION_ID}"\n'
         )
     elif runtime.profile == "timeweb_external_state":
         environment += (
-            "      SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: "
-            f'"{TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE}"\n'
             '      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "persistent"\n'
             "      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "
             f'"{TIMEWEB_BOUNDED_CANARY_OPERATION_ID}"\n'
             '      SPECSPACE_EXTERNAL_STATE_ENABLED: "true"\n'
             f'      SPECSPACE_EXTERNAL_STATE_URL: "{runtime.external_state_url}"\n'
-            "      SPECSPACE_EXTERNAL_STATE_TOKEN: "
-            f'"{TIMEWEB_EXTERNAL_STATE_TOKEN_REFERENCE}"\n'
             "      SPECSPACE_EXTERNAL_STATE_TIMEOUT_SECONDS: "
             f'"{runtime.external_state_timeout_seconds}"\n'
             f'      SPECSPACE_STATE_DIR: "{TIMEWEB_EXTERNAL_STATE_CACHE_DIR}"\n'
         )
     return environment
+
+
+def timeweb_required_runtime_environment_variables(
+    runtime: TimewebHostedManagedRuntime,
+) -> list[str]:
+    if runtime.profile == "timeweb_external_state":
+        return [
+            TIMEWEB_HOSTED_MANAGED_TOKEN_ENV,
+            TIMEWEB_EXTERNAL_STATE_TOKEN_ENV,
+        ]
+    if runtime.profile in {"timeweb_bounded_canary", "durable"}:
+        return [TIMEWEB_HOSTED_MANAGED_TOKEN_ENV]
+    return []
 
 
 def render_timeweb_hosted_managed_command(
@@ -20467,6 +20474,9 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         "%Y-%m-%dT%H:%M:%SZ"
     )
     release_commit = args.release_commit or "unknown"
+    required_runtime_environment_variables = (
+        timeweb_required_runtime_environment_variables(hosted_managed_runtime)
+    )
     specspace_state_profile = (
         "ephemeral_canary"
         if hosted_managed_runtime.profile == "timeweb_bounded_canary"
@@ -20517,6 +20527,8 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         f"`{specspace_state_profile}`\n"
         f"- Hosted managed executor: "
         f"`{hosted_managed_runtime.executor_url if hosted_managed_runtime.enabled else '(not used)'}`\n"
+        f"- Required Timeweb runtime variables: "
+        f"`{json.dumps(required_runtime_environment_variables)}`\n"
         f"- Hyperprompt scratch workspace: "
         f"`{hyperprompt_runtime.work_dir if hyperprompt_runtime.http_compile_enabled else '(not used)'}`\n\n"
         "## Notes\n\n"
@@ -20587,6 +20599,9 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                 ),
                 "hosted_managed_executor_timeout_seconds": (
                     hosted_managed_runtime.timeout_seconds
+                ),
+                "required_runtime_environment_variables": (
+                    required_runtime_environment_variables
                 ),
                 "specpm_registry_url": args.specpm_registry_url,
             },
@@ -20920,9 +20935,6 @@ def validate_timeweb_manifest_tree(
         if hosted_managed_runtime.profile == "timeweb_bounded_canary":
             expected_environment.update(
                 {
-                    "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN": (
-                        TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE
-                    ),
                     "SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY": "ephemeral",
                     "SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST": (
                         TIMEWEB_BOUNDED_CANARY_OPERATION_ID
@@ -20941,9 +20953,6 @@ def validate_timeweb_manifest_tree(
         elif hosted_managed_runtime.profile == "timeweb_external_state":
             expected_environment.update(
                 {
-                    "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN": (
-                        TIMEWEB_BOUNDED_CANARY_TOKEN_REFERENCE
-                    ),
                     "SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY": "persistent",
                     "SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST": (
                         TIMEWEB_BOUNDED_CANARY_OPERATION_ID
@@ -20951,9 +20960,6 @@ def validate_timeweb_manifest_tree(
                     "SPECSPACE_EXTERNAL_STATE_ENABLED": "true",
                     "SPECSPACE_EXTERNAL_STATE_URL": (
                         hosted_managed_runtime.external_state_url
-                    ),
-                    "SPECSPACE_EXTERNAL_STATE_TOKEN": (
-                        TIMEWEB_EXTERNAL_STATE_TOKEN_REFERENCE
                     ),
                     "SPECSPACE_EXTERNAL_STATE_TIMEOUT_SECONDS": (
                         hosted_managed_runtime.external_state_timeout_seconds
@@ -21017,6 +21023,20 @@ def validate_timeweb_manifest_tree(
             "timeweb_bounded_canary",
             "timeweb_external_state",
         }:
+            for variable_name in timeweb_required_runtime_environment_variables(
+                hosted_managed_runtime
+            ):
+                if variable_name in api_environment:
+                    errors.append(
+                        f"{target_file} Timeweb hosted profile must receive "
+                        f"{variable_name} from the App Platform runtime and must "
+                        "not declare it in Compose"
+                    )
+                if f"${{{variable_name}}}" in text:
+                    errors.append(
+                        f"{target_file} Timeweb hosted profile must not interpolate "
+                        f"{variable_name} through Compose"
+                    )
             if "--hosted-managed-executor-token-file" in api_command:
                 errors.append(
                     f"{target_file} Timeweb hosted profile must receive the token from "

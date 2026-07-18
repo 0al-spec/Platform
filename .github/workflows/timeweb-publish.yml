@@ -133,9 +133,6 @@ jobs:
 
       - name: Validate Timeweb Compose config
         working-directory: dist/platform-timeweb-deploy
-        env:
-          SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN: ci-compose-secret-placeholder
-          SPECSPACE_EXTERNAL_STATE_TOKEN: ci-external-state-secret-placeholder
         run: docker compose --file docker-compose.yml config
 
       - name: Upload rendered Timeweb deploy tree
