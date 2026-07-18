@@ -126,6 +126,14 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
         self.assertFalse(report["summary"]["artifact_root_ready"])
         self.assertIn("artifact_root_makefile_missing", report["diagnostics"])
 
+    def test_preflight_requires_a_writable_state_mirror(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.fixture(Path(temp_dir))
+            fixture["state_dir"].chmod(0o550)
+            report = preflight.run_preflight(**fixture)
+        self.assertFalse(report["ok"])
+        self.assertIn("state_dir_owner_write_missing", report["diagnostics"])
+
     def test_preflight_rejects_a_symlinked_specgraph_makefile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -628,8 +636,10 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
             "status": "restore_smoke_passed",
             "database_row_counts_verified": True,
             "state_database_row_counts_verified": True,
+            "state_mirror_record_count_verified": True,
             "artifact_inventory_verified": True,
             "temporary_database_removed": True,
+            "temporary_state_mirror_removed": True,
         }
         reports["queue_audit"]["summary"] = {"rollback_ready": True}
         reports["hosted_specspace_smoke"]["summary"] = {

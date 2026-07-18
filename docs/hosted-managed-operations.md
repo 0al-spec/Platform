@@ -669,10 +669,10 @@ manually reproduce the stop/start sequence. The bounded cycle stops both the
 managed enqueue boundary and the SpecSpace state write boundary before export,
 then restores both services before its final probe. `restore-smoke` creates a
 temporary database in each isolated PostgreSQL service, restores the versioned
-queue and SpecSpace-state exports, compares every table count, verifies every
-archived artifact digest without extracting unsafe paths, and forcibly removes
-both temporary databases. Neither tool has authority to restore over
-production.
+queue and SpecSpace-state exports, rebuilds and digest-verifies a temporary
+worker mirror, compares every table count, verifies every archived artifact
+digest without extracting unsafe paths, and forcibly removes both temporary
+databases and the mirror. Neither tool has authority to restore over production.
 
 #### Encrypted off-host copy
 

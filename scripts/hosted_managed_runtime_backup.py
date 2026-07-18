@@ -9,7 +9,9 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import tarfile
+import tempfile
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -228,6 +230,27 @@ def _initialize_state_schema(database_url: str) -> None:
         import specspace_state_postgres as state_postgres
     store = state_postgres.PostgreSQLSpecSpaceStateStore(database_url)
     store.close()
+
+
+def _rebuild_state_mirror(
+    database_url: str,
+    mirror_root: Path,
+) -> dict[str, int]:
+    try:
+        from scripts import specspace_state_postgres as state_postgres
+        from scripts import specspace_state_service as state_service
+    except ImportError:
+        import specspace_state_postgres as state_postgres
+        import specspace_state_service as state_service
+    service = state_service.SpecSpaceStateService(
+        store_factory=lambda: state_postgres.PostgreSQLSpecSpaceStateStore(
+            database_url
+        ),
+        adapter="postgresql",
+        mirror_root=mirror_root,
+        now_iso=lambda: datetime.now(timezone.utc).isoformat(),
+    )
+    return service.mirror_summary
 
 
 def _restore_database_export(database_url: str, export: dict[str, Any]) -> None:
@@ -555,6 +578,9 @@ def restore_smoke(
     )
     created = False
     state_created = False
+    state_mirror_root: Path | None = None
+    state_mirror_record_count = 0
+    state_mirror_removed = False
     try:
         with psycopg.connect(admin_url, autocommit=True) as connection:
             with connection.cursor() as cursor:
@@ -606,6 +632,30 @@ def restore_smoke(
             raise HostedBackupError(
                 "restored SpecSpace state row counts differ from backup"
             )
+        state_mirror_root = Path(
+            tempfile.mkdtemp(prefix="specspace-state-restore-smoke-")
+        )
+        mirror_summary = _rebuild_state_mirror(
+            state_restore_url,
+            state_mirror_root,
+        )
+        expected_mirror_count = sum(
+            1
+            for row in state_database_export["tables"][
+                "specspace_state_records"
+            ]
+            if row["lifecycle_state"] != "deleted"
+        )
+        if (
+            mirror_summary.get("database_record_count")
+            != restored_state_counts["specspace_state_records"]
+            or mirror_summary.get("materialized_record_count")
+            != expected_mirror_count
+        ):
+            raise HostedBackupError(
+                "restored SpecSpace state mirror differs from backup"
+            )
+        state_mirror_record_count = expected_mirror_count
     finally:
         if created:
             with psycopg.connect(admin_url, autocommit=True) as connection:
@@ -623,6 +673,9 @@ def restore_smoke(
                             sql.Identifier(state_restore_database)
                         )
                     )
+        if state_mirror_root is not None:
+            shutil.rmtree(state_mirror_root)
+            state_mirror_removed = not state_mirror_root.exists()
 
     return {
         "artifact_kind": "platform_hosted_managed_runtime_restore_smoke_report",
@@ -634,9 +687,12 @@ def restore_smoke(
             "status": "restore_smoke_passed",
             "database_row_counts_verified": True,
             "state_database_row_counts_verified": True,
+            "state_mirror_record_count_verified": True,
+            "state_mirror_record_count": state_mirror_record_count,
             "artifact_inventory_verified": True,
             "artifact_file_count": len(inventory),
             "temporary_database_removed": True,
+            "temporary_state_mirror_removed": state_mirror_removed,
         },
         "privacy_boundary": {
             "public_safe": True,

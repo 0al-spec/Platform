@@ -175,11 +175,13 @@ workspace-artifacts.tar.gz
 ```
 
 Restore smoke creates one temporary database in each PostgreSQL service,
-restores both versioned exports, verifies row counts and artifact digests, and
-removes both temporary databases. The resulting archive is encrypted before
-off-host export. State export/import remains the migration and inspection
-contract; infrastructure snapshots may supplement but do not replace this
-portable restore evidence.
+restores both versioned exports, rebuilds and digest-verifies a temporary
+worker mirror, verifies row counts and artifact digests, and removes both
+temporary databases and the mirror. The production state service performs the
+same database-to-mirror reconciliation before it starts serving requests. The
+resulting archive is encrypted before off-host export. State export/import
+remains the migration and inspection contract; infrastructure snapshots may
+supplement but do not replace this portable restore evidence.
 
 ## Authority Boundary
 

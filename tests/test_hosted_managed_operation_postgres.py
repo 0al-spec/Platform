@@ -208,6 +208,16 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
         self.assertTrue(
             restore_report["summary"]["state_database_row_counts_verified"]
         )
+        self.assertTrue(
+            restore_report["summary"]["state_mirror_record_count_verified"]
+        )
+        self.assertEqual(
+            restore_report["summary"]["state_mirror_record_count"],
+            1,
+        )
+        self.assertTrue(
+            restore_report["summary"]["temporary_state_mirror_removed"]
+        )
         self.assertTrue(restore_report["summary"]["temporary_database_removed"])
         self.assertTrue(queue_audit_report["ok"])
 

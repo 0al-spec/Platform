@@ -215,8 +215,10 @@ def _restore_smoke_command(
         or summary.get("status") != "restore_smoke_passed"
         or summary.get("database_row_counts_verified") is not True
         or summary.get("state_database_row_counts_verified") is not True
+        or summary.get("state_mirror_record_count_verified") is not True
         or summary.get("artifact_inventory_verified") is not True
         or summary.get("temporary_database_removed") is not True
+        or summary.get("temporary_state_mirror_removed") is not True
     ):
         raise ProductionBackupCycleError("isolated restore smoke is not ready")
     return report

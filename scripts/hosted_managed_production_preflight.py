@@ -222,7 +222,7 @@ def run_preflight(
             path=state_dir,
             expected_uid=runtime_uid,
             expected_gid=runtime_gid,
-            require_owner_write=False,
+            require_owner_write=True,
         )
     )
 
