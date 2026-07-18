@@ -860,6 +860,60 @@ The external state contract must provide:
 - backup, restore, retention, deletion, and migration procedures.
 
 Platform authoritative reports remain the source of execution completion.
+
+### Public-safe hosted report publication
+
+Hosted authoritative reports remain private on the worker artifact root. A
+bounded publication handoff may project exactly one allowlisted report into the
+`hosted-operation-canary` static workspace bundle:
+
+```text
+authoritative report + attempt=1 worker-window receipt
+  -> Platform public-safe publication packet
+  -> authenticated SpecGraph workflow_dispatch
+  -> validated workspace overlay
+  -> checksum-aware incremental static upload
+```
+
+The packet contract is
+`platform.hosted-managed.public-report-publication.v1`. It permits only:
+
+- `runs/product_candidate_promotion_review_object_evidence.json`;
+- `runs/product_candidate_promotion_review_status_report.json`.
+
+The projection removes commands, command results, local paths, raw request
+payloads, secret values, and arbitrary diagnostic text. Review-status
+publication additionally requires one completed bounded worker window,
+`attempt=1`, a drained queue, and a SHA-256-pinned authoritative report.
+
+Build packets on the hosted worker without printing secret values:
+
+```bash
+python3 scripts/hosted_managed_public_report_publication.py review-object \
+  --evidence /srv/0al/specgraph/runs/hosted-operation-canary/product_candidate_promotion_review_object_evidence.json \
+  --execution-report /srv/0al/specgraph/runs/hosted-operation-canary/product_candidate_promotion_execution_report.json \
+  --output /srv/0al/reports/review-object-publication-packet.json
+
+python3 scripts/hosted_managed_public_report_publication.py review-status \
+  --worker-window-report /srv/0al/specgraph/runs/managed-worker-windows/<window>.json \
+  --source-report /srv/0al/specgraph/runs/hosted-operation-canary/product_candidate_promotion_review_status_report.json \
+  --output /srv/0al/reports/review-status-publication-packet.json
+```
+
+Dispatch remains pinned to `0al-spec/SpecGraph`,
+`publish-static-artifacts.yml`, and one packet input:
+
+```bash
+python3 scripts/hosted_managed_public_report_publication.py dispatch \
+  --packet /srv/0al/reports/review-status-publication-packet.json \
+  --github-token-file /srv/0al/secrets/github-token \
+  --output /srv/0al/reports/review-status-publication-dispatch.json
+```
+
+An accepted GitHub dispatch is transport evidence, not publication completion.
+The SpecGraph workflow and the resulting static artifact manifest remain the
+publication evidence. Invalid packets must not overwrite existing workspace
+artifacts.
 External SpecSpace state remains operator-owned intent and UI continuity.
 The adapter/API contract, TLS and authentication, concurrency tests,
 export/migration path, dual-database backup/restore smoke, retention policy, and
