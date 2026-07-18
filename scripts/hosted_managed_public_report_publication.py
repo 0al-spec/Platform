@@ -293,6 +293,13 @@ def _validate_promotion_execution(
     payload: dict[str, Any],
 ) -> tuple[str, str, str]:
     identity = _identity(payload)
+    authority = _record(payload.get("authority_boundary"))
+    exercised_authority = (
+        "controlled_git_service_execution",
+        "creates_candidate_commit",
+        "creates_candidate_worktree_or_branch",
+        "opens_pull_requests",
+    )
     if (
         payload.get("artifact_kind") != PROMOTION_EXECUTION_KIND
         or payload.get("schema_version") != 1
@@ -302,16 +309,20 @@ def _validate_promotion_execution(
         or payload.get("workflow_lane") != "product_idea_to_spec"
     ):
         raise PublicationError("promotion execution report is not ready for review")
-    if not _strict_false_boundary(
-        payload.get("authority_boundary"),
-        required=(
-            "merges_pull_requests",
-            "publishes_read_models",
-            "ontology_package_write",
-            "ontology_term_acceptance",
-            "private_artifact_publication",
-            "specspace_direct_git_write",
-        ),
+    if (
+        not all(authority.get(key) is True for key in exercised_authority)
+        or not _strict_false_boundary(
+            authority,
+            required=(
+                "merges_pull_requests",
+                "publishes_read_models",
+                "ontology_package_write",
+                "ontology_term_acceptance",
+                "private_artifact_publication",
+                "specspace_direct_git_write",
+            ),
+            allowed_true=exercised_authority,
+        )
     ):
         raise PublicationError("promotion execution report expands authority")
     if not path.is_file():

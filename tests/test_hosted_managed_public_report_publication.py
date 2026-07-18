@@ -35,6 +35,10 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
             "candidate_id": publication.WORKSPACE_ID,
             "candidate_branch": "graph-candidate/hosted-operation-canary",
             "authority_boundary": {
+                "controlled_git_service_execution": True,
+                "creates_candidate_commit": True,
+                "creates_candidate_worktree_or_branch": True,
+                "opens_pull_requests": True,
                 "merges_pull_requests": False,
                 "publishes_read_models": False,
                 "ontology_package_write": False,
@@ -256,6 +260,38 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
             write_json(evidence, payload)
 
             with self.assertRaisesRegex(publication.PublicationError, "not public"):
+                publication.build_review_object_report(
+                    evidence_path=evidence.resolve(),
+                    execution_report_path=execution.resolve(),
+                )
+
+    def test_review_object_requires_expected_non_dry_run_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            execution = root / "execution.json"
+            evidence = root / "evidence.json"
+            payload = self.execution_report()
+            payload["authority_boundary"]["opens_pull_requests"] = False
+            write_json(execution, payload)
+            write_json(evidence, self.review_evidence(sha256(execution)))
+
+            with self.assertRaisesRegex(publication.PublicationError, "expands authority"):
+                publication.build_review_object_report(
+                    evidence_path=evidence.resolve(),
+                    execution_report_path=execution.resolve(),
+                )
+
+    def test_review_object_rejects_additional_true_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            execution = root / "execution.json"
+            evidence = root / "evidence.json"
+            payload = self.execution_report()
+            payload["authority_boundary"]["may_publish_private_artifacts"] = True
+            write_json(execution, payload)
+            write_json(evidence, self.review_evidence(sha256(execution)))
+
+            with self.assertRaisesRegex(publication.PublicationError, "expands authority"):
                 publication.build_review_object_report(
                     evidence_path=evidence.resolve(),
                     execution_report_path=execution.resolve(),
