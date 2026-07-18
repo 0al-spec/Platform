@@ -38,7 +38,8 @@ REVIEW_URL_RE = re.compile(
 )
 BRANCH_RE = re.compile(r"^graph-candidate/[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 LOCAL_PATH_RE = re.compile(
-    r"(?:^|[\s\"'])(?:/Users/|/home/|/private/|/tmp/|/var/folders/)"
+    r"(?:^|[\s\"'])(?:/Users/|/home/|/private/|/tmp/|/var/folders/|"
+    r"/srv/|/workspace/|/root/|/etc/0al/|/run/secrets/|/data/)"
 )
 FORBIDDEN_KEY_PARTS = (
     "command",
@@ -640,6 +641,7 @@ def dispatch_packet(
     if len(token) < 20 or any(character.isspace() for character in token):
         raise PublicationError("GitHub token file is invalid")
     encoded_packet = base64.b64encode(_json_bytes(packet)).decode("ascii")
+    dispatched_packet_sha256 = hashlib.sha256(_json_bytes(packet)).hexdigest()
     body = _json_bytes(
         {
             "ref": ref,
@@ -678,7 +680,7 @@ def dispatch_packet(
         "repository": GITHUB_REPOSITORY,
         "workflow": GITHUB_WORKFLOW,
         "ref": ref,
-        "publication_packet_sha256": _file_sha256(packet_path),
+        "publication_packet_sha256": dispatched_packet_sha256,
         "logical_ref": packet.get("logical_ref"),
         "workspace_id": packet.get("workspace_id"),
         "summary": {

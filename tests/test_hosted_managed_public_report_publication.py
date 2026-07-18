@@ -301,6 +301,10 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
             self.assertEqual(captured["body"]["ref"], "main")
             self.assertNotIn("secret-token", json.dumps(dispatch))
             self.assertNotIn("secret-token", json.dumps(captured["body"]))
+            self.assertEqual(
+                dispatch["publication_packet_sha256"],
+                hashlib.sha256(publication._json_bytes(packet)).hexdigest(),
+            )
 
             with self.assertRaisesRegex(publication.PublicationError, "must be main"):
                 publication.dispatch_packet(
@@ -310,7 +314,38 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
                     urlopen=opener,
                 )
 
-            injected = json.loads(packet_path.read_text())
+            injected = json.loads(json.dumps(packet))
+            injected["source_provenance"]["note"] = "/srv/0al/private/report.json"
+            write_json(packet_path, injected)
+            with self.assertRaisesRegex(publication.PublicationError, "local path"):
+                publication.dispatch_packet(
+                    packet_path=packet_path.resolve(),
+                    token_file=token_file.resolve(),
+                    ref="main",
+                    urlopen=opener,
+                )
+
+            packet_path.write_text(
+                json.dumps(packet, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            compact_file_digest = hashlib.sha256(packet_path.read_bytes()).hexdigest()
+            dispatch = publication.dispatch_packet(
+                packet_path=packet_path.resolve(),
+                token_file=token_file.resolve(),
+                ref="main",
+                urlopen=opener,
+            )
+            self.assertNotEqual(
+                dispatch["publication_packet_sha256"],
+                compact_file_digest,
+            )
+            self.assertEqual(
+                dispatch["publication_packet_sha256"],
+                hashlib.sha256(publication._json_bytes(packet)).hexdigest(),
+            )
+
+            injected = json.loads(json.dumps(packet))
             injected["source_provenance"]["github_token"] = "not-a-real-secret"
             write_json(packet_path, injected)
             with self.assertRaisesRegex(
