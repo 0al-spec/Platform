@@ -76,6 +76,11 @@ The health route is public and contains no record content:
 GET /v1/health
 ```
 
+`mirror_record_count` is recalculated from the current workspace-scoped mirror
+under the same lock as state materialization. A database/mirror path-set
+mismatch makes `mirror_ready=false`; the service does not keep reporting the
+startup count after a create or delete.
+
 All state routes require `Authorization: Bearer <token>`:
 
 ```text

@@ -276,19 +276,43 @@ class SpecSpaceStateServiceTests(unittest.TestCase):
                     "/v1/health",
                     authorized=False,
                 )
+                mirror = root / "mirror" / WORKSPACE_ID / RECORD_KEY
+                mirror_payload = json.loads(mirror.read_text(encoding="utf-8"))
+                deleted = self.request(
+                    base_url,
+                    "/v1/specspace-state/record",
+                    method="DELETE",
+                    payload={
+                        "workspace_id": WORKSPACE_ID,
+                        "record_key": RECORD_KEY,
+                        "expected_revision": 1,
+                        "idempotency_key": "state-delete:workspace-a:http-0001",
+                    },
+                )
+                deleted_health = self.request(
+                    base_url,
+                    "/v1/health",
+                    authorized=False,
+                )
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
                 server.server_close()
 
             mirror = root / "mirror" / WORKSPACE_ID / RECORD_KEY
-            mirror_payload = json.loads(mirror.read_text(encoding="utf-8"))
+            mirror_exists_after_delete = mirror.exists()
 
         self.assertTrue(report["ok"])
         self.assertEqual(report["record"]["revision"], 1)
         self.assertEqual(record["record"]["content"], mutation().content)
         self.assertEqual(mirror_payload, mutation().content)
         self.assertTrue(health["ok"])
+        self.assertEqual(health["mirror_record_count"], 1)
+        self.assertTrue(deleted["ok"])
+        self.assertEqual(deleted["record"]["revision"], 2)
+        self.assertTrue(deleted_health["ok"])
+        self.assertEqual(deleted_health["mirror_record_count"], 0)
+        self.assertFalse(mirror_exists_after_delete)
         self.assertNotIn("raw_idea", json.dumps(health))
 
     def test_http_service_requires_auth_and_reports_cas_conflict_without_content(
