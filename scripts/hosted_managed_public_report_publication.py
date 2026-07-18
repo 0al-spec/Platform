@@ -601,6 +601,15 @@ def build_review_status_report(
         )
     )
     review_merged = review_state == "merged"
+    expected_graph_summary_status = (
+        "review_probe_completed"
+        if review_probe_only is True
+        else (
+            "ready_for_read_model_publication"
+            if review_merged
+            else "waiting_for_review_merge"
+        )
+    )
     if (
         source.get("artifact_kind") != REVIEW_STATUS_KIND
         or source.get("schema_version") != 1
@@ -656,7 +665,7 @@ def build_review_status_report(
             "review_state": review_state,
             "review_url": review_url,
             "summary": {
-                "status": _text(graph_summary.get("status")),
+                "status": expected_graph_summary_status,
                 "review_merged": review_merged,
             },
         },

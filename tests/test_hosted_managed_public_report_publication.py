@@ -519,6 +519,10 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
         self.assertTrue(report["review_probe_only"])
         self.assertEqual(report["review_state"], "open")
         self.assertEqual(report["summary"]["status"], "review_probe_completed")
+        self.assertEqual(
+            report["graph_repository_review_status"]["summary"]["status"],
+            "review_probe_completed",
+        )
         self.assertFalse(report["summary"]["review_merged"])
         self.assertFalse(report["summary"]["read_model_published"])
 
