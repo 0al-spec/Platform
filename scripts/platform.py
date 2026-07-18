@@ -20663,8 +20663,11 @@ def command_for_service(blocks: dict[str, list[str]], service_name: str) -> list
     return values
 
 
-def environment_for_service(blocks: dict[str, list[str]], service_name: str) -> dict[str, str]:
-    values: dict[str, str] = {}
+def environment_for_service(
+    blocks: dict[str, list[str]],
+    service_name: str,
+) -> dict[str, str | None]:
+    values: dict[str, str | None] = {}
     in_environment = False
     for line in blocks.get(service_name, []):
         if re.match(r"^    environment:\s*$", line):
@@ -20673,7 +20676,12 @@ def environment_for_service(blocks: dict[str, list[str]], service_name: str) -> 
         if in_environment:
             match = re.match(r"^      ([A-Za-z_][A-Za-z0-9_]*):\s*(.*?)\s*$", line)
             if match:
-                values[match.group(1)] = match.group(2).strip().strip('"').strip("'")
+                raw_value = match.group(2).strip()
+                values[match.group(1)] = (
+                    raw_value.strip('"').strip("'")
+                    if raw_value
+                    else None
+                )
                 continue
             if line.strip() and not line.startswith("      "):
                 break
@@ -21035,7 +21043,7 @@ def validate_timeweb_manifest_tree(
                         f"{variable_name} as a value-less App Platform runtime "
                         "pass-through"
                     )
-                elif api_environment[variable_name]:
+                elif api_environment[variable_name] is not None:
                     errors.append(
                         f"{target_file} Timeweb hosted profile must not assign "
                         f"a Compose value to {variable_name}"

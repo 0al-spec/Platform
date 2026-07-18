@@ -1296,6 +1296,48 @@ class PlatformDeployTests(unittest.TestCase):
             json.loads(validate.stdout)["errors"],
         )
 
+    def test_timeweb_external_state_rejects_empty_secret_assignment(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-external-state",
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            compose_path.write_text(
+                compose_path.read_text(encoding="utf-8").replace(
+                    "      SPECSPACE_EXTERNAL_STATE_TOKEN:\n",
+                    '      SPECSPACE_EXTERNAL_STATE_TOKEN: ""\n',
+                ),
+                encoding="utf-8",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-external-state",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 1, validate.stderr)
+        self.assertIn(
+            "docker-compose.yml Timeweb hosted profile must not assign a "
+            "Compose value to SPECSPACE_EXTERNAL_STATE_TOKEN",
+            json.loads(validate.stdout)["errors"],
+        )
+
     def test_timeweb_bounded_canary_rejects_forbidden_volume(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             output_dir = Path(root) / "timeweb"
