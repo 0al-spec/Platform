@@ -34,6 +34,11 @@ SECRET_FILENAMES = {
     "PLATFORM_MANAGED_OPERATION_TOKEN_FILE": "service-token",
     "PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE": "database-password",
     "PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE": "database-url",
+    "PLATFORM_SPECSPACE_STATE_TOKEN_FILE": "specspace-state-token",
+    "PLATFORM_SPECSPACE_STATE_DB_PASSWORD_FILE": (
+        "specspace-state-database-password"
+    ),
+    "PLATFORM_SPECSPACE_STATE_DATABASE_URL_FILE": "specspace-state-database-url",
     "PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE": "github-token",
     "PLATFORM_MANAGED_OPERATION_TLS_CERTIFICATE_FILE": "tls-certificate.pem",
     "PLATFORM_MANAGED_OPERATION_TLS_PRIVATE_KEY_FILE": "tls-private-key.pem",

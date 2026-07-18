@@ -145,6 +145,7 @@ def _preflight_remote_backup(
         or not isinstance(restore_summary, dict)
         or restore_summary.get("status") != "restore_smoke_passed"
         or restore_summary.get("database_row_counts_verified") is not True
+        or restore_summary.get("state_database_row_counts_verified") is not True
         or restore_summary.get("artifact_inventory_verified") is not True
         or restore_summary.get("temporary_database_removed") is not True
     ):

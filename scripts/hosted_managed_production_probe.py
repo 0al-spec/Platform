@@ -27,6 +27,8 @@ except ModuleNotFoundError:
 
 BASE_SERVICES = {
     "managed-operation-postgres",
+    "specspace-state-postgres",
+    "specspace-state-service",
     "managed-operation-service",
     "managed-operation-ingress",
 }
@@ -131,6 +133,14 @@ def run_probe(
         if fetch_health is not None
         else _load_json_response(health_url, timeout=timeout_seconds)
     )
+    state_health_url = (
+        f"{service_url.rstrip('/')}/specspace-state/v1/health"
+    )
+    state_health = (
+        fetch_health(state_health_url)
+        if fetch_health is not None
+        else _load_json_response(state_health_url, timeout=timeout_seconds)
+    )
     ps_output = _run(
         [
             *compose_prefix,
@@ -173,6 +183,18 @@ def run_probe(
     diagnostics: list[str] = []
     if health.get("ok") is not True or health.get("adapter") != "postgresql":
         diagnostics.append("service_health_not_postgresql_ready")
+    if (
+        state_health.get("artifact_kind")
+        != "platform_specspace_state_service_health"
+        or state_health.get("contract_ref")
+        != "platform.specspace-state.service.v1"
+        or state_health.get("ok") is not True
+        or state_health.get("adapter") != "postgresql"
+        or state_health.get("workspace_scoped") is not True
+        or state_health.get("cas_required") is not True
+        or state_health.get("mirror_ready") is not True
+    ):
+        diagnostics.append("specspace_state_service_not_postgresql_ready")
     enabled = health.get("enabled_operation_ids")
     if enabled != [profile.operation_id]:
         diagnostics.append("service_allowlist_not_operation_profile")
@@ -220,6 +242,14 @@ def run_probe(
             "adapter": health.get("adapter"),
             "enabled_operation_ids": enabled if isinstance(enabled, list) else [],
             "operation_profile": profile.profile_id,
+        },
+        "specspace_state": {
+            "status": state_health.get("status"),
+            "adapter": state_health.get("adapter"),
+            "contract_ref": state_health.get("contract_ref"),
+            "workspace_scoped": state_health.get("workspace_scoped") is True,
+            "cas_required": state_health.get("cas_required") is True,
+            "mirror_ready": state_health.get("mirror_ready") is True,
         },
         "worker": {
             "mode": worker_mode,

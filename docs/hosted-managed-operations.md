@@ -450,22 +450,29 @@ password manager, then provision the runtime copies from a controlling terminal:
 
 ```bash
 sudo deploy/hosted-managed/hosted-managed-secrets.sh provision
+sudo deploy/hosted-managed/hosted-managed-secrets.sh provision-state
 sudo deploy/hosted-managed/hosted-managed-secrets.sh status
 ```
 
 The helper accepts no credential arguments or environment values. It prompts
 with terminal echo disabled, requires independently generated 64-character hex
 database and service credentials plus a fine-grained GitHub token, derives the
-container-internal PostgreSQL URL, and atomically creates the four runtime files.
-It refuses to overwrite an existing credential. `status` verifies file shape,
-ownership, mode, credential independence, and database URL consistency, but
-never prints credential values. Provide a certificate and private key through
-the separate TLS helper described above. The resulting file inventory is:
+container-internal PostgreSQL URL, and atomically creates the four base runtime
+files. `provision-state` adds an independent bearer token, PostgreSQL password,
+and PostgreSQL URL for the external SpecSpace state service. It refuses to
+overwrite an existing credential. `status` verifies file shape, ownership,
+mode, cross-service credential independence, and both database URL contracts,
+but never prints credential values. Provide a certificate and private key
+through the separate TLS helper described above. The resulting file inventory
+is:
 
 ```bash
 export PLATFORM_MANAGED_OPERATION_TOKEN_FILE=/srv/0al/secrets/service-token
 export PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE=/srv/0al/secrets/database-password
 export PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE=/srv/0al/secrets/database-url
+export PLATFORM_SPECSPACE_STATE_TOKEN_FILE=/srv/0al/secrets/specspace-state-token
+export PLATFORM_SPECSPACE_STATE_DB_PASSWORD_FILE=/srv/0al/secrets/specspace-state-database-password
+export PLATFORM_SPECSPACE_STATE_DATABASE_URL_FILE=/srv/0al/secrets/specspace-state-database-url
 export PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE=/srv/0al/secrets/github-token
 export PLATFORM_MANAGED_OPERATION_TLS_CERTIFICATE_FILE=/srv/0al/secrets/tls-certificate.pem
 export PLATFORM_MANAGED_OPERATION_TLS_PRIVATE_KEY_FILE=/srv/0al/secrets/tls-private-key.pem
@@ -484,6 +491,25 @@ cutover. Database credential rotation must update PostgreSQL first, then both
 database secret files, then recreate PostgreSQL, service, and maintenance
 containers plus the worker only when a worker profile is explicitly enabled.
 Never reuse the service bearer token as a GitHub or database token.
+Never reuse the managed-operation token or database role for SpecSpace state.
+
+Existing production hosts use the bounded environment upgrade before the first
+state-service deployment. This step changes only the non-secret env inventory;
+it does not recreate containers, start a worker, or enqueue work:
+
+```bash
+sudo /usr/bin/python3 \
+  scripts/hosted_managed_specspace_state_env_upgrade.py \
+  --image-lock /srv/0al/evidence/hosted-managed-image-lock.json \
+  --env-file /etc/0al/hosted-managed-production.env \
+  --service-url https://managed.specgraph.tech \
+  --confirm \
+  --output /srv/0al/evidence/specspace-state-env-upgrade.json
+```
+
+The command accepts exactly the three new state secret refs and release image
+changes from the validated image lock. Any other inventory/configuration drift
+blocks the upgrade. It is idempotent after a successful run.
 
 Run the fail-closed host preflight as root so ownership checks are meaningful:
 
@@ -549,8 +575,9 @@ model. Initial host bootstrap and database image upgrades remain separate
 procedures. Do not retry after an unverified rollback; inspect the deployment
 report and container state first.
 
-Validate and start the production control plane. The default profile starts
-PostgreSQL, the authenticated service, and TLS ingress. It intentionally does
+Validate and start the production control plane. The default profile starts two
+isolated PostgreSQL services, the authenticated managed-operation service, the
+authenticated SpecSpace state service, and TLS ingress. It intentionally does
 not start an execution worker:
 
 ```bash
@@ -570,9 +597,11 @@ docker compose --project-name platform-managed-production \
 ```
 
 The bounded Compose smoke explicitly enables the `continuous-worker` profile
-and starts the real Caddy, PostgreSQL, service, and worker with a one-day
-self-signed fixture certificate and a temporary local
-registry so even the test image is addressed by digest. It enqueues no managed
+and starts the real Caddy, both PostgreSQL databases, both services, and worker
+with a one-day self-signed fixture certificate and a temporary local
+registry so even the test image is addressed by digest. It writes one temporary
+workspace-scoped state record through the authenticated TLS route and proves a
+dual-database backup/restore smoke. It enqueues no managed
 request and removes containers, registry, and volumes afterward.
 Build `Dockerfile.hosted-managed-ingress` from a digest-pinned Caddy base and
 publish that image by digest. The build removes Caddy's unused low-port file
@@ -587,9 +616,11 @@ ingress PID count or `procReady not received` health output as a blocking
 runtime defect. Recreate the ingress from the validated Compose contract rather
 than increasing `pids.max` or disabling health checks.
 
-The default probe requires the three control-plane services to be healthy, the
-worker to be absent, PostgreSQL as the queue adapter, and exactly
-`review_status_execute` in service health. Use `--worker-mode continuous` only
+The default probe requires the five control-plane services to be healthy, the
+worker to be absent, PostgreSQL for both adapters, a workspace-scoped CAS-ready
+state service at `/specspace-state/v1/health`, and exactly
+`review_status_execute` in managed-operation service health. Use
+`--worker-mode continuous` only
 for a separately approved continuous-worker rollout; that mode additionally
 requires the worker service and a fresh heartbeat. The report is public-safe
 and omits Compose paths and credentials.
@@ -634,11 +665,14 @@ passes or the service state has been diagnosed manually.
 
 The lower-level `hosted_managed_runtime_backup.py backup` and `restore-smoke`
 commands remain available for diagnostics and tests, but operators should not
-manually reproduce the stop/start sequence. `restore-smoke` creates a temporary
-PostgreSQL database, restores the versioned queue export, compares every table
-count, verifies every archived artifact digest without extracting unsafe paths,
-and forcibly removes the temporary database. Neither tool has authority to
-restore over production.
+manually reproduce the stop/start sequence. The bounded cycle stops both the
+managed enqueue boundary and the SpecSpace state write boundary before export,
+then restores both services before its final probe. `restore-smoke` creates a
+temporary database in each isolated PostgreSQL service, restores the versioned
+queue and SpecSpace-state exports, compares every table count, verifies every
+archived artifact digest without extracting unsafe paths, and forcibly removes
+both temporary databases. Neither tool has authority to restore over
+production.
 
 #### Encrypted off-host copy
 

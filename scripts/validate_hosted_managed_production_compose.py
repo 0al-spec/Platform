@@ -39,6 +39,8 @@ ALLOWLIST_ENV = "PLATFORM_MANAGED_OPERATION_ALLOWLIST"
 READ_ONLY_CANARY_OPERATION = "review_status_execute"
 RUNTIME_SERVICES = {
     "managed-operation-postgres",
+    "specspace-state-postgres",
+    "specspace-state-service",
     "managed-operation-service",
     "managed-operation-ingress",
 }
@@ -81,6 +83,12 @@ def _environment(temp_root: Path, *, allowlist: str | None) -> dict[str, str]:
             "postgresql://managed_operations:fixture-password@"
             "managed-operation-postgres:5432/managed_operations"
         ),
+        "specspace-state-token": "fixture-state-token",
+        "specspace-state-db-password": "fixture-state-password",
+        "specspace-state-database-url": (
+            "postgresql://specspace_state:fixture-state-password@"
+            "specspace-state-postgres:5432/specspace_state"
+        ),
         "managed-operation-github-token": "fixture-github-token",
         "managed-operation-tls-certificate": "fixture-certificate",
         "managed-operation-tls-private-key": "fixture-private-key",
@@ -106,6 +114,15 @@ def _environment(temp_root: Path, *, allowlist: str | None) -> dict[str, str]:
             ),
             "PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE": str(
                 secrets_dir / "managed-operation-database-url"
+            ),
+            "PLATFORM_SPECSPACE_STATE_TOKEN_FILE": str(
+                secrets_dir / "specspace-state-token"
+            ),
+            "PLATFORM_SPECSPACE_STATE_DB_PASSWORD_FILE": str(
+                secrets_dir / "specspace-state-db-password"
+            ),
+            "PLATFORM_SPECSPACE_STATE_DATABASE_URL_FILE": str(
+                secrets_dir / "specspace-state-database-url"
             ),
             "PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE": str(
                 secrets_dir / "managed-operation-github-token"
@@ -196,7 +213,7 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
 
     services = payload.get("services")
     if not isinstance(services, dict) or set(services) != RUNTIME_SERVICES:
-        raise RuntimeError("production Compose must contain exactly three runtime services")
+        raise RuntimeError("production Compose runtime service inventory is invalid")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         maintenance_render = subprocess.run(
@@ -299,6 +316,7 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
     _assert_digest_pinned(CONTINUOUS_WORKER_SERVICE, worker)
 
     for service_name in (
+        "specspace-state-service",
         "managed-operation-service",
         "managed-operation-ingress",
     ):
@@ -328,9 +346,15 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
             raise RuntimeError(f"{service_name} state mount must be read-only")
 
     service = services["managed-operation-service"]
+    state_service = services["specspace-state-service"]
     ingress = services["managed-operation-ingress"]
     if service.get("ports"):
         raise RuntimeError("managed service must not publish a host port")
+    if state_service.get("ports"):
+        raise RuntimeError("SpecSpace state service must not publish a host port")
+    state_service_mount = _bind_mount(state_service, "/data/specspace-state")
+    if state_service_mount.get("read_only") is True:
+        raise RuntimeError("SpecSpace state service mirror mount must be writable")
     service_artifacts = _bind_mount(service, "/workspace/SpecGraph")
     worker_artifacts = _bind_mount(worker, "/workspace/SpecGraph")
     if service_artifacts.get("read_only") is not True:
@@ -350,6 +374,14 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
         raise RuntimeError("TLS ingress must run as the unprivileged runtime user")
     if ingress.get("init") is not True:
         raise RuntimeError("TLS ingress must use an init process to reap health checks")
+    caddyfile = (
+        REPO_ROOT / "deploy" / "hosted-managed" / "Caddyfile"
+    ).read_text(encoding="utf-8")
+    if (
+        "handle_path /specspace-state/*" not in caddyfile
+        or "reverse_proxy specspace-state-service:8092" not in caddyfile
+    ):
+        raise RuntimeError("TLS ingress omitted the SpecSpace state route")
     ingress_command = ingress.get("command")
     if ingress_command != [
         "run",

@@ -21,6 +21,77 @@ services:
       timeout: 5s
       retries: 12
 
+  specspace-state-postgres:
+    image: "${PLATFORM_MANAGED_OPERATION_POSTGRES_IMAGE:?set a digest-pinned PostgreSQL image}"
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${PLATFORM_SPECSPACE_STATE_DB:-specspace_state}"
+      POSTGRES_USER: "${PLATFORM_SPECSPACE_STATE_DB_USER:-specspace_state}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/specspace_state_db_password
+    volumes:
+      - specspace-state-postgres:/var/lib/postgresql/data
+    secrets:
+      - specspace_state_db_password
+    networks:
+      - managed-backend
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  specspace-state-service:
+    image: "${PLATFORM_MANAGED_OPERATION_IMAGE:?set a digest-pinned Platform image}"
+    restart: unless-stopped
+    command:
+      - python3
+      - scripts/platform.py
+      - specspace-state
+      - serve
+      - --state-adapter
+      - postgresql
+      - --database-url-file
+      - /run/secrets/specspace_state_database_url
+      - --mirror-root
+      - /data/specspace-state
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8092"
+      - --auth-token-file
+      - /run/secrets/specspace_state_token
+    expose:
+      - "8092"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - "${PLATFORM_MANAGED_OPERATION_STATE_DIR:?set PLATFORM_MANAGED_OPERATION_STATE_DIR}:/data/specspace-state"
+    secrets:
+      - specspace_state_token
+      - specspace_state_database_url
+    networks:
+      - managed-backend
+    depends_on:
+      specspace-state-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8092/v1/health', timeout=3).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   managed-operation-service:
     image: "${PLATFORM_MANAGED_OPERATION_IMAGE:?set a digest-pinned Platform image}"
     restart: unless-stopped
@@ -66,6 +137,8 @@ services:
       - managed-backend
     depends_on:
       managed-operation-postgres:
+        condition: service_healthy
+      specspace-state-service:
         condition: service_healthy
     healthcheck:
       test:
@@ -255,6 +328,8 @@ services:
     depends_on:
       managed-operation-service:
         condition: service_healthy
+      specspace-state-service:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD-SHELL
@@ -286,14 +361,18 @@ services:
       - "${PLATFORM_MANAGED_OPERATION_BACKUP_ROOT:?set PLATFORM_MANAGED_OPERATION_BACKUP_ROOT}:/backups"
     secrets:
       - managed_operation_database_url
+      - specspace_state_database_url
     networks:
       - managed-backend
     depends_on:
       managed-operation-postgres:
         condition: service_healthy
+      specspace-state-postgres:
+        condition: service_healthy
 
 volumes:
   managed-operation-postgres:
+  specspace-state-postgres:
 
 networks:
   managed-backend:
@@ -308,6 +387,12 @@ secrets:
     file: "${PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE:?set PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE}"
   managed_operation_database_url:
     file: "${PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE:?set PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE}"
+  specspace_state_token:
+    file: "${PLATFORM_SPECSPACE_STATE_TOKEN_FILE:?set PLATFORM_SPECSPACE_STATE_TOKEN_FILE}"
+  specspace_state_db_password:
+    file: "${PLATFORM_SPECSPACE_STATE_DB_PASSWORD_FILE:?set PLATFORM_SPECSPACE_STATE_DB_PASSWORD_FILE}"
+  specspace_state_database_url:
+    file: "${PLATFORM_SPECSPACE_STATE_DATABASE_URL_FILE:?set PLATFORM_SPECSPACE_STATE_DATABASE_URL_FILE}"
   managed_operation_github_token:
     file: "${PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE:?set PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE}"
   managed_operation_tls_certificate:

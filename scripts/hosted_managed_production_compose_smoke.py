@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,10 +19,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = REPO_ROOT / "docker-compose.hosted-managed-production.example.yml"
 SERVICES = (
     "managed-operation-postgres",
+    "specspace-state-postgres",
+    "specspace-state-service",
     "managed-operation-service",
     "managed-operation-worker",
     "managed-operation-ingress",
 )
+STATE_TOKEN = "production-compose-smoke-state-token-0123456789abcdef"
+STATE_WORKSPACE_ID = "compose-smoke"
+STATE_RECORD_KEY = "real_idea_entry_requests.json"
 
 
 def _port() -> int:
@@ -70,7 +76,11 @@ def _wait_registry(port: int) -> None:
     raise RuntimeError("temporary image registry did not become ready")
 
 
-def _wait_ingress_health(port: int) -> dict[str, Any]:
+def _wait_ingress_health(
+    port: int,
+    *,
+    path: str = "/v1/health",
+) -> dict[str, Any]:
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
@@ -78,7 +88,7 @@ def _wait_ingress_health(port: int) -> dict[str, Any]:
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(
-                f"https://127.0.0.1:{port}/v1/health",
+                f"https://127.0.0.1:{port}{path}",
                 context=context,
                 timeout=2,
             ) as response:
@@ -88,6 +98,49 @@ def _wait_ingress_health(port: int) -> dict[str, Any]:
         except (OSError, json.JSONDecodeError):
             time.sleep(0.25)
     raise RuntimeError("TLS ingress health did not become reachable on the host")
+
+
+def _write_state_record(port: int) -> dict[str, Any]:
+    content = {
+        "artifact_kind": "specspace_real_idea_entry_requests",
+        "requests": [],
+        "workspace_id": STATE_WORKSPACE_ID,
+    }
+    canonical = json.dumps(
+        content,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    payload = {
+        "workspace_id": STATE_WORKSPACE_ID,
+        "record_key": STATE_RECORD_KEY,
+        "expected_revision": 0,
+        "idempotency_key": "compose-smoke:state-write:0001",
+        "lifecycle_state": "active",
+        "content": content,
+        "content_sha256": hashlib.sha256(canonical).hexdigest(),
+    }
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    request = urllib.request.Request(
+        (
+            f"https://127.0.0.1:{port}/specspace-state/"
+            "v1/specspace-state/record"
+        ),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {STATE_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        method="PUT",
+    )
+    with urllib.request.urlopen(request, context=context, timeout=5) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    if not isinstance(result, dict):
+        raise RuntimeError("SpecSpace state write returned a non-object report")
+    return result
 
 
 def _fixture(
@@ -106,12 +159,19 @@ def _fixture(
     (artifact_root / "Makefile").write_text("test:\n\t@true\n", encoding="utf-8")
 
     password = "production-compose-smoke-password"
+    state_password = "production-compose-smoke-state-password"
     secret_values = {
         "service-token": "production-compose-smoke-token-0123456789abcdef",
         "database-password": password,
         "database-url": (
             "postgresql://managed_operations:"
             f"{password}@managed-operation-postgres:5432/managed_operations"
+        ),
+        "specspace-state-token": STATE_TOKEN,
+        "specspace-state-database-password": state_password,
+        "specspace-state-database-url": (
+            "postgresql://specspace_state:"
+            f"{state_password}@specspace-state-postgres:5432/specspace_state"
         ),
         "github-token": "production-compose-smoke-github-token",
     }
@@ -165,6 +225,15 @@ def _fixture(
             ),
             "PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE": str(
                 secrets / "database-url"
+            ),
+            "PLATFORM_SPECSPACE_STATE_TOKEN_FILE": str(
+                secrets / "specspace-state-token"
+            ),
+            "PLATFORM_SPECSPACE_STATE_DB_PASSWORD_FILE": str(
+                secrets / "specspace-state-database-password"
+            ),
+            "PLATFORM_SPECSPACE_STATE_DATABASE_URL_FILE": str(
+                secrets / "specspace-state-database-url"
             ),
             "PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE": str(
                 secrets / "github-token"
@@ -288,6 +357,21 @@ def run_smoke() -> dict[str, Any]:
             if published.rsplit(":", 1)[-1] != str(ingress_port):
                 raise RuntimeError("TLS ingress published an unexpected host port")
             ingress_health = _wait_ingress_health(ingress_port)
+            state_health = _wait_ingress_health(
+                ingress_port,
+                path="/specspace-state/v1/health",
+            )
+            state_write = _write_state_record(ingress_port)
+            mirror_path = (
+                Path(temp_dir)
+                / "state"
+                / STATE_WORKSPACE_ID
+                / STATE_RECORD_KEY
+            )
+            if not mirror_path.is_file():
+                raise RuntimeError(
+                    "SpecSpace state service did not materialize its private mirror"
+                )
             worker_health = json.loads(
                 _run(
                     [
@@ -297,6 +381,56 @@ def run_smoke() -> dict[str, Any]:
                         "managed-operation-worker",
                         "cat",
                         "/tmp/managed-operation-worker-health.json",
+                    ],
+                    environment=environment,
+                )
+            )
+            backup_id = "compose-smoke"
+            maintenance = [*compose, "--profile", "maintenance"]
+            backup_report = json.loads(
+                _run(
+                    [
+                        *maintenance,
+                        "run",
+                        "--rm",
+                        "--no-deps",
+                        "managed-operation-maintenance",
+                        "python3",
+                        "scripts/hosted_managed_runtime_backup.py",
+                        "backup",
+                        "--database-url-file",
+                        "/run/secrets/managed_operation_database_url",
+                        "--state-database-url-file",
+                        "/run/secrets/specspace_state_database_url",
+                        "--artifact-root",
+                        "/workspace/SpecGraph",
+                        "--backup-root",
+                        "/backups",
+                        "--backup-id",
+                        backup_id,
+                    ],
+                    environment=environment,
+                )
+            )
+            restore_report = json.loads(
+                _run(
+                    [
+                        *maintenance,
+                        "run",
+                        "--rm",
+                        "--no-deps",
+                        "managed-operation-maintenance",
+                        "python3",
+                        "scripts/hosted_managed_runtime_backup.py",
+                        "restore-smoke",
+                        "--database-url-file",
+                        "/run/secrets/managed_operation_database_url",
+                        "--state-database-url-file",
+                        "/run/secrets/specspace_state_database_url",
+                        "--backup-root",
+                        "/backups",
+                        "--backup-id",
+                        backup_id,
                     ],
                     environment=environment,
                 )
@@ -324,8 +458,45 @@ def run_smoke() -> dict[str, Any]:
         raise RuntimeError("TLS ingress did not expose PostgreSQL-backed service health")
     if ingress_health.get("enabled_operation_ids") != ["review_status_execute"]:
         raise RuntimeError("TLS ingress exposed an expanded operation allowlist")
+    if (
+        state_health.get("artifact_kind")
+        != "platform_specspace_state_service_health"
+        or state_health.get("contract_ref")
+        != "platform.specspace-state.service.v1"
+        or state_health.get("ok") is not True
+        or state_health.get("adapter") != "postgresql"
+        or state_health.get("workspace_scoped") is not True
+        or state_health.get("cas_required") is not True
+        or state_health.get("mirror_ready") is not True
+    ):
+        raise RuntimeError(
+            "TLS ingress did not expose PostgreSQL-backed SpecSpace state health"
+        )
     if worker_health.get("ok") is not True or worker_health.get("adapter") != "postgresql":
         raise RuntimeError("production worker heartbeat was not PostgreSQL-ready")
+    if (
+        state_write.get("ok") is not True
+        or state_write.get("record", {}).get("revision") != 1
+    ):
+        raise RuntimeError("SpecSpace state write did not complete through TLS ingress")
+    backup_summary = backup_report.get("summary")
+    restore_summary = restore_report.get("summary")
+    if (
+        backup_report.get("ok") is not True
+        or not isinstance(backup_summary, dict)
+        or backup_summary.get("state_database_row_counts")
+        != {
+            "specspace_state_records": 1,
+            "specspace_state_versions": 1,
+        }
+        or restore_report.get("ok") is not True
+        or not isinstance(restore_summary, dict)
+        or restore_summary.get("database_row_counts_verified") is not True
+        or restore_summary.get("state_database_row_counts_verified") is not True
+        or restore_summary.get("artifact_inventory_verified") is not True
+        or restore_summary.get("temporary_database_removed") is not True
+    ):
+        raise RuntimeError("dual-database backup and restore smoke did not pass")
     return {
         "artifact_kind": "platform_hosted_managed_production_compose_smoke_report",
         "ok": True,
@@ -333,7 +504,10 @@ def run_smoke() -> dict[str, Any]:
             "tls_ingress_ready": True,
             "postgresql_ready": True,
             "service_ready": True,
+            "specspace_state_ready": True,
+            "specspace_state_write_ready": True,
             "worker_ready": True,
+            "dual_database_restore_ready": True,
             "enabled_operation_ids": ["review_status_execute"],
             "managed_requests_executed": 0,
         },

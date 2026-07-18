@@ -86,6 +86,7 @@ class OffsiteBackupTests(unittest.TestCase):
                     "summary": {{
                         "status": "restore_smoke_passed",
                         "database_row_counts_verified": True,
+                        "state_database_row_counts_verified": True,
                         "artifact_inventory_verified": True,
                         "temporary_database_removed": True,
                     }},

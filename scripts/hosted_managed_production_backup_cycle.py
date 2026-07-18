@@ -34,6 +34,7 @@ DEFAULT_OUTPUT = Path("/srv/0al/evidence/hosted-managed-backup-cycle.json")
 DEFAULT_SERVICE_URL = "https://managed.specgraph.tech"
 DEFAULT_PROJECT_NAME = "platform-managed-production"
 RUNTIME_SERVICES = (
+    "specspace-state-service",
     "managed-operation-service",
     "managed-operation-ingress",
 )
@@ -166,6 +167,8 @@ def _backup_command(
             "backup",
             "--database-url-file",
             "/run/secrets/managed_operation_database_url",
+            "--state-database-url-file",
+            "/run/secrets/specspace_state_database_url",
             "--artifact-root",
             "/workspace/SpecGraph",
             "--backup-root",
@@ -193,6 +196,8 @@ def _restore_smoke_command(
             "restore-smoke",
             "--database-url-file",
             "/run/secrets/managed_operation_database_url",
+            "--state-database-url-file",
+            "/run/secrets/specspace_state_database_url",
             "--backup-root",
             "/backups",
             "--backup-id",
@@ -208,6 +213,9 @@ def _restore_smoke_command(
         report.get("ok") is not True
         or not isinstance(summary, dict)
         or summary.get("status") != "restore_smoke_passed"
+        or summary.get("database_row_counts_verified") is not True
+        or summary.get("state_database_row_counts_verified") is not True
+        or summary.get("artifact_inventory_verified") is not True
         or summary.get("temporary_database_removed") is not True
     ):
         raise ProductionBackupCycleError("isolated restore smoke is not ready")
@@ -221,6 +229,7 @@ def _verify_backup_outputs(*, backup_root: Path, backup_id: str) -> None:
     for name in (
         "backup-report.json",
         "managed-operations.json",
+        "specspace-state.json",
         "restore-smoke-report.json",
         "workspace-artifacts.tar.gz",
     ):
@@ -346,11 +355,17 @@ def run_backup_cycle(
                 "stop",
                 "managed-operation-ingress",
                 "managed-operation-service",
+                "specspace-state-service",
             ],
             runner=runner,
-            label="enqueue boundary quiesce",
+            label="mutable state and enqueue boundary quiesce",
         )
-        phases.append({"phase": "enqueue_boundary_quiesce", "status": "passed"})
+        phases.append(
+            {
+                "phase": "mutable_state_and_enqueue_boundary_quiesce",
+                "status": "passed",
+            }
+        )
         _queue_audit(prefix, runner=runner)
         phases.append({"phase": "queue_audit_after_quiesce", "status": "passed"})
         _run(

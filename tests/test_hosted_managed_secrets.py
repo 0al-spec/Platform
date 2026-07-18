@@ -53,6 +53,31 @@ class HostedManagedSecretsContractTests(unittest.TestCase):
         self.assertNotIn('echo "${github_token}"', self.script)
         self.assertIn("never prints credential values", self.runbook)
 
+    def test_state_provisioning_uses_independent_fixed_credentials(self) -> None:
+        self.assertIn("provision-state", self.script)
+        self.assertIn(
+            'readonly SPECSPACE_STATE_TOKEN_FILE="${SECRET_ROOT}/'
+            'specspace-state-token"',
+            self.script,
+        )
+        self.assertIn(
+            "postgresql://specspace_state:%s@specspace-state-postgres:"
+            "5432/specspace_state",
+            self.script,
+        )
+        self.assertIn(
+            "SpecSpace state and managed-operation database credentials "
+            "must differ",
+            self.script,
+        )
+        self.assertIn(
+            "SpecSpace state and managed-operation bearer tokens must differ",
+            self.script,
+        )
+        self.assertIn('echo "specspace-state-token=ready"', self.script)
+        self.assertNotIn('echo "${state_service_token}"', self.script)
+        self.assertNotIn('echo "${state_database_password}"', self.script)
+
 
 if __name__ == "__main__":
     unittest.main()
