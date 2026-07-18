@@ -156,6 +156,10 @@ def _fixture(
     secrets = root / "secrets"
     for directory in (artifact_root / "runs", state_dir, backup_root, secrets):
         directory.mkdir(parents=True)
+    # GitHub runners and the container use different UIDs. These directories
+    # are disposable smoke fixtures; production requires owner 1000:1000.
+    state_dir.chmod(0o777)
+    backup_root.chmod(0o777)
     (artifact_root / "Makefile").write_text("test:\n\t@true\n", encoding="utf-8")
 
     password = "production-compose-smoke-password"
@@ -341,14 +345,16 @@ def run_smoke() -> dict[str, Any]:
                             "--no-color",
                             "--tail",
                             "80",
+                            "specspace-state-postgres",
+                            "specspace-state-service",
                             "managed-operation-ingress",
                         ],
                         environment=environment,
                         timeout_seconds=30,
                     )
                 except RuntimeError:
-                    logs = "ingress logs unavailable"
-                raise RuntimeError(f"{exc}; ingress logs: {logs[-1500:]}") from exc
+                    logs = "runtime logs unavailable"
+                raise RuntimeError(f"{exc}; runtime logs: {logs[-3000:]}") from exc
             published = _run(
                 [*compose, "port", "managed-operation-ingress", "8443"],
                 environment=environment,
