@@ -79,8 +79,14 @@ class SpecSpaceStateService:
         self.mirror_root = mirror_root.resolve()
         self.now_iso = now_iso
         self._mirror_lock = threading.RLock()
+        self._mirror_state_lock = threading.Lock()
+        self._mirror_ready = False
+        self.mirror_summary = {
+            "database_record_count": 0,
+            "materialized_record_count": 0,
+        }
         self.mirror_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.mirror_summary = self.rebuild_mirror()
+        self.rebuild_mirror()
 
     def _store(self) -> contracts.SpecSpaceStateStore:
         return self.store_factory()
@@ -142,6 +148,8 @@ class SpecSpaceStateService:
                 pass
 
     def rebuild_mirror(self) -> dict[str, int]:
+        with self._mirror_state_lock:
+            self._mirror_ready = False
         with self._mirror_lock:
             store = self._store()
             try:
@@ -197,71 +205,33 @@ class SpecSpaceStateService:
                             code="state_mirror_digest_mismatch",
                         )
                     materialized += 1
-            return {
+            summary = {
                 "database_record_count": len(records),
                 "materialized_record_count": materialized,
             }
-
-    def _current_mirror_summary(
-        self,
-        store: contracts.SpecSpaceStateStore,
-    ) -> tuple[dict[str, int], bool]:
-        records = store.list_records(include_deleted=True)
-        if len(records) > MAX_MIRROR_RECORDS:
-            raise StateServiceError(
-                "state mirror record count exceeds the bounded limit",
-                status=HTTPStatus.CONFLICT,
-                code="state_mirror_record_limit_exceeded",
-            )
-        expected_paths = {
-            self._mirror_path(record["workspace_id"], record["record_key"])
-            for record in records
-            if record["lifecycle_state"] != "deleted"
-        }
-        materialized_paths: set[Path] = set()
-        for path in self.mirror_root.rglob("*"):
-            if path.is_symlink():
-                raise StateServiceError(
-                    "state mirror contains a symbolic link",
-                    status=HTTPStatus.CONFLICT,
-                    code="state_mirror_symlink_detected",
-                )
-            if path.is_file():
-                materialized_paths.add(path.resolve())
-                if len(materialized_paths) > MAX_MIRROR_RECORDS:
-                    raise StateServiceError(
-                        "state mirror record count exceeds the bounded limit",
-                        status=HTTPStatus.CONFLICT,
-                        code="state_mirror_record_limit_exceeded",
-                    )
-        summary = {
-            "database_record_count": len(records),
-            "materialized_record_count": len(materialized_paths),
-        }
-        return summary, materialized_paths == expected_paths
+            with self._mirror_state_lock:
+                self.mirror_summary = summary
+                self._mirror_ready = True
+            return summary
 
     def health(self) -> dict[str, Any]:
         store: contracts.SpecSpaceStateStore | None = None
-        mirror_summary = self.mirror_summary
         try:
-            with self._mirror_lock:
-                store = self._store()
-                ready = store.health()
-                mirror_summary, mirror_matches_database = (
-                    self._current_mirror_summary(store)
-                )
-                mirror_ready = (
-                    self.mirror_root.is_dir()
-                    and os.access(self.mirror_root, os.W_OK)
-                    and mirror_matches_database
-                )
-                self.mirror_summary = mirror_summary
+            store = self._store()
+            ready = store.health()
         except Exception:
             ready = False
-            mirror_ready = False
         finally:
             if store is not None:
                 store.close()
+        with self._mirror_state_lock:
+            mirror_summary = dict(self.mirror_summary)
+            mirror_ready = self._mirror_ready
+        mirror_ready = (
+            mirror_ready
+            and self.mirror_root.is_dir()
+            and os.access(self.mirror_root, os.W_OK)
+        )
         ok = ready and mirror_ready
         return {
             "artifact_kind": "platform_specspace_state_service_health",
@@ -409,16 +379,60 @@ class SpecSpaceStateService:
         with self._mirror_lock:
             store = self._store()
             try:
-                record = store.mutate(mutation, now_iso=self.now_iso())
-            except contracts.StateConflictError as exc:
-                raise StateServiceError(
-                    str(exc),
-                    status=HTTPStatus.CONFLICT,
-                    code="state_revision_conflict",
-                ) from exc
+                previous = store.get(
+                    mutation.workspace_id,
+                    mutation.record_key,
+                    include_deleted=True,
+                )
+                with self._mirror_state_lock:
+                    if (
+                        previous is None
+                        and self.mirror_summary["database_record_count"]
+                        >= MAX_MIRROR_RECORDS
+                    ):
+                        raise StateServiceError(
+                            "state mirror record count exceeds the bounded limit",
+                            status=HTTPStatus.CONFLICT,
+                            code="state_mirror_record_limit_exceeded",
+                        )
+                    previous_mirror_ready = self._mirror_ready
+                    self._mirror_ready = False
+                try:
+                    record = store.mutate(mutation, now_iso=self.now_iso())
+                except contracts.StateConflictError as exc:
+                    with self._mirror_state_lock:
+                        self._mirror_ready = previous_mirror_ready
+                    raise StateServiceError(
+                        str(exc),
+                        status=HTTPStatus.CONFLICT,
+                        code="state_revision_conflict",
+                    ) from exc
+                try:
+                    self._materialize(record)
+                except Exception:
+                    with self._mirror_state_lock:
+                        self._mirror_ready = False
+                    raise
+                previous_materialized = (
+                    previous is not None
+                    and previous["lifecycle_state"] != "deleted"
+                )
+                current_materialized = record["lifecycle_state"] != "deleted"
+                with self._mirror_state_lock:
+                    self.mirror_summary = {
+                        "database_record_count": (
+                            self.mirror_summary["database_record_count"]
+                            + (1 if previous is None else 0)
+                        ),
+                        "materialized_record_count": (
+                            self.mirror_summary["materialized_record_count"]
+                            + int(current_materialized)
+                            - int(previous_materialized)
+                        ),
+                    }
+                    self._mirror_ready = True
             finally:
                 store.close()
-            self._materialize(record)
         return {
             "artifact_kind": "platform_specspace_state_mutation_report",
             "schema_version": 1,
