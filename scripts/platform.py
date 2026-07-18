@@ -20296,17 +20296,20 @@ def render_timeweb_hosted_managed_environment(
     )
     if runtime.profile == "timeweb_bounded_canary":
         environment += (
+            f"      {TIMEWEB_HOSTED_MANAGED_TOKEN_ENV}:\n"
             '      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "ephemeral"\n'
             "      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "
             f'"{TIMEWEB_BOUNDED_CANARY_OPERATION_ID}"\n'
         )
     elif runtime.profile == "timeweb_external_state":
         environment += (
+            f"      {TIMEWEB_HOSTED_MANAGED_TOKEN_ENV}:\n"
             '      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "persistent"\n'
             "      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "
             f'"{TIMEWEB_BOUNDED_CANARY_OPERATION_ID}"\n'
             '      SPECSPACE_EXTERNAL_STATE_ENABLED: "true"\n'
             f'      SPECSPACE_EXTERNAL_STATE_URL: "{runtime.external_state_url}"\n'
+            f"      {TIMEWEB_EXTERNAL_STATE_TOKEN_ENV}:\n"
             "      SPECSPACE_EXTERNAL_STATE_TIMEOUT_SECONDS: "
             f'"{runtime.external_state_timeout_seconds}"\n'
             f'      SPECSPACE_STATE_DIR: "{TIMEWEB_EXTERNAL_STATE_CACHE_DIR}"\n'
@@ -20660,8 +20663,11 @@ def command_for_service(blocks: dict[str, list[str]], service_name: str) -> list
     return values
 
 
-def environment_for_service(blocks: dict[str, list[str]], service_name: str) -> dict[str, str]:
-    values: dict[str, str] = {}
+def environment_for_service(
+    blocks: dict[str, list[str]],
+    service_name: str,
+) -> dict[str, str | None]:
+    values: dict[str, str | None] = {}
     in_environment = False
     for line in blocks.get(service_name, []):
         if re.match(r"^    environment:\s*$", line):
@@ -20670,7 +20676,12 @@ def environment_for_service(blocks: dict[str, list[str]], service_name: str) -> 
         if in_environment:
             match = re.match(r"^      ([A-Za-z_][A-Za-z0-9_]*):\s*(.*?)\s*$", line)
             if match:
-                values[match.group(1)] = match.group(2).strip().strip('"').strip("'")
+                raw_value = match.group(2).strip()
+                values[match.group(1)] = (
+                    raw_value.strip('"').strip("'")
+                    if raw_value
+                    else None
+                )
                 continue
             if line.strip() and not line.startswith("      "):
                 break
@@ -21026,11 +21037,16 @@ def validate_timeweb_manifest_tree(
             for variable_name in timeweb_required_runtime_environment_variables(
                 hosted_managed_runtime
             ):
-                if variable_name in api_environment:
+                if variable_name not in api_environment:
                     errors.append(
-                        f"{target_file} Timeweb hosted profile must receive "
-                        f"{variable_name} from the App Platform runtime and must "
-                        "not declare it in Compose"
+                        f"{target_file} Timeweb hosted profile must declare "
+                        f"{variable_name} as a value-less App Platform runtime "
+                        "pass-through"
+                    )
+                elif api_environment[variable_name] is not None:
+                    errors.append(
+                        f"{target_file} Timeweb hosted profile must not assign "
+                        f"a Compose value to {variable_name}"
                     )
                 if f"${{{variable_name}}}" in text:
                     errors.append(

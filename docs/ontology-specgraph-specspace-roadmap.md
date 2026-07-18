@@ -389,10 +389,11 @@ Operational measurements inside item 4 do not expand production authority.
    state service with its worker stopped. The remaining cutover is the
    sanitizer-compatible Timeweb external-state profile, migration/restart
    evidence, dual-database backup, and one bounded read-only canary. The service
-   profile must consume App-bound Timeweb runtime variables without declaring
-   `${TOKEN}` placeholders in Compose: production deployment evidence showed
-   that Compose expansion runs before Timeweb injects App runtime variables and
-   otherwise replaces valid credentials with empty strings. The service
+   profile must consume App-bound Timeweb runtime variables through value-less
+   Compose environment keys: production deployment evidence showed that
+   `${TOKEN}` expansion runs too early and that omitted keys are not injected
+   into a secondary Compose service. Neither form reaches SpecSpace safely. The
+   service
    remains operator-intent storage; Platform reports remain lifecycle authority.
 6. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
    machine ids for refs and promotion paths while exposing deterministic,

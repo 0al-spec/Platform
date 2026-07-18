@@ -906,10 +906,13 @@ SPECSPACE_EXTERNAL_STATE_TOKEN
 ```
 
 Both global variables must also be attached to the SpecSpace application.
-Timeweb injects them into the running container; the rendered Compose file must
-not declare or interpolate either variable because Compose expansion happens
-before App runtime-variable injection. The generated deployment metadata lists
-the required variable names without containing either value.
+Timeweb injects them into the running container through value-less environment
+keys in the `specspace-api` service. The rendered Compose file must not assign
+or interpolate either variable because Compose expansion happens before App
+runtime-variable injection. Omitting the keys entirely also fails because
+Timeweb does not pass App variables to that secondary service implicitly. The
+generated deployment metadata lists the required variable names without
+containing either value.
 It sets persistent hosted durability, uses `/tmp/specspace-external-state-cache`
 only for private materialization, and keeps the SpecSpace client allowlist at
 `review_status_execute`. Platform's worker remains stopped except during a
