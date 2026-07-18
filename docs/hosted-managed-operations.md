@@ -884,7 +884,10 @@ The packet contract is
 The projection removes commands, command results, local paths, raw request
 payloads, secret values, and arbitrary diagnostic text. Review-status
 publication additionally requires one completed bounded worker window,
-`attempt=1`, a drained queue, and a SHA-256-pinned authoritative report.
+`attempt=1`, a drained queue, a SHA-256-pinned authoritative report, and
+`review_probe_only=false`. Both report kinds are pinned to
+`graph-candidate/hosted-operation-canary`; a similarly named foreign candidate
+branch is rejected.
 
 Build packets on the hosted worker without printing secret values:
 
@@ -911,9 +914,9 @@ python3 scripts/hosted_managed_public_report_publication.py dispatch \
 ```
 
 An accepted GitHub dispatch is transport evidence, not publication completion.
-The SpecGraph workflow and the resulting static artifact manifest remain the
-publication evidence. Invalid packets must not overwrite existing workspace
-artifacts.
+The SpecGraph workflow refreshes scoped Idea Maturity and Candidate Overview,
+then the resulting static artifact manifest remains the publication evidence.
+Invalid packets must not overwrite existing workspace artifacts.
 External SpecSpace state remains operator-owned intent and UI continuity.
 The adapter/API contract, TLS and authentication, concurrency tests,
 export/migration path, dual-database backup/restore smoke, retention policy, and

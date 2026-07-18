@@ -120,7 +120,7 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
                 },
             },
             "summary": {
-                "status": "review_probe_completed",
+                "status": "waiting_for_review_merge",
                 "review_merged": False,
                 "read_model_published": False,
                 "error_count": 0,
@@ -372,6 +372,68 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
                     worker_window_path=window.resolve(),
                     source_report_path=source.resolve(),
                 )
+
+    def test_review_status_rejects_probe_foreign_branch_and_state_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "status.json"
+            window = root / "window.json"
+
+            for mutate in (
+                lambda payload: payload.__setitem__("review_probe_only", True),
+                lambda payload: payload.__setitem__(
+                    "candidate_branch",
+                    "graph-candidate/foreign",
+                ),
+                lambda payload: payload["summary"].__setitem__(
+                    "status",
+                    "ready_for_read_model_publication",
+                ),
+                lambda payload: payload["pull_request"].__setitem__(
+                    "state",
+                    "MERGED",
+                ),
+            ):
+                payload = self.review_status()
+                mutate(payload)
+                write_json(source, payload)
+                write_json(window, self.worker_window(sha256(source)))
+                with self.assertRaisesRegex(
+                    publication.PublicationError,
+                    "not public-publication ready|identity",
+                ):
+                    publication.build_review_status_report(
+                        worker_window_path=window.resolve(),
+                        source_report_path=source.resolve(),
+                    )
+
+    def test_public_packet_rejects_non_may_authority_secret_and_non_finite_json(
+        self,
+    ) -> None:
+        report = self.review_status()
+        report.pop("workspace_dir")
+        report.pop("graph_repository_command")
+        report.pop("graph_repository_command_result")
+        packet = publication.build_packet(
+            logical_ref=publication.REVIEW_STATUS_REF,
+            report=report,
+            provenance={"source_sha256": "a" * 64},
+        )
+
+        injected = json.loads(json.dumps(packet))
+        injected["authority_boundary"]["executes_managed_operations"] = True
+        with self.assertRaisesRegex(publication.PublicationError, "dispatch-ready"):
+            publication.validate_packet_for_dispatch(injected)
+
+        injected = json.loads(json.dumps(packet))
+        injected["source_provenance"]["detail"] = "github_pat_" + "a" * 32
+        with self.assertRaisesRegex(publication.PublicationError, "secret-like"):
+            publication.validate_packet_for_dispatch(injected)
+
+        injected = json.loads(json.dumps(packet))
+        injected["source_provenance"]["depth"] = float("nan")
+        with self.assertRaisesRegex(publication.PublicationError, "non-strict JSON"):
+            publication.validate_packet_for_dispatch(injected)
 
 
 if __name__ == "__main__":

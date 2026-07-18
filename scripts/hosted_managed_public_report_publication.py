@@ -20,6 +20,7 @@ PACKET_ARTIFACT_KIND = "platform_hosted_managed_publication_packet"
 PACKET_CONTRACT_REF = "platform.hosted-managed.public-report-publication.v1"
 WORKSPACE_ID = "hosted-operation-canary"
 OPERATION_ID = "review_status_execute"
+CANDIDATE_BRANCH = "graph-candidate/hosted-operation-canary"
 REVIEW_OBJECT_REF = "runs/product_candidate_promotion_review_object_evidence.json"
 REVIEW_STATUS_REF = "runs/product_candidate_promotion_review_status_report.json"
 REVIEW_OBJECT_KIND = "platform_product_candidate_promotion_review_object_evidence"
@@ -36,13 +37,27 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 REVIEW_URL_RE = re.compile(
     r"^https://github\.com/0al-spec/SpecGraph/pull/([1-9][0-9]*)$"
 )
-BRANCH_RE = re.compile(r"^graph-candidate/[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 LOCAL_PATH_RE = re.compile(
     r"(?:^|[\s\"'])(?:/Users/|/home/|/private/|/tmp/|/var/folders/|"
-    r"/srv/|/workspace/|/root/|/etc/0al/|/run/secrets/|/data/)"
+    r"/srv/|/workspace/|/github/workspace/|/opt/|/root/|/etc/0al/|"
+    r"/run/secrets/|/data/|[A-Za-z]:\\)"
+)
+SECRET_VALUE_RE = re.compile(
+    r"(?:"
+    r"github_pat_[A-Za-z0-9_]{20,}|"
+    r"gh[opusr]_[A-Za-z0-9_]{20,}|"
+    r"Bearer\s+\S{20,}|"
+    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|"
+    r"\b(?:password|secret|token|authorization)\s*[:=]\s*\S+"
+    r")",
+    re.IGNORECASE,
 )
 FORBIDDEN_KEY_PARTS = (
     "command",
+    "stdout",
+    "stderr",
+    "exit_code",
+    "returncode",
     "password",
     "secret",
     "token",
@@ -80,8 +95,11 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
     try:
         if path.stat().st_size > MAX_INPUT_BYTES:
             raise PublicationError(f"{label} is too large")
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            parse_constant=_reject_json_constant,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise PublicationError(f"{label} is unreadable") from exc
     if not isinstance(payload, dict):
         raise PublicationError(f"{label} must contain a JSON object")
@@ -89,7 +107,20 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:
-    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    try:
+        rendered = json.dumps(
+            payload,
+            allow_nan=False,
+            indent=2,
+            sort_keys=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise PublicationError("publication packet contains non-strict JSON") from exc
+    return (rendered + "\n").encode("utf-8")
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant {value}")
 
 
 def _file_sha256(path: Path) -> str:
@@ -103,13 +134,18 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _strict_false_boundary(value: Any, *, required: tuple[str, ...]) -> bool:
+def _strict_false_boundary(
+    value: Any,
+    *,
+    required: tuple[str, ...],
+    allowed_true: tuple[str, ...] = (),
+) -> bool:
     boundary = _record(value)
     return all(boundary.get(key) is False for key in required) and all(
-        not (
-            isinstance(key, str)
-            and key.startswith("may_")
-            and item is not False
+        isinstance(key, str)
+        and (
+            item is False
+            or (key in allowed_true and item is True)
         )
         for key, item in boundary.items()
     )
@@ -131,8 +167,7 @@ def _identity(payload: dict[str, Any]) -> tuple[str, str, str]:
     if (
         workspace_id != WORKSPACE_ID
         or candidate_id != WORKSPACE_ID
-        or candidate_branch is None
-        or not BRANCH_RE.fullmatch(candidate_branch)
+        or candidate_branch != CANDIDATE_BRANCH
     ):
         raise PublicationError("hosted report workspace or candidate identity is invalid")
     return workspace_id, candidate_id, candidate_branch
@@ -210,6 +245,8 @@ def _scan_public(value: Any, *, path: tuple[str, ...] = ()) -> None:
             raise PublicationError("publication packet contains unsafe text")
         if LOCAL_PATH_RE.search(value):
             raise PublicationError("publication packet contains a local path")
+        if SECRET_VALUE_RE.search(value):
+            raise PublicationError("publication packet contains a secret-like value")
 
 
 def validate_packet_for_dispatch(packet: dict[str, Any]) -> None:
@@ -380,8 +417,7 @@ def _safe_pull_request(payload: dict[str, Any]) -> dict[str, Any]:
     if (
         head_sha is None
         or not re.fullmatch(r"[0-9a-f]{40}", head_sha)
-        or head_branch is None
-        or not BRANCH_RE.fullmatch(head_branch)
+        or head_branch != CANDIDATE_BRANCH
         or base_branch != "main"
         or state not in {"OPEN", "CLOSED", "MERGED"}
         or not isinstance(payload.get("isDraft"), bool)
@@ -453,6 +489,7 @@ def _validate_worker_window(
                 "retries_irreversible_operations",
                 "queue_status_is_lifecycle_evidence",
             ),
+            allowed_true=("platform_output_reports_are_authoritative",),
         )
     ):
         raise PublicationError("bounded worker window does not pin one ready review report")
@@ -477,16 +514,33 @@ def build_review_status_report(
         pull_request.get("number"),
     )
     review_state = _text(source.get("review_state"))
+    expected_pull_request_state = {
+        "open": "OPEN",
+        "closed": "CLOSED",
+        "merged": "MERGED",
+    }.get(review_state)
+    expected_summary_status = (
+        "ready_for_read_model_publication"
+        if review_state == "merged"
+        else "waiting_for_review_merge"
+    )
+    review_merged = review_state == "merged"
     if (
         source.get("artifact_kind") != REVIEW_STATUS_KIND
         or source.get("schema_version") != 1
         or source.get("ok") is not True
         or source.get("workflow_lane") != "product_idea_to_spec"
-        or review_state not in {"open", "closed", "merged"}
-        or source.get("review_probe_only") not in {True, False}
+        or expected_pull_request_state is None
+        or source.get("review_probe_only") is not False
         or pull_request.get("headRefName") != candidate_branch
+        or pull_request.get("state") != expected_pull_request_state
         or _text(graph_review.get("review_url")) != review_url
         or graph_review.get("ok") is not True
+        or graph_review.get("review_state") != review_state
+        or graph_summary.get("review_merged") is not review_merged
+        or summary.get("status") != expected_summary_status
+        or summary.get("review_merged") is not review_merged
+        or summary.get("read_model_published") is not False
         or not _strict_false_boundary(
             source.get("authority_boundary"),
             required=(
@@ -516,27 +570,27 @@ def build_review_status_report(
             "runs/product_candidate_promotion_execution_report.json"
         ),
         "review_object_evidence_ref": REVIEW_OBJECT_REF,
-        "review_probe_only": source["review_probe_only"],
+        "review_probe_only": False,
         "review_state": review_state,
         "review_decision": _text(source.get("review_decision")) or "",
         "pull_request": pull_request,
         "graph_repository_review_status": {
             "artifact_kind": _text(graph_review.get("artifact_kind")),
             "ok": True,
-            "review_state": _text(graph_review.get("review_state")) or review_state,
+            "review_state": review_state,
             "review_url": review_url,
             "summary": {
                 "status": _text(graph_summary.get("status")),
-                "review_merged": graph_summary.get("review_merged") is True,
+                "review_merged": review_merged,
             },
         },
         "authority_boundary": _public_authority_boundary(),
         "privacy_boundary": _public_privacy_boundary(),
         "diagnostics": [],
         "summary": {
-            "status": _text(summary.get("status")) or "review_probe_completed",
-            "review_merged": summary.get("review_merged") is True,
-            "read_model_published": summary.get("read_model_published") is True,
+            "status": expected_summary_status,
+            "review_merged": review_merged,
+            "read_model_published": False,
             "error_count": 0,
         },
     }
