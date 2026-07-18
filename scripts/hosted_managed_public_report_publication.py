@@ -173,6 +173,35 @@ def _identity(payload: dict[str, Any]) -> tuple[str, str, str]:
     return workspace_id, candidate_id, candidate_branch
 
 
+def _public_workspace_binding(value: Any, *, workspace_id: str) -> dict[str, str]:
+    binding = _record(value)
+    authority = _record(binding.get("authority_boundary"))
+    binding_id = f"product-workspace-binding://{workspace_id}"
+    if (
+        binding.get("status") != "ready"
+        or binding.get("workspace_id") != workspace_id
+        or binding.get("binding_id") != binding_id
+        or authority.get("report_only") is not True
+        or not _strict_false_boundary(
+            authority,
+            required=(
+                "may_create_git_commit",
+                "may_execute_platform",
+                "may_execute_specgraph",
+                "may_open_pull_request",
+                "may_publish_read_model",
+            ),
+            allowed_true=("report_only",),
+        )
+    ):
+        raise PublicationError("review object workspace binding is invalid")
+    return {
+        "status": "ready",
+        "workspace_id": workspace_id,
+        "binding_id": binding_id,
+    }
+
+
 def _review_url(value: Any, number: Any) -> tuple[str, int]:
     review_url = _text(value)
     review_number = _non_negative_int(number)
@@ -380,6 +409,10 @@ def build_review_object_report(
     ):
         raise PublicationError("review object evidence is not public-publication ready")
     workspace_id, candidate_id, candidate_branch = evidence_identity
+    workspace_binding = _public_workspace_binding(
+        evidence.get("workspace_binding"),
+        workspace_id=workspace_id,
+    )
     report = {
         "schema_version": 1,
         "artifact_kind": REVIEW_OBJECT_KIND,
@@ -398,6 +431,7 @@ def build_review_object_report(
         "review_state_at_capture": "open",
         "review_head_sha": head_sha,
         "base_branch": "main",
+        "workspace_binding": workspace_binding,
         "privacy_boundary": _public_privacy_boundary(),
         "authority_boundary": _public_authority_boundary(),
         "diagnostics": [],
