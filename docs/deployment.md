@@ -420,9 +420,10 @@ scripts/platform.py deploy timeweb-render \
 ```
 
 This profile is intentionally narrower than the ordinary durable hosted
-profile. It has no Compose `volumes` or `secrets`, references
-`SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN` only as a Timeweb global environment
-variable, stores SpecSpace request state under `/tmp`, and enables only
+profile. It has no Compose `volumes` or `secrets`, requires
+`SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN` as an App-bound Timeweb runtime
+variable without rendering or interpolating it in Compose, stores SpecSpace
+request state under `/tmp`, and enables only
 `review_status_execute`. A container restart loses the SpecSpace-side compact
 receipt state; the Platform PostgreSQL queue and authoritative reports remain
 the recovery source. Roll back by rendering again with
@@ -463,6 +464,10 @@ Guardrails:
 - no source `build` sections;
 - no bind mounts; named volumes and Compose secrets are forbidden in the
   Timeweb read-only, bounded-canary, and external-state profiles;
+- Timeweb runtime secrets must be attached to the application in the control
+  panel and must not appear as `${VAR}` interpolation in Compose. Timeweb
+  resolves Compose before injecting App runtime variables, so interpolation
+  replaces an otherwise valid secret with an empty string;
 - no required `${VAR:?message}` interpolation;
 - SpecSpace API must read SpecGraph artifacts through `--artifact-base-url`;
 - SpecSpace API must read SpecPM metadata through `--specpm-registry-url`;
