@@ -29,6 +29,9 @@ SECRET_SPECS = {
     "service_token": (32, None),
     "database_password": (24, None),
     "database_url": (32, "postgresql"),
+    "specspace_state_token": (32, None),
+    "specspace_state_database_password": (24, None),
+    "specspace_state_database_url": (32, "postgresql"),
     "github_token": (20, None),
     "tls_certificate": (64, "certificate"),
     "tls_private_key": (64, "private_key"),
@@ -192,6 +195,11 @@ def run_preflight(
             secret_contents[label] = content
     if len(secret_contents) != len(set(secret_contents.values())):
         diagnostics.append("secret_values_not_distinct")
+    if (
+        secret_contents.get("database_url")
+        == secret_contents.get("specspace_state_database_url")
+    ):
+        diagnostics.append("state_database_not_isolated")
 
     diagnostics.extend(
         _directory_diagnostics(
@@ -214,7 +222,7 @@ def run_preflight(
             path=state_dir,
             expected_uid=runtime_uid,
             expected_gid=runtime_gid,
-            require_owner_write=False,
+            require_owner_write=True,
         )
     )
 
@@ -296,6 +304,15 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 "database_url": _env_path(
                     "PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE"
+                ),
+                "specspace_state_token": _env_path(
+                    "PLATFORM_SPECSPACE_STATE_TOKEN_FILE"
+                ),
+                "specspace_state_database_password": _env_path(
+                    "PLATFORM_SPECSPACE_STATE_DB_PASSWORD_FILE"
+                ),
+                "specspace_state_database_url": _env_path(
+                    "PLATFORM_SPECSPACE_STATE_DATABASE_URL_FILE"
                 ),
                 "github_token": _env_path(
                     "PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE"

@@ -372,18 +372,21 @@ Operational measurements inside item 4 do not expand production authority.
    Every allowlist expansion remains a separate rollout with operation-specific
    confirmation, idempotency, monitoring, recovery, backup, and rollback
    evidence.
-5. **External SpecSpace mutable-state backend.** Implementation in progress.
-   Platform now defines the first narrow service contract in
+5. **External SpecSpace mutable-state backend.** Producer and consumer
+   contracts are implemented. Platform defines the narrow service contract in
    [External SpecSpace State Service](specspace-state-service.md): authenticated
    workspace-scoped records, canonical content digests, revision/CAS,
    idempotency, explicit lifecycle states, bounded history retention,
    mode-`0600` export/import, PostgreSQL and SQLite adapters, and a private
-   workspace-scoped worker mirror. The production deployment still stays
-   read-only until SpecSpace consumes this API, file-backed state migration and
-   provider-failure behavior are proven, the service receives a separate
-   database/role and backup path, and restore/concurrency/replay evidence is
-   captured. It remains operator-intent storage; Platform reports remain
-   lifecycle authority.
+   workspace-scoped worker mirror. SpecSpace consumes the API with file-backed
+   migration, CAS/idempotency, fail-closed provider behavior, and
+   `legacy_read_only` compatibility. The production rollout slice now adds an
+   isolated state database/role/volume, TLS routing, independent secrets,
+   dual-database backup/restore smoke, and a controlled environment-inventory
+   upgrade. Production execution remains disabled until deployment, migration,
+   restart persistence, bounded canary, encrypted off-host backup, and rollback
+   evidence are captured. The service remains operator-intent storage;
+   Platform reports remain lifecycle authority.
 6. **Human-friendly candidate aliases.** Implemented. SpecGraph keeps stable
    machine ids for refs and promotion paths while exposing deterministic,
    privacy-checked display aliases in candidate overview and topology artifacts;
@@ -405,18 +408,19 @@ Operational measurements inside item 4 do not expand production authority.
 
 The next major slices must land in this order:
 
-1. **Durable SpecSpace state.** Platform defines an authenticated,
+1. **Durable SpecSpace state.** Implemented in Platform and SpecSpace.
+   Platform defines an authenticated,
    workspace-scoped state service with versioned records, CAS revisions,
    idempotency, explicit lifecycle states, privacy controls, migration/export,
    retention, and backup/restore support. SpecSpace consumes that service while
    preserving its browser-facing API and authority boundary. Local files remain
    a development adapter and private worker mirror, not production authority.
-2. **Production managed-mode rollout.** Enable continuous managed operations
-   only after file-state migration, restart persistence, concurrent-write
-   behavior, provider-failure handling, encrypted backup, restore, and rollback
-   are proven. Start with the existing read-only operation allowlist and a
-   stopped worker, then use one bounded window before considering continuous
-   worker operation or any wider allowlist.
+2. **Production managed-mode rollout.** In progress. Deploy the isolated state
+   service with the existing read-only operation allowlist and a stopped worker;
+   migrate and verify file state; prove restart persistence, concurrent-write
+   behavior, provider-failure handling, encrypted backup, restore, and rollback;
+   then use one bounded `review_status_execute` window before considering a
+   continuous worker or any wider allowlist.
 3. **Ontology applicability consumers.** Ontology ONT-040 is already merged and
    remains the source of truth for `ModelApplicabilityProfile` and review-only
    structural change classification. SpecGraph should import that compiler

@@ -33,6 +33,15 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
             "database_url": (
                 b"postgresql://managed:password@managed-operation-postgres/managed"
             ),
+            "specspace_state_token": (
+                b"state-service-token-0123456789abcdef0123456789abcdef"
+            ),
+            "specspace_state_database_password": (
+                b"state-database-password-0123456789abcdef"
+            ),
+            "specspace_state_database_url": (
+                b"postgresql://specspace:password@specspace-state-postgres/state"
+            ),
             "github_token": b"github-token-0123456789abcdef",
             "tls_certificate": (
                 b"-----BEGIN CERTIFICATE-----\n"
@@ -117,6 +126,14 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
         self.assertFalse(report["summary"]["artifact_root_ready"])
         self.assertIn("artifact_root_makefile_missing", report["diagnostics"])
 
+    def test_preflight_requires_a_writable_state_mirror(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.fixture(Path(temp_dir))
+            fixture["state_dir"].chmod(0o550)
+            report = preflight.run_preflight(**fixture)
+        self.assertFalse(report["ok"])
+        self.assertIn("state_dir_owner_write_missing", report["diagnostics"])
+
     def test_preflight_rejects_a_symlinked_specgraph_makefile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -170,6 +187,11 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
                 "postgresql://managed:password@postgres/managed\n",
                 encoding="utf-8",
             )
+            state_database_url = root / "state-database-url"
+            state_database_url.write_text(
+                "postgresql://state:password@state-postgres/state\n",
+                encoding="utf-8",
+            )
             backup_root = root / "backups"
             backup_root.mkdir()
             database_export = {
@@ -177,9 +199,19 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
                 "schema_version": 1,
                 "tables": {table: [] for table in backup.QUEUE_TABLES},
             }
+            state_database_export = {
+                "artifact_kind": "platform_specspace_state_database_backup",
+                "schema_version": 1,
+                "tables": {table: [] for table in backup.STATE_TABLES},
+            }
             with (
                 mock.patch.object(
                     backup, "_database_export", return_value=database_export
+                ),
+                mock.patch.object(
+                    backup,
+                    "_state_database_export",
+                    return_value=state_database_export,
                 ),
                 mock.patch.object(
                     backup,
@@ -189,6 +221,7 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
             ):
                 report = backup.create_backup(
                     database_url_file=database_url,
+                    state_database_url_file=state_database_url,
                     artifact_root=artifact_root,
                     backup_root=backup_root,
                     backup_id="test-backup",
@@ -201,7 +234,19 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
             )
             self.assertTrue(report["ok"])
             self.assertEqual(report["summary"]["artifact_file_count"], 1)
+            self.assertEqual(
+                report["summary"]["state_database_backup_schema_version"],
+                1,
+            )
+            self.assertEqual(
+                report["summary"]["state_database_row_counts"],
+                {table: 0 for table in backup.STATE_TABLES},
+            )
+            self.assertTrue((destination / "specspace-state.json").is_file())
             self.assertFalse(report["privacy_boundary"]["public_safe"])
+            self.assertTrue(
+                report["privacy_boundary"]["contains_private_specspace_state"]
+            )
             self.assertNotIn(temp_dir, str(report))
 
     def test_backup_refuses_symbolic_links_in_artifact_tree(self) -> None:
@@ -215,6 +260,51 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
             with self.assertRaisesRegex(backup.HostedBackupError, "symbolic links"):
                 backup._artifact_inventory(root)
 
+    def test_state_restore_rejects_content_digest_drift(self) -> None:
+        row = {
+            column: None
+            for column in backup.STATE_TABLE_COLUMNS[
+                "specspace_state_versions"
+            ]
+        }
+        row.update(
+            {
+                "workspace_id": "workspace-a",
+                "record_key": "real_idea_entry_requests.json",
+                "revision": 1,
+                "content_sha256": "0" * 64,
+                "content_json": {"artifact_kind": "state"},
+                "lifecycle_state": "active",
+                "idempotency_key": "idempotency-key-0001",
+                "recorded_at": "2026-07-18T00:00:00+00:00",
+            }
+        )
+        export = {
+            "artifact_kind": "platform_specspace_state_database_backup",
+            "schema_version": 1,
+            "tables": {
+                "specspace_state_records": [],
+                "specspace_state_versions": [row],
+            },
+        }
+        with (
+            mock.patch.object(backup, "_initialize_state_schema"),
+            mock.patch.object(backup, "_driver") as driver,
+        ):
+            psycopg = mock.MagicMock()
+            sql = mock.MagicMock()
+            driver.return_value = (psycopg, sql)
+            connection = psycopg.connect.return_value.__enter__.return_value
+            connection.cursor.return_value.__enter__.return_value = mock.Mock()
+            with self.assertRaisesRegex(
+                backup.HostedBackupError,
+                "content digest mismatch",
+            ):
+                backup._restore_state_database_export(
+                    "postgresql://state:password@postgres/state",
+                    export,
+                )
+
     def test_restore_smoke_rejects_tampered_database_export_before_connecting(
         self,
     ) -> None:
@@ -227,6 +317,11 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
                 "postgresql://managed:password@postgres/managed\n",
                 encoding="utf-8",
             )
+            state_database_url = root / "state-database-url"
+            state_database_url.write_text(
+                "postgresql://state:password@state-postgres/state\n",
+                encoding="utf-8",
+            )
             backup_root = root / "backups"
             backup_root.mkdir()
             database_export = {
@@ -234,9 +329,19 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
                 "schema_version": 1,
                 "tables": {table: [] for table in backup.QUEUE_TABLES},
             }
+            state_database_export = {
+                "artifact_kind": "platform_specspace_state_database_backup",
+                "schema_version": 1,
+                "tables": {table: [] for table in backup.STATE_TABLES},
+            }
             with (
                 mock.patch.object(
                     backup, "_database_export", return_value=database_export
+                ),
+                mock.patch.object(
+                    backup,
+                    "_state_database_export",
+                    return_value=state_database_export,
                 ),
                 mock.patch.object(
                     backup,
@@ -246,6 +351,7 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
             ):
                 backup.create_backup(
                     database_url_file=database_url,
+                    state_database_url_file=state_database_url,
                     artifact_root=artifact_root,
                     backup_root=backup_root,
                     backup_id="tampered",
@@ -258,6 +364,7 @@ class HostedManagedRuntimeBackupTests(unittest.TestCase):
                 ):
                     backup.restore_smoke(
                         database_url_file=database_url,
+                        state_database_url_file=state_database_url,
                         backup_root=backup_root,
                         backup_id="tampered",
                     )
@@ -297,6 +404,25 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
 
         return runner
 
+    @staticmethod
+    def health(url: str) -> dict:
+        if "/specspace-state/" in url:
+            return {
+                "artifact_kind": "platform_specspace_state_service_health",
+                "contract_ref": "platform.specspace-state.service.v1",
+                "ok": True,
+                "status": "ready",
+                "adapter": "postgresql",
+                "workspace_scoped": True,
+                "cas_required": True,
+                "mirror_ready": True,
+            }
+        return {
+            "ok": True,
+            "adapter": "postgresql",
+            "enabled_operation_ids": ["review_status_execute"],
+        }
+
     def test_probe_requires_healthy_tls_runtime_and_exact_allowlist(self) -> None:
         now = datetime(2026, 7, 13, tzinfo=timezone.utc)
         report = probe.run_probe(
@@ -305,14 +431,10 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
             project_name="platform-managed",
             now=now,
             runner=self.fixture_runner(heartbeat_generated_at=now.isoformat()),
-            fetch_health=lambda _: {
-                "ok": True,
-                "adapter": "postgresql",
-                "enabled_operation_ids": ["review_status_execute"],
-            },
+            fetch_health=self.health,
         )
         self.assertTrue(report["ok"], report["diagnostics"])
-        self.assertEqual(report["summary"]["healthy_service_count"], 3)
+        self.assertEqual(report["summary"]["healthy_service_count"], 5)
         self.assertEqual(report["summary"]["worker_mode"], "stopped")
         self.assertEqual(report["worker"]["status"], "stopped")
         self.assertNotIn("/srv/platform", str(report))
@@ -329,14 +451,18 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
                 worker_mode="continuous",
             ),
             worker_mode="continuous",
-            fetch_health=lambda _: {
-                "ok": True,
-                "adapter": "postgresql",
-                "enabled_operation_ids": [
-                    "review_status_execute",
-                    "promotion_execute_dry_run",
-                ],
-            },
+            fetch_health=lambda url: (
+                self.health(url)
+                if "/specspace-state/" in url
+                else {
+                    "ok": True,
+                    "adapter": "postgresql",
+                    "enabled_operation_ids": [
+                        "review_status_execute",
+                        "promotion_execute_dry_run",
+                    ],
+                }
+            ),
         )
         self.assertFalse(report["ok"])
         self.assertIn("worker_heartbeat_stale", report["diagnostics"])
@@ -361,11 +487,7 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
             worker_mode="continuous",
             now=now,
             runner=runner,
-            fetch_health=lambda _: {
-                "ok": True,
-                "adapter": "postgresql",
-                "enabled_operation_ids": ["review_status_execute"],
-            },
+            fetch_health=self.health,
         )
         self.assertTrue(report["ok"], report["diagnostics"])
         self.assertTrue(
@@ -381,11 +503,15 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
             operation_profile="promotion-dry-run",
             now=now,
             runner=self.fixture_runner(heartbeat_generated_at=now.isoformat()),
-            fetch_health=lambda _: {
-                "ok": True,
-                "adapter": "postgresql",
-                "enabled_operation_ids": ["promotion_execute_dry_run"],
-            },
+            fetch_health=lambda url: (
+                self.health(url)
+                if "/specspace-state/" in url
+                else {
+                    "ok": True,
+                    "adapter": "postgresql",
+                    "enabled_operation_ids": ["promotion_execute_dry_run"],
+                }
+            ),
         )
         self.assertTrue(report["ok"], report["diagnostics"])
         self.assertTrue(report["summary"]["allowlist_matches_profile"])
@@ -431,11 +557,7 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
             project_name="platform-managed",
             now=now,
             runner=runner,
-            fetch_health=lambda _: {
-                "ok": True,
-                "adapter": "postgresql",
-                "enabled_operation_ids": ["review_status_execute"],
-            },
+            fetch_health=self.health,
         )
         self.assertTrue(report["ok"])
         self.assertTrue(commands)
@@ -507,11 +629,17 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
         reports["backup"]["summary"] = {
             "status": "backup_ready",
             "database_backup_schema_version": 1,
+            "state_database_backup_schema_version": 1,
         }
         reports["restore_smoke"]["backup_id"] = "production-1"
         reports["restore_smoke"]["summary"] = {
             "status": "restore_smoke_passed",
+            "database_row_counts_verified": True,
+            "state_database_row_counts_verified": True,
+            "state_mirror_record_count_verified": True,
+            "artifact_inventory_verified": True,
             "temporary_database_removed": True,
+            "temporary_state_mirror_removed": True,
         }
         reports["queue_audit"]["summary"] = {"rollback_ready": True}
         reports["hosted_specspace_smoke"]["summary"] = {
@@ -555,6 +683,18 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("replay_canary_attempt_not_one", report["diagnostics"])
         self.assertIn("probe_after_reboot_allowlist_invalid", report["diagnostics"])
+
+    def test_signoff_requires_specspace_state_restore_evidence(self) -> None:
+        evidence = self.evidence()
+        evidence["restore_smoke"]["summary"][
+            "state_database_row_counts_verified"
+        ] = False
+        report = signoff.build_signoff(
+            evidence,
+            now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
+        )
+        self.assertFalse(report["ok"])
+        self.assertIn("backup_restore_contract_invalid", report["diagnostics"])
 
     def test_signoff_rejects_local_backend_specspace_profile(self) -> None:
         evidence = self.evidence()

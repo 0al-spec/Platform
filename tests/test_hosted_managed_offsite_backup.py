@@ -86,8 +86,11 @@ class OffsiteBackupTests(unittest.TestCase):
                     "summary": {{
                         "status": "restore_smoke_passed",
                         "database_row_counts_verified": True,
+                        "state_database_row_counts_verified": True,
+                        "state_mirror_record_count_verified": True,
                         "artifact_inventory_verified": True,
                         "temporary_database_removed": True,
+                        "temporary_state_mirror_removed": True,
                     }},
                 }}))
             elif "tar" in sys.argv:

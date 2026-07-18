@@ -191,6 +191,49 @@ class SpecSpaceStateServiceTests(unittest.TestCase):
         ) as response:
             return json.loads(response.read())
 
+    def test_startup_rebuilds_mirror_from_database_and_removes_stale_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database = root / "state.sqlite3"
+            store = store_module.SQLiteSpecSpaceStateStore(database)
+            try:
+                record = store.mutate(
+                    mutation(),
+                    now_iso="2026-07-18T00:00:00Z",
+                )
+            finally:
+                store.close()
+            stale = root / "mirror" / "foreign" / RECORD_KEY
+            stale.parent.mkdir(parents=True)
+            stale.write_text('{"stale":true}\n', encoding="utf-8")
+
+            service = self.build_service(root)
+            mirrored = json.loads(
+                (
+                    root
+                    / "mirror"
+                    / WORKSPACE_ID
+                    / RECORD_KEY
+                ).read_text(encoding="utf-8")
+            )
+            stale_exists = stale.exists()
+            mirror_summary = service.mirror_summary
+
+        self.assertEqual(
+            store_module.content_sha256(mirrored),
+            record["content_sha256"],
+        )
+        self.assertFalse(stale_exists)
+        self.assertEqual(
+            mirror_summary,
+            {
+                "database_record_count": 1,
+                "materialized_record_count": 1,
+            },
+        )
+
     def test_http_service_persists_private_record_and_materializes_scoped_mirror(
         self,
     ) -> None:

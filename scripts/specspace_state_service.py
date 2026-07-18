@@ -19,6 +19,7 @@ else:  # Direct execution adds scripts/ to sys.path.
 
 
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
+MAX_MIRROR_RECORDS = 10_000
 MUTATION_FIELDS = frozenset(
     {
         "workspace_id",
@@ -77,6 +78,7 @@ class SpecSpaceStateService:
         self.mirror_root = mirror_root.resolve()
         self.now_iso = now_iso
         self.mirror_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.mirror_summary = self.rebuild_mirror()
 
     def _store(self) -> contracts.SpecSpaceStateStore:
         return self.store_factory()
@@ -137,6 +139,66 @@ class SpecSpaceStateService:
             except FileNotFoundError:
                 pass
 
+    def rebuild_mirror(self) -> dict[str, int]:
+        store = self._store()
+        try:
+            records = store.list_records(include_deleted=True)
+        finally:
+            store.close()
+        if len(records) > MAX_MIRROR_RECORDS:
+            raise StateServiceError(
+                "state mirror record count exceeds the bounded limit",
+                status=HTTPStatus.CONFLICT,
+                code="state_mirror_record_limit_exceeded",
+            )
+        paths = sorted(
+            self.mirror_root.rglob("*"),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+        for path in paths:
+            if path.is_symlink():
+                raise StateServiceError(
+                    "state mirror contains a symbolic link",
+                    status=HTTPStatus.CONFLICT,
+                    code="state_mirror_symlink_detected",
+                )
+            if path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                path.rmdir()
+        materialized = 0
+        for record in records:
+            self._materialize(record)
+            if record["lifecycle_state"] != "deleted":
+                path = self._mirror_path(
+                    record["workspace_id"],
+                    record["record_key"],
+                )
+                try:
+                    mirrored = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise StateServiceError(
+                        "state mirror verification failed",
+                        status=HTTPStatus.CONFLICT,
+                        code="state_mirror_verification_failed",
+                    ) from exc
+                if (
+                    not isinstance(mirrored, dict)
+                    or contracts.content_sha256(mirrored)
+                    != record["content_sha256"]
+                ):
+                    raise StateServiceError(
+                        "state mirror content digest mismatch",
+                        status=HTTPStatus.CONFLICT,
+                        code="state_mirror_digest_mismatch",
+                    )
+                materialized += 1
+        return {
+            "database_record_count": len(records),
+            "materialized_record_count": materialized,
+        }
+
     def health(self) -> dict[str, Any]:
         store: contracts.SpecSpaceStateStore | None = None
         try:
@@ -163,6 +225,9 @@ class SpecSpaceStateService:
             "workspace_scoped": True,
             "cas_required": True,
             "mirror_ready": mirror_ready,
+            "mirror_record_count": self.mirror_summary[
+                "materialized_record_count"
+            ],
             "authority_boundary": authority_boundary(),
         }
 

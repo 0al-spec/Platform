@@ -55,6 +55,7 @@ class ProductionBackupCycleTests(unittest.TestCase):
                     for name in (
                         "backup-report.json",
                         "managed-operations.json",
+                        "specspace-state.json",
                         "restore-smoke-report.json",
                         "workspace-artifacts.tar.gz",
                     ):
@@ -66,7 +67,12 @@ class ProductionBackupCycleTests(unittest.TestCase):
                                 "ok": True,
                                 "summary": {
                                     "status": "restore_smoke_passed",
+                                    "database_row_counts_verified": True,
+                                    "state_database_row_counts_verified": True,
+                                    "state_mirror_record_count_verified": True,
+                                    "artifact_inventory_verified": True,
                                     "temporary_database_removed": True,
+                                    "temporary_state_mirror_removed": True,
                                 },
                             }
                         ),
@@ -109,7 +115,8 @@ class ProductionBackupCycleTests(unittest.TestCase):
                 index
                 for index, command in enumerate(rendered_calls)
                 if (
-                    " stop managed-operation-ingress managed-operation-service"
+                    " stop managed-operation-ingress managed-operation-service "
+                    "specspace-state-service"
                     in command
                 )
             )
@@ -126,7 +133,11 @@ class ProductionBackupCycleTests(unittest.TestCase):
             restart = next(
                 index
                 for index, command in enumerate(rendered_calls)
-                if " up --detach managed-operation-service" in command
+                if (
+                    " up --detach specspace-state-service "
+                    "managed-operation-service"
+                    in command
+                )
             )
             self.assertLess(stop_boundary, stop_worker)
             self.assertLess(stop_worker, backup)
@@ -168,7 +179,9 @@ class ProductionBackupCycleTests(unittest.TestCase):
             self.assertTrue(report["summary"]["runtime_recovered"])
             self.assertTrue(
                 any(
-                    " up --detach managed-operation-service" in command
+                    " up --detach specspace-state-service "
+                    "managed-operation-service"
+                    in command
                     for command in calls
                 )
             )
@@ -210,7 +223,9 @@ class ProductionBackupCycleTests(unittest.TestCase):
             self.assertTrue(report["summary"]["runtime_recovered"])
             self.assertTrue(
                 any(
-                    " up --detach managed-operation-service" in command
+                    " up --detach specspace-state-service "
+                    "managed-operation-service"
+                    in command
                     for command in calls
                 )
             )

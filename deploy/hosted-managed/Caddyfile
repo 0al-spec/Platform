@@ -7,7 +7,12 @@
 	tls /run/secrets/managed_operation_tls_certificate /run/secrets/managed_operation_tls_private_key
 	encode zstd gzip
 	header -Server
-	reverse_proxy managed-operation-service:8091
+	handle_path /specspace-state/* {
+		reverse_proxy specspace-state-service:8092
+	}
+	handle {
+		reverse_proxy managed-operation-service:8091
+	}
 	log {
 		output stdout
 		format json

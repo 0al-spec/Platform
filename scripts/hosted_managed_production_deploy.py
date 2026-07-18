@@ -286,6 +286,13 @@ def _preflight(
         "service_token": "PLATFORM_MANAGED_OPERATION_TOKEN_FILE",
         "database_password": "PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE",
         "database_url": "PLATFORM_MANAGED_OPERATION_DATABASE_URL_FILE",
+        "specspace_state_token": "PLATFORM_SPECSPACE_STATE_TOKEN_FILE",
+        "specspace_state_database_password": (
+            "PLATFORM_SPECSPACE_STATE_DB_PASSWORD_FILE"
+        ),
+        "specspace_state_database_url": (
+            "PLATFORM_SPECSPACE_STATE_DATABASE_URL_FILE"
+        ),
         "github_token": "PLATFORM_MANAGED_OPERATION_GITHUB_TOKEN_FILE",
         "tls_certificate": "PLATFORM_MANAGED_OPERATION_TLS_CERTIFICATE_FILE",
         "tls_private_key": "PLATFORM_MANAGED_OPERATION_TLS_PRIVATE_KEY_FILE",

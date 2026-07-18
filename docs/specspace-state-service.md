@@ -1,8 +1,8 @@
 # External SpecSpace State Service
 
-Status: implementation contract; production rollout remains disabled until the
-SpecSpace consumer, migration, backup/restore, and deployment sign-off are
-complete.
+Status: producer and consumer contracts are merged. Production rollout remains
+disabled until the dedicated PostgreSQL service, migration, restart
+persistence, backup/restore, and deployment sign-off are complete.
 
 ## Purpose
 
@@ -21,6 +21,26 @@ The browser never receives the service URL, bearer token, PostgreSQL endpoint,
 or database credentials. SpecSpace remains the only browser-facing state API.
 Platform authoritative execution reports remain the only evidence that a
 managed operation completed.
+
+## Production Topology
+
+The single-node production profile exposes the state service only through the
+existing TLS ingress:
+
+```text
+https://managed.specgraph.tech/specspace-state/v1/health
+https://managed.specgraph.tech/specspace-state/v1/specspace-state/*
+```
+
+Caddy strips `/specspace-state` before forwarding to the internal service on
+port `8092`. The service has no direct public port. It uses a PostgreSQL
+service, database, role, password, bearer token, and persistent volume that are
+independent from the managed-operation queue.
+
+The state service is the only container with a read-write mount of the private
+worker mirror. Managed-operation service and worker mounts are read-only. A
+stopped worker and the exact `review_status_execute` allowlist remain the
+initial rollout profile.
 
 ## Storage Boundary
 
@@ -146,9 +166,22 @@ Bound version history without deleting current records:
   --retain-latest 20
 ```
 
-Database-native backup/restore remains required for production disaster
-recovery. Export/import is the migration and inspection contract, not a
-replacement for encrypted PostgreSQL backups.
+The production backup cycle exports both isolated databases:
+
+```text
+managed-operations.json
+specspace-state.json
+workspace-artifacts.tar.gz
+```
+
+Restore smoke creates one temporary database in each PostgreSQL service,
+restores both versioned exports, rebuilds and digest-verifies a temporary
+worker mirror, verifies row counts and artifact digests, and removes both
+temporary databases and the mirror. The production state service performs the
+same database-to-mirror reconciliation before it starts serving requests. The
+resulting archive is encrypted before off-host export. State export/import
+remains the migration and inspection contract; infrastructure snapshots may
+supplement but do not replace this portable restore evidence.
 
 ## Authority Boundary
 
@@ -161,6 +194,7 @@ The state service may persist private SpecSpace state. It may not:
 - publish read models;
 - treat state persistence as lifecycle completion.
 
-Production managed mode remains off until the SpecSpace HTTP adapter,
-file-state migration, restore/concurrency/replay tests, and deployment evidence
-are merged and verified.
+The SpecSpace HTTP adapter and file-state migration contract are merged.
+Production managed mode remains off until deployment, migration verification,
+restart persistence, restore/concurrency/replay evidence, and rollback are
+captured against the production host.
