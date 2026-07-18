@@ -461,15 +461,17 @@ Guardrails:
   The public UI reaches it through the Compose network as `specspace-api:8001`;
 - API/UI image refs must be digest-pinned and must not use `latest`;
 - no source `build` sections;
-- no bind mounts; named volumes are forbidden in read-only mode and limited to
-  the fixed SpecSpace-owned state volume in hosted mode;
+- no bind mounts; named volumes and Compose secrets are forbidden in the
+  Timeweb read-only, bounded-canary, and external-state profiles;
 - no required `${VAR:?message}` interpolation;
 - SpecSpace API must read SpecGraph artifacts through `--artifact-base-url`;
 - SpecSpace API must read SpecPM metadata through `--specpm-registry-url`;
 - SpecSpace API must carry the expected Hyperprompt HTTP compile flag and
   limits.
-- hosted mode must use an HTTPS executor origin, a file-mounted Compose secret,
-  and the fixed persistent state directory; local subprocess execution remains
+- the Timeweb external-state profile must use HTTPS executor and state-service
+  URLs, global environment references for two independent bearer tokens,
+  persistent external state, an ephemeral local cache, and the exact
+  `review_status_execute` client allowlist; local subprocess execution remains
   disabled.
 
 ### Timeweb Storage Contract
@@ -488,16 +490,16 @@ Compose filesystem.
 | SpecSpace HTTP/provider cache | Process memory | No | Rebuilt from remote artifacts |
 | Hyperprompt compile scratch | Container `/tmp`, retention bounded to 20 bundles | No | Disposable scratch only |
 | Legacy dialog directory | Container `/data/dialogs`, no volume in read-only profile | No | Must not be treated as durable product state |
-| SpecSpace mutable drafts, requests, and intents | Disabled in read-only profile | No local persistence | Requires an approved external state backend before production managed mode |
+| SpecSpace mutable drafts, requests, and intents | External SpecSpace state PostgreSQL on the hosted Platform VPS | Yes, outside Timeweb App | Workspace-scoped CAS records; container `/tmp` is cache only |
 
-The generated `platform-timeweb-deploy.json` records
-`specspace_state_profile=read_only_no_mutable_state` for this profile. The
-validator rejects Compose volumes, hosted managed command flags, hosted managed
-environment, and SpecSpace state-directory/durability environment variables.
-The bounded canary remains a separate profile with explicitly ephemeral `/tmp`
-state. The ordinary durable hosted profile is not compatible with Timeweb Cloud
-Apps because that platform rejects its required Compose volume and secret
-mounts.
+The generated `platform-timeweb-deploy.json` records one explicit state
+profile. `read_only_no_mutable_state` rejects hosted execution and all mutable
+state configuration. `ephemeral_canary` permits only the bounded legacy canary.
+`external_postgresql` enables persistent hosted mode without a Timeweb volume:
+the app keeps an expendable cache under `/tmp`, while the authenticated external
+state service owns durable records. The ordinary `persistent_local_volume`
+profile remains incompatible with Timeweb Cloud Apps because that platform
+rejects its required Compose volume and secret mounts.
 
 ### Timeweb Disk Observation And Cleanup Policy
 

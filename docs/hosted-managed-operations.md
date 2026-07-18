@@ -830,9 +830,10 @@ SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN=<same service token stored on the VPS>
 
 Continuous production managed mode must not store SpecSpace-owned drafts,
 execution requests, approval intents, or compact queue receipts in the Timeweb
-container filesystem. The current production profile therefore remains
-read-only; the bounded canary uses explicitly ephemeral state and is not a
-durability solution.
+container filesystem. The external-state profile keeps those records in the
+isolated SpecSpace state PostgreSQL database; the Timeweb `/tmp` directory is
+only an expendable materialization cache. The bounded canary remains explicitly
+ephemeral and is not a durability solution.
 
 The intended deployment boundary is:
 
@@ -860,11 +861,10 @@ The external state contract must provide:
 
 Platform authoritative reports remain the source of execution completion.
 External SpecSpace state remains operator-owned intent and UI continuity.
-Production managed mode is blocked until the adapter/API contract, TLS and
-authentication, concurrency tests, export/migration path, backup/restore smoke,
-retention policy, and managed-mode readiness projection have all been
-implemented and verified. Enabling a local Timeweb volume is not an acceptable
-substitute.
+The adapter/API contract, TLS and authentication, concurrency tests,
+export/migration path, dual-database backup/restore smoke, retention policy, and
+managed-mode readiness projection are required before rollout. Enabling a local
+Timeweb volume is not an acceptable substitute.
 
 Do not commit or pass that value through the Platform workflow. Timeweb Cloud
 Apps rejects Compose `volumes` and Compose `secrets`, so the bounded canary
@@ -886,6 +886,30 @@ It sets the SpecSpace client-side maximum allowlist to exactly
 `review_status_execute`. The ordinary durable hosted profile remains available
 for Compose runtimes that support named volumes and file-mounted secrets; do not
 publish that profile to Timeweb Cloud Apps.
+
+After the external state service is deployed, use the persistent
+Timeweb-compatible profile:
+
+```text
+hosted_managed_execution_enabled=false
+hosted_managed_bounded_canary_enabled=false
+hosted_managed_external_state_enabled=true
+hosted_managed_executor_url=https://managed.specgraph.tech
+external_state_url=https://managed.specgraph.tech/specspace-state
+```
+
+Timeweb must provide two independent global secret variables:
+
+```text
+SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN
+SPECSPACE_EXTERNAL_STATE_TOKEN
+```
+
+The rendered manifest references those names but never contains either value.
+It sets persistent hosted durability, uses `/tmp/specspace-external-state-cache`
+only for private materialization, and keeps the SpecSpace client allowlist at
+`review_status_execute`. Platform's worker remains stopped except during a
+separately audited bounded window.
 
 The first production UI canary remains bounded. Submit exactly one
 `review_status_execute` from the Product Workspace, record the server-issued
