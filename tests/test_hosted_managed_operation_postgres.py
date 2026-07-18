@@ -22,6 +22,8 @@ import hosted_managed_operation_queue as queue_module
 import hosted_managed_operation_service as service_module
 import hosted_managed_runtime_backup as backup_module
 import hosted_managed_production_signoff as signoff_module
+import specspace_state_postgres as state_postgres_module
+import specspace_state_store as state_store_module
 from tests.test_hosted_managed_operation_executor import (
     ExecutorFixture,
     RecordingRunner,
@@ -88,7 +90,48 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
     def test_real_postgresql_backup_and_restore_smoke(self) -> None:
         database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
         queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        psycopg, sql = backup_module._driver()
+        state_database_name = f"specspace_state_backup_test_{os.getpid()}"
+        admin_url = backup_module._replace_database(database_url, "postgres")
+        state_database_url = backup_module._replace_database(
+            database_url,
+            state_database_name,
+        )
+        state_database_created = False
         try:
+            with psycopg.connect(admin_url, autocommit=True) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        sql.SQL("CREATE DATABASE {}").format(
+                            sql.Identifier(state_database_name)
+                        )
+                    )
+                    state_database_created = True
+            state_store = (
+                state_postgres_module.PostgreSQLSpecSpaceStateStore(
+                    state_database_url
+                )
+            )
+            try:
+                state_store.mutate(
+                    state_store_module.StateMutation(
+                        workspace_id="workspace-a",
+                        record_key="real_idea_entry_requests.json",
+                        expected_revision=0,
+                        idempotency_key="postgres-backup:state-write:0001",
+                        lifecycle_state="active",
+                        content={
+                            "artifact_kind": (
+                                "specspace_real_idea_entry_requests"
+                            ),
+                            "requests": [],
+                            "workspace_id": "workspace-a",
+                        },
+                    ),
+                    now_iso="2026-07-10T00:00:00Z",
+                )
+            finally:
+                state_store.close()
             with queue.connection.cursor() as cursor:
                 cursor.execute(
                     "TRUNCATE managed_operation_events, managed_operation_locks, "
@@ -120,26 +163,51 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
                 )
                 database_url_file = root / "database-url"
                 database_url_file.write_text(database_url, encoding="utf-8")
+                state_database_url_file = root / "state-database-url"
+                state_database_url_file.write_text(
+                    state_database_url,
+                    encoding="utf-8",
+                )
                 backup_root = root / "backups"
                 backup_root.mkdir()
                 backup_report = backup_module.create_backup(
                     database_url_file=database_url_file,
+                    state_database_url_file=state_database_url_file,
                     artifact_root=artifact_root,
                     backup_root=backup_root,
                     backup_id="postgres-integration",
                 )
                 restore_report = backup_module.restore_smoke(
                     database_url_file=database_url_file,
+                    state_database_url_file=state_database_url_file,
                     backup_root=backup_root,
                     backup_id="postgres-integration",
                 )
                 queue_audit_report = signoff_module.queue_audit(database_url_file)
         finally:
             queue.close()
+            if state_database_created:
+                with psycopg.connect(admin_url, autocommit=True) as connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            sql.SQL("DROP DATABASE {} WITH (FORCE)").format(
+                                sql.Identifier(state_database_name)
+                            )
+                        )
 
         self.assertTrue(backup_report["ok"])
         self.assertEqual(backup_report["summary"]["artifact_file_count"], 1)
+        self.assertEqual(
+            backup_report["summary"]["state_database_row_counts"],
+            {
+                "specspace_state_records": 1,
+                "specspace_state_versions": 1,
+            },
+        )
         self.assertTrue(restore_report["ok"])
+        self.assertTrue(
+            restore_report["summary"]["state_database_row_counts_verified"]
+        )
         self.assertTrue(restore_report["summary"]["temporary_database_removed"])
         self.assertTrue(queue_audit_report["ok"])
 
