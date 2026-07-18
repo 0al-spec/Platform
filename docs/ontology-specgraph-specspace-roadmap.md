@@ -362,6 +362,11 @@ Operational measurements inside item 4 do not expand production authority.
      execution that opened the candidate PR. Continuous read-only execution
      remains a later operating-policy decision.
    - bounded parallel static upload is implemented in SpecGraph PR `#692`.
+   - bounded hosted-report publication is being added as a one-report,
+     public-safe Platform packet consumed by the existing checksum-aware
+     SpecGraph workspace deployment. Authoritative worker reports stay private;
+     only sanitized review-object or review-status projections may enter the
+     public workspace bundle.
      Measure the next production publications to confirm the transfer-time
      effect; producer-side timestamp churn remains a separate follow-up and
      manifest digest verification must not be weakened;
