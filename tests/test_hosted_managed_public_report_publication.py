@@ -214,6 +214,85 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
             },
         }
 
+    def merged_review_status(self) -> dict:
+        payload = self.review_status()
+        payload["review_state"] = "merged"
+        payload["pull_request"].update(
+            {
+                "state": "MERGED",
+                "mergedAt": "2026-07-19T10:08:00Z",
+                "mergeCommit": {"oid": "b" * 40},
+            }
+        )
+        payload["graph_repository_review_status"]["review_state"] = "merged"
+        payload["graph_repository_review_status"]["summary"] = {
+            "status": "ready_for_read_model_publication",
+            "review_merged": True,
+        }
+        payload["summary"] = {
+            "status": "ready_for_read_model_publication",
+            "review_merged": True,
+            "read_model_published": False,
+            "error_count": 0,
+        }
+        return payload
+
+    def read_model_publication(self, review_status_digest: str) -> dict:
+        return {
+            "schema_version": 1,
+            "artifact_kind": publication.READ_MODEL_PUBLICATION_KIND,
+            "generated_at": "2026-07-19T10:10:00+00:00",
+            "ok": True,
+            "dry_run": False,
+            "workflow_lane": "product_idea_to_spec",
+            "workspace_id": publication.WORKSPACE_ID,
+            "candidate_id": publication.WORKSPACE_ID,
+            "candidate_branch": publication.CANDIDATE_BRANCH,
+            "review_state": "merged",
+            "product_review_status_report_ref": (
+                "/tmp/product_candidate_promotion_review_status_report.json"
+            ),
+            "product_review_status_report_sha256": review_status_digest,
+            "bundle_dir": "/tmp/private-bundle",
+            "output_dir": "/tmp/private-read-model",
+            "graph_repository_command": ["platform", "publish-read-model"],
+            "graph_repository_command_result": {"stdout": "/Users/private"},
+            "graph_repository_publish_read_model": {
+                "artifact_kind": publication.GRAPH_READ_MODEL_PUBLICATION_KIND,
+                "ok": True,
+                "dry_run": False,
+                "review_state": "merged",
+                "read_models_published": [
+                    "/tmp/private-read-model/artifact_manifest.json"
+                ],
+                "summary": {
+                    "published": True,
+                    "file_count": 1530,
+                    "error_count": 0,
+                },
+            },
+            "authority_boundary": {
+                "executes_git_commands": False,
+                "opens_pull_requests": False,
+                "merges_pull_requests": False,
+                "publishes_read_models": True,
+                "canonical_spec_mutation_without_review": False,
+                "ontology_package_write": False,
+                "ontology_term_acceptance": False,
+                "private_artifact_publication": False,
+                "specspace_direct_git_write": False,
+            },
+            "summary": {
+                "status": "published",
+                "review_merged": True,
+                "read_model_published": True,
+                "published_manifest": (
+                    "/tmp/private-read-model/artifact_manifest.json"
+                ),
+                "error_count": 0,
+            },
+        }
+
     def test_review_object_packet_drops_command_and_local_path_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -280,6 +359,79 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
         self.assertNotIn("graph_repository_command", report)
         self.assertEqual(report["review_state"], "open")
         self.assertEqual(provenance["attempt"], 1)
+
+    def test_read_model_publication_packet_pins_merged_review_and_is_public_safe(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            review_status = root / "review-status.json"
+            worker_window = root / "worker-window.json"
+            source = root / "publication.json"
+            write_json(review_status, self.merged_review_status())
+            write_json(worker_window, self.worker_window(sha256(review_status)))
+            write_json(source, self.read_model_publication(sha256(review_status)))
+
+            report, provenance = (
+                publication.build_read_model_publication_report(
+                    worker_window_path=worker_window.resolve(),
+                    review_status_report_path=review_status.resolve(),
+                    source_report_path=source.resolve(),
+                )
+            )
+            packet = publication.build_packet(
+                logical_ref=publication.READ_MODEL_PUBLICATION_REF,
+                report=report,
+                provenance=provenance,
+            )
+
+        rendered = json.dumps(packet)
+        self.assertEqual(
+            packet["operation_id"],
+            publication.READ_MODEL_PUBLICATION_OPERATION_ID,
+        )
+        self.assertEqual(report["summary"]["status"], "published")
+        self.assertEqual(report["summary"]["published_file_count"], 1530)
+        self.assertEqual(report["review"]["number"], 690)
+        self.assertTrue(report["authority_boundary"]["publishes_read_models"])
+        self.assertNotIn("/tmp/", rendered)
+        self.assertNotIn("/Users/", rendered)
+        self.assertNotIn("graph_repository_command", rendered)
+        self.assertEqual(provenance["attempt"], 1)
+
+    def test_read_model_publication_rejects_digest_and_authority_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            review_status = root / "review-status.json"
+            worker_window = root / "worker-window.json"
+            source = root / "publication.json"
+            write_json(review_status, self.merged_review_status())
+            write_json(worker_window, self.worker_window(sha256(review_status)))
+
+            payload = self.read_model_publication("e" * 64)
+            write_json(source, payload)
+            with self.assertRaisesRegex(
+                publication.PublicationError,
+                "not public-publication ready",
+            ):
+                publication.build_read_model_publication_report(
+                    worker_window_path=worker_window.resolve(),
+                    review_status_report_path=review_status.resolve(),
+                    source_report_path=source.resolve(),
+                )
+
+            payload = self.read_model_publication(sha256(review_status))
+            payload["authority_boundary"]["may_publish_private_artifacts"] = True
+            write_json(source, payload)
+            with self.assertRaisesRegex(
+                publication.PublicationError,
+                "not public-publication ready",
+            ):
+                publication.build_read_model_publication_report(
+                    worker_window_path=worker_window.resolve(),
+                    review_status_report_path=review_status.resolve(),
+                    source_report_path=source.resolve(),
+                )
 
     def test_invalid_authority_blocks_without_packet(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -365,8 +365,10 @@ Operational measurements inside item 4 do not expand production authority.
    - bounded hosted-report publication is being added as a one-report,
      public-safe Platform packet consumed by the existing checksum-aware
      SpecGraph workspace deployment. Authoritative worker reports stay private;
-     only sanitized review-object or review-status projections may enter the
-     public workspace bundle.
+     only sanitized review-object, review-status, or completed read-model
+     publication projections may enter the public workspace bundle. Final
+     publication evidence must be pinned to the current non-probe merged review
+     status and its `attempt=1` bounded worker window.
      Measure the next production publications to confirm the transfer-time
      effect; producer-side timestamp churn remains a separate follow-up and
      manifest digest verification must not be weakened;
