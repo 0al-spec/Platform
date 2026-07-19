@@ -46,6 +46,14 @@ ARTIFACT_KIND_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 OPERATOR_REPLAY_POLICIES = frozenset(
     {"read_only_replay_allowed", "same_request_dry_run_only"}
 )
+PROMOTION_DRY_RUN_EXECUTION_OUTPUT_REF = (
+    "runs/managed-promotion-dry-runs/"
+    "<request-id>.product_candidate_promotion_execution_report.json"
+)
+PROMOTION_DRY_RUN_GIT_SERVICE_OUTPUT_REF = (
+    "runs/managed-promotion-dry-runs/"
+    "<request-id>.git_service_promotion_execution_report.json"
+)
 
 
 @dataclass(frozen=True)
@@ -208,8 +216,8 @@ MANAGED_OPERATIONS: tuple[ManagedOperationDefinition, ...] = (
             "runs/graph_repository_execution_plan.json",
         ),
         output_reports=(
-            "runs/product_candidate_promotion_execution_report.json",
-            "runs/git_service_promotion_execution_report.json",
+            PROMOTION_DRY_RUN_EXECUTION_OUTPUT_REF,
+            PROMOTION_DRY_RUN_GIT_SERVICE_OUTPUT_REF,
         ),
         idempotency_source="promotion_request.request_id",
         side_effect_class="git_dry_run",
@@ -504,6 +512,12 @@ def build_request(
         json.dumps(idempotency_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     request_id = f"managed-operation://{workspace_id or 'invalid'}/{operation_id}/{idempotency_key[:24]}"
+    expected_output_reports = [
+        pattern.replace("<workspace-id>", str(workspace_id or "invalid")).replace(
+            "<request-id>", idempotency_key[:24]
+        )
+        for pattern in (definition.output_reports if definition else ())
+    ]
     selected_operation = (
         operation_payload(definition)
         if definition is not None
@@ -529,7 +543,7 @@ def build_request(
             "source_sha256": workspace_binding_source_sha256,
         },
         "inputs": input_records,
-        "expected_output_reports": list(definition.output_reports) if definition else [],
+        "expected_output_reports": expected_output_reports,
         "operator_ref": operator_ref,
         "confirmation": confirmation,
         "diagnostics": diagnostics,
@@ -700,7 +714,14 @@ def request_diagnostics(payload: dict[str, Any]) -> list[str]:
             diagnostics.append("request contains input refs outside the operation registry")
         if not required.issubset(refs):
             diagnostics.append("request is missing required operation inputs")
-        if payload.get("expected_output_reports") != list(definition.output_reports):
+        request_fragment = str(payload.get("idempotency_key") or "")[:24]
+        expected_output_reports = [
+            pattern.replace("<workspace-id>", str(workspace_id or "invalid")).replace(
+                "<request-id>", request_fragment
+            )
+            for pattern in definition.output_reports
+        ]
+        if payload.get("expected_output_reports") != expected_output_reports:
             diagnostics.append("request output reports do not match the operation registry")
     confirmation = payload.get("confirmation")
     if definition is not None and definition.requires_explicit_confirmation:

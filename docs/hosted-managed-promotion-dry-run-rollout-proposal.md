@@ -41,8 +41,10 @@ The managed-operation registry already constrains the operation to:
 - input refs: `runs/graph_repository_promotion_request.json`,
   `runs/candidate_approval_decision.json`, and the separately digest-pinned
   `runs/graph_repository_execution_plan.json`;
-- output refs: `runs/product_candidate_promotion_execution_report.json` and
-  `runs/git_service_promotion_execution_report.json`;
+- request-scoped output refs:
+  `runs/managed-promotion-dry-runs/<request-id>.product_candidate_promotion_execution_report.json`
+  and
+  `runs/managed-promotion-dry-runs/<request-id>.git_service_promotion_execution_report.json`;
 - side-effect class: `git_dry_run`;
 - replay policy: `same_request_dry_run_only`;
 - timeout: 120 seconds;

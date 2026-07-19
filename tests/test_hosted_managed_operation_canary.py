@@ -273,6 +273,7 @@ class HostedManagedOperationCanaryTests(unittest.TestCase):
             output_reports = []
             for ref in request["expected_output_reports"]:
                 output = fixture.path_for_ref(ref)
+                output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text('{"dry_run":true}\n', encoding="utf-8")
                 output_reports.append(
                     {

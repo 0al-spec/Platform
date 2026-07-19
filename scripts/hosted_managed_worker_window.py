@@ -13,10 +13,16 @@ from typing import Any, Callable
 
 try:
     from scripts import hosted_managed_operation_queue as queue_module
-    from scripts.hosted_managed_production_profiles import profile_by_operation_id
+    from scripts.hosted_managed_production_profiles import (
+        concrete_output_reports,
+        profile_by_operation_id,
+    )
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_operation_queue as queue_module
-    from hosted_managed_production_profiles import profile_by_operation_id
+    from hosted_managed_production_profiles import (
+        concrete_output_reports,
+        profile_by_operation_id,
+    )
 
 
 POLICY_ARTIFACT_KIND = "platform_hosted_managed_worker_window_policy"
@@ -140,13 +146,20 @@ def policy_sha256(policy: dict[str, Any]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def expected_output_reports(policy: dict[str, Any]) -> tuple[str, ...]:
+def expected_output_reports(
+    policy: dict[str, Any],
+    *,
+    request_id: str | None = None,
+) -> tuple[str, ...]:
     diagnostics = policy_diagnostics(policy)
     if diagnostics:
         raise WorkerWindowError("worker window policy is invalid")
     operation_id = policy["enabled_operation_ids"][0]
     try:
-        return profile_by_operation_id(operation_id).expected_output_reports
+        profile = profile_by_operation_id(operation_id)
+        if request_id is not None:
+            return concrete_output_reports(profile, request_id=request_id)
+        return profile.expected_output_reports
     except ValueError as exc:
         raise WorkerWindowError("worker window policy operation is unsupported") from exc
 
@@ -297,7 +310,10 @@ def run_window(
     diagnostics = sorted(set(diagnostics))
     receipt_outputs = receipt.get("output_reports") if isinstance(receipt, dict) else []
     receipt_outputs = receipt_outputs if isinstance(receipt_outputs, list) else []
-    expected_outputs = expected_output_reports(policy)
+    expected_outputs = expected_output_reports(
+        policy,
+        request_id=expected_request_id,
+    )
     authoritative_reports_ready = bool(receipt_outputs) and all(
         isinstance(item, dict)
         and set(item) == {"logical_ref", "sha256"}

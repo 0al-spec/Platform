@@ -17,6 +17,7 @@ try:
         PROMOTION_DRY_RUN_PROFILE_ID,
         REVIEW_STATUS_PROFILE_ID,
         ProductionOperationProfile,
+        concrete_output_reports,
         deployment_profile_by_operation_ids,
         profile_by_id,
         profile_ids,
@@ -27,6 +28,7 @@ except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo r
         PROMOTION_DRY_RUN_PROFILE_ID,
         REVIEW_STATUS_PROFILE_ID,
         ProductionOperationProfile,
+        concrete_output_reports,
         deployment_profile_by_operation_ids,
         profile_by_id,
         profile_ids,
@@ -259,6 +261,7 @@ def _dry_run_report_diagnostics(
     *,
     artifact_root: Path,
     workspace_id: str | None,
+    request_id: str | None,
     core_report: dict[str, Any] | None,
     profile: ProductionOperationProfile,
 ) -> list[str]:
@@ -289,7 +292,19 @@ def _dry_run_report_diagnostics(
         workspace_root.relative_to(root)
     except ValueError:
         return ["dry_run_workspace_root_invalid"]
-    for logical_ref in profile.expected_output_reports:
+    if not isinstance(request_id, str):
+        return ["dry_run_request_identity_invalid"]
+    try:
+        concrete_refs = dict(
+            zip(
+                profile.expected_output_reports,
+                concrete_output_reports(profile, request_id=request_id),
+                strict=True,
+            )
+        )
+    except ValueError:
+        return ["dry_run_request_identity_invalid"]
+    for pattern, logical_ref in concrete_refs.items():
         relative = logical_ref.removeprefix("runs/")
         path = (workspace_root / relative).resolve()
         try:
@@ -304,9 +319,9 @@ def _dry_run_report_diagnostics(
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if output_digests.get(logical_ref) != digest:
             diagnostics.append("dry_run_authoritative_report_digest_mismatch")
-        reports[logical_ref] = payload
+        reports[pattern] = payload
 
-    product = reports.get("runs/product_candidate_promotion_execution_report.json", {})
+    product = reports.get(profile.expected_output_reports[0], {})
     product_summary = product.get("summary")
     product_summary = product_summary if isinstance(product_summary, dict) else {}
     git_review = product.get("git_review")
@@ -349,7 +364,7 @@ def _dry_run_report_diagnostics(
     ):
         diagnostics.append("product_promotion_report_not_strict_dry_run")
 
-    git_service = reports.get("runs/git_service_promotion_execution_report.json", {})
+    git_service = reports.get(profile.expected_output_reports[1], {})
     operations = git_service.get("operations")
     operations = operations if isinstance(operations, list) else []
     statuses = {
@@ -599,6 +614,7 @@ def execute_window(
         _dry_run_report_diagnostics(
             artifact_root=artifact_root,
             workspace_id=core_request.get("workspace_id"),
+            request_id=core_request.get("request_id"),
             core_report=core_report,
             profile=profile,
         )

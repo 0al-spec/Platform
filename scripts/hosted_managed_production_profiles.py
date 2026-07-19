@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+
+try:
+    from scripts import hosted_managed_operations as contracts
+except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
+    import hosted_managed_operations as contracts
 
 
 REVIEW_STATUS_PROFILE_ID = "review-status"
@@ -51,12 +57,26 @@ PRODUCTION_OPERATION_PROFILES = (
         compose_profile="promotion-dry-run-window",
         worker_service="managed-operation-promotion-dry-run-window-worker",
         expected_output_reports=(
-            "runs/product_candidate_promotion_execution_report.json",
-            "runs/git_service_promotion_execution_report.json",
+            contracts.PROMOTION_DRY_RUN_EXECUTION_OUTPUT_REF,
+            contracts.PROMOTION_DRY_RUN_GIT_SERVICE_OUTPUT_REF,
         ),
         allow_continuous_worker=False,
     ),
 )
+
+
+def concrete_output_reports(
+    profile: ProductionOperationProfile,
+    *,
+    request_id: str,
+) -> tuple[str, ...]:
+    request_fragment = request_id.rsplit("/", 1)[-1]
+    if not re.fullmatch(r"[0-9a-f]{24}", request_fragment):
+        raise ValueError("managed operation request id has an invalid digest fragment")
+    return tuple(
+        ref.replace("<request-id>", request_fragment)
+        for ref in profile.expected_output_reports
+    )
 
 PRODUCTION_DEPLOYMENT_PROFILES = (
     ProductionDeploymentProfile(

@@ -269,18 +269,14 @@ class HostedManagedOperationQueueTests(unittest.TestCase):
                 leased,
                 queue_module.ExecutionResult(
                     status="succeeded",
-                    output_reports=(
+                    output_reports=tuple(
                         {
-                            "logical_ref": (
-                                "runs/managed_repair_rerun_plans/request-42."
-                                "platform_product_repair_rerun_execution_plan.json"
-                            ),
-                            "sha256": "8" * 64,
-                        },
-                        {
-                            "logical_ref": "runs/platform_product_repair_rerun_execution_report.json",
-                            "sha256": "9" * 64,
-                        },
+                            "logical_ref": logical_ref,
+                            "sha256": str(index + 8) * 64,
+                        }
+                        for index, logical_ref in enumerate(
+                            request["expected_output_reports"]
+                        )
                     ),
                 ),
                 now_epoch=102,
@@ -289,6 +285,10 @@ class HostedManagedOperationQueueTests(unittest.TestCase):
             queue.close()
 
         self.assertEqual(receipt["status"], "succeeded")
+        self.assertIn(
+            request["request_id"].rsplit("/", 1)[-1],
+            request["expected_output_reports"][0],
+        )
 
     def test_expired_read_only_lease_is_requeued(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

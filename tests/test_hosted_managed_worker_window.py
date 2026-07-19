@@ -70,9 +70,7 @@ class PartialDryRunOutputExecutor:
             status="succeeded",
             output_reports=(
                 {
-                    "logical_ref": (
-                        "runs/product_candidate_promotion_execution_report.json"
-                    ),
+                    "logical_ref": leased.request["expected_output_reports"][0],
                     "sha256": "1" * 64,
                 },
             ),
@@ -132,8 +130,28 @@ class HostedManagedWorkerWindowTests(unittest.TestCase):
         self.assertEqual(
             window_module.expected_output_reports(policy),
             (
-                "runs/product_candidate_promotion_execution_report.json",
-                "runs/git_service_promotion_execution_report.json",
+                "runs/managed-promotion-dry-runs/"
+                "<request-id>.product_candidate_promotion_execution_report.json",
+                "runs/managed-promotion-dry-runs/"
+                "<request-id>.git_service_promotion_execution_report.json",
+            ),
+        )
+        concrete = window_module.expected_output_reports(
+            policy,
+            request_id=(
+                "managed-operation://pantry-control/promotion_execute_dry_run/"
+                + "2" * 24
+            ),
+        )
+        self.assertEqual(
+            concrete,
+            (
+                "runs/managed-promotion-dry-runs/"
+                + "2" * 24
+                + ".product_candidate_promotion_execution_report.json",
+                "runs/managed-promotion-dry-runs/"
+                + "2" * 24
+                + ".git_service_promotion_execution_report.json",
             ),
         )
 

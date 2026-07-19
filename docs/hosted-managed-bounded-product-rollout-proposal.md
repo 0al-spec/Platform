@@ -69,6 +69,10 @@ operations, and arbitrary commands remain disabled.
    spec mutation, or Ontology write occurred.
 8. Queue terminal state remains transport evidence. Platform reports remain
    lifecycle authority.
+9. Replay-safe promotion dry-runs write request-scoped reports under
+   `runs/managed-promotion-dry-runs/`. They must not replace the canonical
+   non-dry-run promotion execution report used by review-status and publication
+   lifecycle steps.
 
 ## SpecSpace Exposure
 
@@ -103,6 +107,12 @@ survives App container replacement.
 Because the bounded policy requires an exclusive queue, operators must not
 enqueue review status and promotion dry-run simultaneously. A second active
 request blocks the worker window instead of being processed opportunistically.
+
+The first combined-profile production window exposed why the output isolation
+is mandatory: a replayed dry-run replaced the canonical non-dry-run promotion
+execution report, so the following read-only review-status operation correctly
+failed closed. Request-scoped dry-run outputs preserve both the new diagnostic
+evidence and the existing Git review provenance.
 
 ## Bounded Rollout
 
