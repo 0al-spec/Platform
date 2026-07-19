@@ -17,9 +17,17 @@ try:
         ProductionProbeError,
         run_probe,
     )
+    from scripts.hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        deployment_profile_ids,
+    )
     from scripts.hosted_managed_runtime_backup import BACKUP_ID_PATTERN
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     from hosted_managed_production_probe import ProductionProbeError, run_probe
+    from hosted_managed_production_profiles import (
+        REVIEW_STATUS_PROFILE_ID,
+        deployment_profile_ids,
+    )
     from hosted_managed_runtime_backup import BACKUP_ID_PATTERN
 
 
@@ -246,6 +254,7 @@ def _probe(
     compose_file: Path,
     env_file: Path,
     project_name: str,
+    operation_profile: str,
     probe: Probe,
     runner: Runner,
 ) -> dict[str, Any]:
@@ -254,6 +263,7 @@ def _probe(
         compose_file=compose_file,
         env_file=env_file,
         project_name=project_name,
+        operation_profile=operation_profile,
         runner=runner,
     )
     if report.get("ok") is not True:
@@ -267,6 +277,7 @@ def _wait_for_probe(
     compose_file: Path,
     env_file: Path,
     project_name: str,
+    operation_profile: str,
     probe: Probe,
     runner: Runner,
     sleep: Sleep,
@@ -280,6 +291,7 @@ def _wait_for_probe(
                 compose_file=compose_file,
                 env_file=env_file,
                 project_name=project_name,
+                operation_profile=operation_profile,
                 probe=probe,
                 runner=runner,
             )
@@ -302,6 +314,7 @@ def run_backup_cycle(
     backup_root: Path,
     probe_output: Path,
     backup_id_output: Path,
+    operation_profile: str = REVIEW_STATUS_PROFILE_ID,
     runner: Runner = subprocess.run,
     probe: Probe = run_probe,
     sleep: Sleep = time.sleep,
@@ -338,6 +351,7 @@ def run_backup_cycle(
             compose_file=compose_file,
             env_file=env_file,
             project_name=project_name,
+            operation_profile=operation_profile,
             probe=probe,
             runner=runner,
         )
@@ -409,6 +423,7 @@ def run_backup_cycle(
                     compose_file=compose_file,
                     env_file=env_file,
                     project_name=project_name,
+                    operation_profile=operation_profile,
                     probe=probe,
                     runner=runner,
                     sleep=sleep,
@@ -433,6 +448,7 @@ def run_backup_cycle(
         "generated_at": generated_at,
         "ok": ok,
         "backup_id": backup_id,
+        "operation_profile": operation_profile,
         "backup_report_ref": f"backups/{backup_id}/backup-report.json",
         "restore_smoke_report_ref": f"backups/{backup_id}/restore-smoke-report.json",
         "phases": phases,
@@ -467,6 +483,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--compose-file", type=Path, default=DEFAULT_COMPOSE_FILE)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
     parser.add_argument("--project-name", default=DEFAULT_PROJECT_NAME)
+    parser.add_argument(
+        "--operation-profile",
+        choices=deployment_profile_ids(),
+        default=REVIEW_STATUS_PROFILE_ID,
+    )
     parser.add_argument("--backup-root", type=Path, default=DEFAULT_BACKUP_ROOT)
     parser.add_argument("--probe-output", type=Path, default=DEFAULT_PROBE_OUTPUT)
     parser.add_argument(
@@ -485,6 +506,7 @@ def main(argv: list[str] | None = None) -> int:
             compose_file=args.compose_file.resolve(),
             env_file=args.env_file.resolve(),
             project_name=args.project_name,
+            operation_profile=args.operation_profile,
             backup_root=args.backup_root.resolve(),
             probe_output=args.probe_output.resolve(),
             backup_id_output=args.backup_id_output.resolve(),

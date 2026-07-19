@@ -21,6 +21,7 @@ class ProductionBackupCycleTests(unittest.TestCase):
             "compose_file": root / "compose.yml",
             "env_file": root / "production.env",
             "project_name": "platform-managed-production",
+            "operation_profile": "bounded-product-dry-run",
             "backup_root": root / "backups",
             "probe_output": root / "evidence" / "probe-before.json",
             "backup_id_output": root / "evidence" / "backup-id.txt",
@@ -94,8 +95,8 @@ class ProductionBackupCycleTests(unittest.TestCase):
 
             probe_calls: list[str] = []
 
-            def probe(**_kwargs):
-                probe_calls.append("probe")
+            def probe(**kwargs):
+                probe_calls.append(kwargs["operation_profile"])
                 return {"ok": True, "summary": {"status": "ready"}}
 
             report = backup_cycle.run_backup_cycle(
@@ -105,7 +106,13 @@ class ProductionBackupCycleTests(unittest.TestCase):
             self.assertTrue(report["ok"], report["diagnostics"])
             self.assertEqual(report["summary"]["status"], "backup_cycle_ready")
             self.assertTrue(report["summary"]["runtime_recovered"])
-            self.assertEqual(len(probe_calls), 2)
+            self.assertEqual(
+                probe_calls,
+                ["bounded-product-dry-run", "bounded-product-dry-run"],
+            )
+            self.assertEqual(
+                report["operation_profile"], "bounded-product-dry-run"
+            )
             self.assertEqual(
                 (root / "evidence" / "backup-id.txt").read_text().strip(),
                 "production-20260714t120000z",
