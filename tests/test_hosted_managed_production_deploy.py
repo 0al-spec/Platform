@@ -208,7 +208,18 @@ class HostedManagedProductionDeployTests(unittest.TestCase):
             report["summary"]["enabled_operation_ids"],
             ["promotion_execute_dry_run", "review_status_execute"],
         )
+        self.assertEqual(report["summary"]["previous_enabled_operation_count"], 1)
+        self.assertEqual(report["summary"]["enabled_operation_count"], 2)
+        self.assertEqual(report["summary"]["allowlist_change"], "expanded")
         self.assertTrue(report["effects"]["operation_profile_changed"])
+        self.assertTrue(report["effects"]["operation_allowlist_expanded"])
+        self.assertFalse(report["effects"]["operation_allowlist_reduced"])
+        self.assertEqual(
+            report["effects"]["added_operation_ids"],
+            ["promotion_execute_dry_run"],
+        )
+        self.assertEqual(report["effects"]["removed_operation_ids"], [])
+        self.assertFalse(report["authority_boundary"]["may_expand_allowlist"])
 
     def test_unapproved_current_allowlist_blocks_profile_transition(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

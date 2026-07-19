@@ -320,6 +320,17 @@ class HostedManagedProductionWorkerWindowTests(unittest.TestCase):
             "PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute",
             run_commands[0],
         )
+        recovery_command = next(
+            command
+            for command in runner.commands
+            if production_window.MAINTENANCE_SERVICE in command
+        )
+        self.assertEqual(
+            recovery_command[
+                recovery_command.index("--expected-request-id") + 1
+            ],
+            REQUEST_ID,
+        )
         self.assertNotIn("must-not-leak", json.dumps(report))
         self.assertNotIn(temp_dir, json.dumps(report))
 

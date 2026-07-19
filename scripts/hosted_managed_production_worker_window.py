@@ -517,6 +517,8 @@ def execute_window(
                     "--database-url-file",
                     "/run/secrets/managed_operation_database_url",
                     "--strict",
+                    "--expected-request-id",
+                    request_id,
                 ],
                 runner=runner,
                 environment=environment,

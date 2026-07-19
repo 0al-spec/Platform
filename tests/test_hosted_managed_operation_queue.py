@@ -318,6 +318,53 @@ class HostedManagedOperationQueueTests(unittest.TestCase):
         self.assertEqual(receipts[0]["status"], "queued")
         self.assertEqual(leased_again.attempt, 2)
 
+    def test_scoped_recovery_blocks_foreign_expired_request_before_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            queue = queue_module.SQLiteManagedOperationQueue(":memory:")
+            expected = request_for(temp, "review_status_execute")
+            foreign = request_for(
+                temp,
+                "promotion_execute_dry_run",
+                workspace_id="foreign-workspace",
+            )
+            for request in (expected, foreign):
+                queue.enqueue(
+                    request,
+                    now_epoch=100,
+                    now_iso="2026-07-10T00:00:00Z",
+                )
+                leased = queue.lease_next(
+                    worker_id=f"worker-{request['workspace']['workspace_id']}",
+                    now_epoch=101,
+                    now_iso="2026-07-10T00:00:01Z",
+                    lease_seconds=10,
+                    expected_request_id=request["request_id"],
+                )
+                self.assertIsNotNone(leased)
+
+            with self.assertRaisesRegex(
+                queue_module.QueueContractError,
+                "foreign managed-operation request",
+            ):
+                queue.recover_expired(
+                    now_epoch=112,
+                    now_iso="2026-07-10T00:00:12Z",
+                    expected_request_id=expected["request_id"],
+                )
+            expected_job = queue.get(expected["request_id"])
+            foreign_job = queue.get(foreign["request_id"])
+            expected_events = queue.events(expected["request_id"])
+            foreign_events = queue.events(foreign["request_id"])
+            queue.close()
+
+        self.assertEqual(expected_job["status"], "leased")
+        self.assertEqual(foreign_job["status"], "leased")
+        self.assertEqual([item["status"] for item in expected_events], ["queued", "leased"])
+        self.assertEqual([item["status"] for item in foreign_events], ["queued", "leased"])
+
     def test_expired_consume_on_attempt_operation_is_quarantined(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)

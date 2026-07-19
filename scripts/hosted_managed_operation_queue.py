@@ -105,6 +105,7 @@ class ManagedOperationQueue(Protocol):
         now_epoch: float,
         now_iso: str,
         max_attempts: int = 3,
+        expected_request_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def operational_snapshot(self) -> dict[str, Any]: ...
@@ -591,6 +592,7 @@ class SQLiteManagedOperationQueue:
         now_epoch: float,
         now_iso: str,
         max_attempts: int = 3,
+        expected_request_id: str | None = None,
     ) -> list[dict[str, Any]]:
         recovered: list[dict[str, Any]] = []
         self.connection.execute("BEGIN IMMEDIATE")
@@ -603,6 +605,12 @@ class SQLiteManagedOperationQueue:
                 """,
                 (now_epoch,),
             ).fetchall()
+            if expected_request_id is not None and any(
+                row["request_id"] != expected_request_id for row in rows
+            ):
+                raise QueueContractError(
+                    "expired recovery includes a foreign managed-operation request"
+                )
             for row in rows:
                 request = json.loads(row["request_json"])
                 operation = request.get("operation")

@@ -587,6 +587,20 @@ def deploy(
     finally:
         candidate_path.unlink(missing_ok=True)
 
+    current_operation_ids = frozenset(current_profile.enabled_operation_ids)
+    selected_operation_ids = frozenset(selected_profile.enabled_operation_ids)
+    added_operation_ids = sorted(selected_operation_ids - current_operation_ids)
+    removed_operation_ids = sorted(current_operation_ids - selected_operation_ids)
+    allowlist_change = (
+        "expanded"
+        if added_operation_ids and not removed_operation_ids
+        else "reduced"
+        if removed_operation_ids and not added_operation_ids
+        else "changed"
+        if added_operation_ids or removed_operation_ids
+        else "unchanged"
+    )
+
     return {
         "artifact_kind": "platform_hosted_managed_production_deployment_report",
         "contract_ref": "platform.hosted-managed.production-deployment.v1",
@@ -598,6 +612,9 @@ def deploy(
             "environment_sha256": render_report["summary"]["environment_sha256"],
             "operation_profile": selected_profile.profile_id,
             "enabled_operation_ids": list(selected_profile.enabled_operation_ids),
+            "previous_enabled_operation_count": len(current_operation_ids),
+            "enabled_operation_count": len(selected_operation_ids),
+            "allowlist_change": allowlist_change,
             "queue_drained": True,
             "drain_attempt": drain_attempt,
             "postgresql_image_unchanged": True,
@@ -621,6 +638,10 @@ def deploy(
             "operation_profile_changed": (
                 current_profile.profile_id != selected_profile.profile_id
             ),
+            "operation_allowlist_expanded": bool(added_operation_ids),
+            "operation_allowlist_reduced": bool(removed_operation_ids),
+            "added_operation_ids": added_operation_ids,
+            "removed_operation_ids": removed_operation_ids,
             "enqueue_boundary_quiesced": True,
             "postgresql_volume_recreated": False,
             "managed_operation_enqueued": False,

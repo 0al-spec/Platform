@@ -473,19 +473,32 @@ class PostgreSQLManagedOperationQueue:
         now_epoch: float,
         now_iso: str,
         max_attempts: int = 3,
+        expected_request_id: str | None = None,
     ) -> list[dict[str, Any]]:
         recovered: list[dict[str, Any]] = []
         with self.connection.transaction():
             with self.connection.cursor() as cursor:
+                locking_clause = (
+                    "FOR UPDATE"
+                    if expected_request_id is not None
+                    else "FOR UPDATE SKIP LOCKED"
+                )
                 cursor.execute(
-                    """
+                    f"""
                     SELECT * FROM managed_operation_jobs
                     WHERE status IN ('leased', 'running') AND lease_expires_at <= %s
-                    ORDER BY request_id FOR UPDATE SKIP LOCKED
+                    ORDER BY request_id {locking_clause}
                     """,
                     (now_epoch,),
                 )
-                for row in cursor.fetchall():
+                rows = cursor.fetchall()
+                if expected_request_id is not None and any(
+                    row["request_id"] != expected_request_id for row in rows
+                ):
+                    raise queue_module.QueueContractError(
+                        "expired recovery includes a foreign managed-operation request"
+                    )
+                for row in rows:
                     request = self._loads(row["request_json"])
                     operation = request.get("operation")
                     operation = operation if isinstance(operation, dict) else {}

@@ -17227,6 +17227,19 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
             expired_requests,
             max_attempts=args.max_attempts,
         )
+        if args.expected_request_id:
+            preflight_findings.extend(
+                {
+                    "code": "recovery_foreign_expired_request",
+                    "request_id": item.get("request_id"),
+                    "message": (
+                        "bounded recovery found an expired request outside the "
+                        "expected worker window"
+                    ),
+                }
+                for item in expired_requests
+                if item.get("request_id") != args.expected_request_id
+            )
         preflight_blocked = args.strict and bool(preflight_findings)
         receipts = (
             []
@@ -17235,6 +17248,7 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
                 now_epoch=now_epoch,
                 now_iso=now_iso,
                 max_attempts=args.max_attempts,
+                expected_request_id=args.expected_request_id,
             )
         )
     finally:
@@ -22069,6 +22083,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help="Fail when recovery receipts violate the declared replay policy.",
+    )
+    managed_operation_recover_parser.add_argument(
+        "--expected-request-id",
+        help=(
+            "Recover only when every expired lease belongs to this exact request; "
+            "foreign expired requests block before queue mutation."
+        ),
     )
     managed_operation_recover_parser.set_defaults(func=managed_operation_queue_recover)
     managed_operation_worker_common = argparse.ArgumentParser(add_help=False)

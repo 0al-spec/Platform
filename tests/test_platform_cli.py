@@ -133,6 +133,60 @@ class PlatformCliTests(unittest.TestCase):
             self.assertIsNotNone(job)
             self.assertEqual(job["status"], "leased")
 
+    def test_strict_scoped_recovery_blocks_foreign_expired_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database = root / "managed-operations.sqlite3"
+            expected = request_for(root, "review_status_execute")
+            foreign = request_for(
+                root,
+                "promotion_execute_dry_run",
+                workspace_id="foreign-workspace",
+            )
+            queue = queue_module.SQLiteManagedOperationQueue(database)
+            try:
+                for request in (expected, foreign):
+                    queue.enqueue(
+                        request,
+                        now_epoch=100,
+                        now_iso="2026-07-10T00:00:00Z",
+                    )
+                    queue.lease_next(
+                        worker_id=f"worker-{request['workspace']['workspace_id']}",
+                        now_epoch=101,
+                        now_iso="2026-07-10T00:00:01Z",
+                        lease_seconds=10,
+                        expected_request_id=request["request_id"],
+                    )
+            finally:
+                queue.close()
+
+            result = self.run_cli(
+                "managed-operation",
+                "recover",
+                "--database",
+                str(database),
+                "--strict",
+                "--expected-request-id",
+                expected["request_id"],
+            )
+
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            report = json.loads(result.stdout)
+            self.assertTrue(report["summary"]["preflight_blocked"])
+            self.assertIn(
+                "recovery_foreign_expired_request",
+                [item["code"] for item in report["policy_findings"]],
+            )
+            queue = queue_module.SQLiteManagedOperationQueue(database)
+            try:
+                expected_job = queue.get(expected["request_id"])
+                foreign_job = queue.get(foreign["request_id"])
+            finally:
+                queue.close()
+            self.assertEqual(expected_job["status"], "leased")
+            self.assertEqual(foreign_job["status"], "leased")
+
     def test_workspace_initialize_from_request_writes_report_only_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
