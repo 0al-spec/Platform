@@ -11696,6 +11696,56 @@ workspaces:
                 ).is_file()
             )
 
+    def test_product_candidate_promotion_review_status_blocks_closed_review(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            execution_report, _workspace_dir, _open_review_report = (
+                self.write_product_candidate_promotion_execution_report(tmp_root)
+            )
+            fake_gh = self.write_fake_gh_view(
+                tmp_root,
+                {
+                    "number": 123,
+                    "url": "https://github.com/example/repo/pull/123",
+                    "state": "CLOSED",
+                    "isDraft": False,
+                    "mergedAt": None,
+                    "mergeCommit": None,
+                    "headRefName": "graph-candidate/idea-alpha",
+                    "baseRefName": "main",
+                    "reviewDecision": "",
+                },
+            )
+
+            result = self.run_cli(
+                "product-candidate-promotion",
+                "review-status",
+                "--execution-report",
+                str(execution_report),
+                "--gh-bin",
+                str(fake_gh),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["review_state"], "closed")
+        self.assertEqual(
+            payload["summary"]["status"],
+            "review_closed_without_merge",
+        )
+        self.assertFalse(payload["summary"]["review_merged"])
+        publish_operation = next(
+            operation
+            for operation in payload["operations"]
+            if operation["name"] == "publish_read_model"
+        )
+        self.assertEqual(publish_operation["status"], "blocked_review_closed")
+        self.assertIn("cannot authorize", publish_operation["reason"])
+
     def test_product_candidate_promotion_review_object_evidence_is_probe_only(
         self,
     ) -> None:

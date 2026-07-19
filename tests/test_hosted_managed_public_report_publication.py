@@ -526,6 +526,37 @@ class HostedManagedPublicReportPublicationTests(unittest.TestCase):
         self.assertFalse(report["summary"]["review_merged"])
         self.assertFalse(report["summary"]["read_model_published"])
 
+    def test_review_status_normalizes_legacy_closed_status_without_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "status.json"
+            window = root / "window.json"
+            payload = self.review_status()
+            payload["review_state"] = "closed"
+            payload["pull_request"]["state"] = "CLOSED"
+            payload["graph_repository_review_status"]["review_state"] = "closed"
+            # This is the immutable status emitted by the pre-fix producer.
+            payload["summary"]["status"] = "waiting_for_review_merge"
+            write_json(source, payload)
+            write_json(window, self.worker_window(sha256(source)))
+
+            report, provenance = publication.build_review_status_report(
+                worker_window_path=window.resolve(),
+                source_report_path=source.resolve(),
+            )
+
+        self.assertEqual(report["review_state"], "closed")
+        self.assertEqual(
+            report["summary"]["status"],
+            "review_closed_without_merge",
+        )
+        self.assertEqual(
+            report["graph_repository_review_status"]["summary"]["status"],
+            "review_closed_without_merge",
+        )
+        self.assertFalse(report["summary"]["review_merged"])
+        self.assertEqual(provenance["attempt"], 1)
+
     def test_review_status_rejects_probe_foreign_branch_and_state_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

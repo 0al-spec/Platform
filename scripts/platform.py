@@ -14528,10 +14528,18 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
         ),
         product_candidate_promotion_operation(
             name="publish_read_model",
-            status="ready" if review_merged else "blocked_until_review_merge",
+            status=(
+                "ready"
+                if review_merged
+                else "blocked_review_closed"
+                if review_state == "closed"
+                else "blocked_until_review_merge"
+            ),
             reason=(
                 "review is merged and read-model publication may be requested"
                 if review_merged
+                else "closed review cannot authorize read-model publication"
+                if review_state == "closed"
                 else "read-model publication waits for merged review"
             ),
             evidence=[str(graph_repository_report_path or expected_graph_repository_report_path)],
@@ -14598,6 +14606,8 @@ def product_candidate_promotion_review_status(args: argparse.Namespace) -> int:
             if ok and review_probe_only
             else "ready_for_read_model_publication"
             if ok and review_merged
+            else "review_closed_without_merge"
+            if ok and review_state == "closed"
             else "waiting_for_review_merge"
             if ok
             else "failed",
