@@ -2,18 +2,18 @@ name: specspace
 
 services:
   app:
-    image: "ghcr.io/0al-spec/specspace-ui@sha256:8ce3ab58e5d9ebf6656c5c27989a9344569b69d49eab72fbc8d338f5ecba6ce7"
+    image: "ghcr.io/0al-spec/specspace-ui@sha256:229039267c3fd668350fe82797a7e7fd1d8b95e4df90a2a91d55fbb33b08ff87"
     ports:
       - "8080:80"
     depends_on:
       - specspace-api
 
   specspace-api:
-    image: "ghcr.io/0al-spec/specspace-api@sha256:34ca424883cedabd0365a7d81ba6cd18159f4922f2e2c886c283d0ed14407802"
+    image: "ghcr.io/0al-spec/specspace-api@sha256:fc1f39eb675a368dcd75a629ec69a57113608d2a21c35ba5fdeb1d9df0a0034f"
     environment:
-      SPECSPACE_API_IMAGE_REF: "ghcr.io/0al-spec/specspace-api@sha256:34ca424883cedabd0365a7d81ba6cd18159f4922f2e2c886c283d0ed14407802"
-      SPECSPACE_UI_IMAGE_REF: "ghcr.io/0al-spec/specspace-ui@sha256:8ce3ab58e5d9ebf6656c5c27989a9344569b69d49eab72fbc8d338f5ecba6ce7"
-      SPECSPACE_RELEASE_COMMIT: "de14356525ee9245a5033bdae344d40c837d6049"
+      SPECSPACE_API_IMAGE_REF: "ghcr.io/0al-spec/specspace-api@sha256:fc1f39eb675a368dcd75a629ec69a57113608d2a21c35ba5fdeb1d9df0a0034f"
+      SPECSPACE_UI_IMAGE_REF: "ghcr.io/0al-spec/specspace-ui@sha256:229039267c3fd668350fe82797a7e7fd1d8b95e4df90a2a91d55fbb33b08ff87"
+      SPECSPACE_RELEASE_COMMIT: "87d022f1f980a6c12258c80544e7553412f9e5ad"
       SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED: "true"
       SPECSPACE_HYPERPROMPT_WORK_DIR: "/tmp"
       SPECSPACE_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS: "60"
@@ -25,7 +25,7 @@ services:
       SPECSPACE_HOSTED_MANAGED_EXECUTOR_TIMEOUT_SECONDS: "5"
       SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN:
       SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "persistent"
-      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "promotion_execute_dry_run,review_status_execute"
+      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "review_status_execute"
       SPECSPACE_EXTERNAL_STATE_ENABLED: "true"
       SPECSPACE_EXTERNAL_STATE_URL: "https://managed.specgraph.tech/specspace-state"
       SPECSPACE_EXTERNAL_STATE_TOKEN:
@@ -56,7 +56,7 @@ services:
       - --hosted-managed-state-durability
       - persistent
       - --hosted-managed-operation-allowlist
-      - promotion_execute_dry_run,review_status_execute
+      - review_status_execute
       - --enable-external-state
       - --external-state-url
       - "https://managed.specgraph.tech/specspace-state"
