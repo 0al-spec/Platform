@@ -344,16 +344,17 @@ Operational measurements inside item 4 do not expand production authority.
      pre/post backup and off-host export, immediate rollback, and a healthy
      final probe. The default allowlist is again `review_status_execute`, the
      worker is stopped, and another window requires a new decision;
-   - the next bounded product slice is the explicit
+   - the bounded product slice now uses the explicit
      `bounded-product-dry-run` deployment profile from
      [Hosted Bounded Product Operations Rollout Proposal](hosted-managed-bounded-product-rollout-proposal.md).
      Platform may advertise `promotion_execute_dry_run` and
      `review_status_execute` together, and the persistent Timeweb SpecSpace
      client may opt into the same two-operation maximum. The worker remains
      stopped, continuous mode is forbidden, and each host window narrows the
-     worker container to one policy and one exact request. Production rollout,
-     two UI-originated requests, post-operation backup, and rollback evidence
-     remain pending;
+     worker container to one policy and one exact request. The production
+     rollout, both UI-originated operation windows, digest checks, final smoke,
+     backup/restore smoke, and encrypted off-host export have passed. Any
+     additional operation or continuous worker remains a separate proposal;
    - connect the enabled hosted operations to SpecSpace lifecycle actions and
      observability before proposing any irreversible Git or publication action.
      The deployment contract now has a fail-closed Timeweb bounded-canary
