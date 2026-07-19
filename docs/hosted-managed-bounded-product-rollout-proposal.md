@@ -1,6 +1,6 @@
 # Hosted Bounded Product Operations Rollout Proposal
 
-Status: **contract implemented; production rollout pending**
+Status: **production rollout accepted**
 
 Deployment profile: `bounded-product-dry-run`
 
@@ -137,6 +137,44 @@ evidence and the existing Git review provenance.
    drained, then use the existing `review-status` window.
 9. Re-run Platform probe and SpecSpace smoke with the worker stopped.
 10. Take a post-operation backup and encrypted off-host export.
+
+## Recorded Production Acceptance
+
+The production rollout completed on 2026-07-19 UTC against the bound
+`hosted-operation-canary` workspace.
+
+- Platform and the persistent Timeweb SpecSpace client exposed exactly
+  `promotion_execute_dry_run` and `review_status_execute`.
+- UI-originated promotion dry-run window
+  `promotion-dry-run-20260719t232321z` completed at `attempt=1`. The queue
+  drained and the request-scoped Platform reports were pinned as
+  `087b40a5124bef9a7eeca3b8656507dd202de87cbde91b4772a95a59f1877709`
+  and
+  `6e53df40b53b751563d9081e0f892d853e5b1d29d8e6052f9bea06b1eebb1ff5`.
+- The dry-run created no worktree, branch, commit, pull request, read model,
+  canonical spec mutation, or Ontology write. The canonical non-dry-run
+  promotion report remained separate from the request-scoped diagnostic
+  outputs.
+- A pre-acceptance review-status inspection exposed a stale restoration of the
+  closed duplicate PR `#683`; it was rejected as rollout evidence. The
+  canonical promotion report for merged PR `#701` was restored from the
+  previously verified production backup.
+- The fresh UI-originated review-status window
+  `review-status-20260719t232834z` then completed at `attempt=1`, inspected
+  merged PR `#701`, drained the queue, and pinned report SHA-256
+  `2d145dfc52ecf1c0443741c9c467c84c37efa13bde0ac215d8239bf4b94e4d17`.
+- The final production probe reported five healthy services, the exact
+  two-operation profile, and `worker_mode=stopped`. Platform's independent
+  SpecSpace smoke passed all 17 checks; the Product Workspace remained
+  published with all seven lifecycle phases complete.
+- Post-operation backup `production-20260719t234024z`, dual-database isolated
+  restore smoke, and runtime recovery passed. The encrypted off-host archive
+  was written with SHA-256
+  `f4b44cfddea8f115de4fb01b839fbe9c21abf623c522169a2378170f22264c4d`.
+
+Platform PR `#191` made the backup cycle preserve and validate the active
+deployment profile before backup and after restart. This accepted rollout does
+not authorize a continuous worker or any additional operation.
 
 ## Rollback
 

@@ -1415,7 +1415,7 @@ persistent worker, another dry-run window, or an irreversible operation.
 
 ### Bounded product dry-run deployment profile
 
-The next tracked product profile is `bounded-product-dry-run`. It keeps the
+The accepted bounded product profile is `bounded-product-dry-run`. It keeps the
 production HTTP service available for both independently proven operations:
 
 ```text
@@ -1503,8 +1503,8 @@ Proceed from the signed-off baseline in bounded stages:
 3. preserve the completed fresh `review_status_execute` pilot evidence and keep
    the worker stopped between bounded windows;
 4. preserve the completed one-shot `promotion_execute_dry_run` production
-   evidence and use the tracked `bounded-product-dry-run` proposal for the next
-   explicit service/client allowlist expansion;
+   evidence and the accepted `bounded-product-dry-run` service/client
+   allowlist;
 5. expose only the enabled operations through SpecSpace hosted lifecycle UX;
 6. propose irreversible Git review or publication operations one at a time.
 

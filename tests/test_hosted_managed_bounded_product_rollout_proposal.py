@@ -30,7 +30,10 @@ class HostedManagedBoundedProductRolloutProposalTests(unittest.TestCase):
     def test_proposal_keeps_workers_operation_specific_and_stopped(self) -> None:
         text = " ".join(PROPOSAL.read_text(encoding="utf-8").split())
 
-        self.assertIn("contract implemented; production rollout pending", text)
+        self.assertIn("production rollout accepted", text)
+        self.assertIn("promotion-dry-run-20260719t232321z", text)
+        self.assertIn("review-status-20260719t232834z", text)
+        self.assertIn("production-20260719t234024z", text)
         self.assertIn("The production worker remains stopped by default", text)
         self.assertIn(
             "every worker window narrows its container allowlist to exactly one operation",
