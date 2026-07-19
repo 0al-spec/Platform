@@ -140,7 +140,7 @@ evidence and the existing Git review provenance.
 
 ## Recorded Production Acceptance
 
-The production rollout completed on 2026-07-20 against the bound
+The production rollout completed on 2026-07-19 UTC against the bound
 `hosted-operation-canary` workspace.
 
 - Platform and the persistent Timeweb SpecSpace client exposed exactly
