@@ -19,12 +19,23 @@ import urllib.request
 PACKET_ARTIFACT_KIND = "platform_hosted_managed_publication_packet"
 PACKET_CONTRACT_REF = "platform.hosted-managed.public-report-publication.v1"
 WORKSPACE_ID = "hosted-operation-canary"
-OPERATION_ID = "review_status_execute"
+REVIEW_STATUS_OPERATION_ID = "review_status_execute"
+READ_MODEL_PUBLICATION_OPERATION_ID = "read_model_publication_execute"
+OPERATION_ID = REVIEW_STATUS_OPERATION_ID
 CANDIDATE_BRANCH = "graph-candidate/hosted-operation-canary"
 REVIEW_OBJECT_REF = "runs/product_candidate_promotion_review_object_evidence.json"
 REVIEW_STATUS_REF = "runs/product_candidate_promotion_review_status_report.json"
+READ_MODEL_PUBLICATION_REF = (
+    "runs/product_candidate_promotion_read_model_publication_report.json"
+)
 REVIEW_OBJECT_KIND = "platform_product_candidate_promotion_review_object_evidence"
 REVIEW_STATUS_KIND = "platform_product_candidate_promotion_review_status_report"
+READ_MODEL_PUBLICATION_KIND = (
+    "platform_product_candidate_promotion_read_model_publication_report"
+)
+GRAPH_READ_MODEL_PUBLICATION_KIND = (
+    "platform_graph_repository_publish_read_model_report"
+)
 PROMOTION_EXECUTION_KIND = "platform_product_candidate_promotion_execution_report"
 WORKER_WINDOW_KIND = "platform_hosted_managed_worker_window_report"
 WORKER_WINDOW_CONTRACT_REF = "platform.hosted-managed.worker-window.v1"
@@ -222,14 +233,17 @@ def _review_url(value: Any, number: Any) -> tuple[str, int]:
     return review_url, review_number
 
 
-def _public_authority_boundary() -> dict[str, bool]:
+def _public_authority_boundary(
+    *,
+    publishes_read_models: bool = False,
+) -> dict[str, bool]:
     return {
         "accepts_arbitrary_commands": False,
         "creates_git_commits": False,
         "merges_pull_requests": False,
         "mutates_canonical_specs": False,
         "opens_pull_requests": False,
-        "publishes_read_models": False,
+        "publishes_read_models": publishes_read_models,
         "writes_ontology_packages": False,
         "accepts_ontology_terms": False,
     }
@@ -290,13 +304,19 @@ def validate_packet_for_dispatch(packet: dict[str, Any]) -> None:
     expected_kind = {
         REVIEW_OBJECT_REF: REVIEW_OBJECT_KIND,
         REVIEW_STATUS_REF: REVIEW_STATUS_KIND,
+        READ_MODEL_PUBLICATION_REF: READ_MODEL_PUBLICATION_KIND,
+    }.get(logical_ref)
+    expected_operation_id = {
+        REVIEW_OBJECT_REF: REVIEW_STATUS_OPERATION_ID,
+        REVIEW_STATUS_REF: REVIEW_STATUS_OPERATION_ID,
+        READ_MODEL_PUBLICATION_REF: READ_MODEL_PUBLICATION_OPERATION_ID,
     }.get(logical_ref)
     if (
         packet.get("artifact_kind") != PACKET_ARTIFACT_KIND
         or packet.get("contract_ref") != PACKET_CONTRACT_REF
         or packet.get("schema_version") != 1
         or packet.get("workspace_id") != WORKSPACE_ID
-        or packet.get("operation_id") != OPERATION_ID
+        or packet.get("operation_id") != expected_operation_id
         or expected_kind is None
         or report.get("artifact_kind") != expected_kind
         or packet.get("publication_scope")
@@ -695,17 +715,167 @@ def build_review_status_report(
     return report, provenance
 
 
+def build_read_model_publication_report(
+    *,
+    worker_window_path: Path,
+    review_status_report_path: Path,
+    source_report_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    source = _load_json(
+        source_report_path,
+        label="read-model publication report",
+    )
+    public_review_status, review_provenance = build_review_status_report(
+        worker_window_path=worker_window_path,
+        source_report_path=review_status_report_path,
+    )
+    workspace_id, candidate_id, candidate_branch = _identity(source)
+    review_summary = _record(public_review_status.get("summary"))
+    pull_request = _record(public_review_status.get("pull_request"))
+    child = _record(source.get("graph_repository_publish_read_model"))
+    child_summary = _record(child.get("summary"))
+    source_summary = _record(source.get("summary"))
+    source_review_ref = _text(source.get("product_review_status_report_ref"))
+    source_review_digest = _text(
+        source.get("product_review_status_report_sha256")
+    )
+    expected_review_digest = _file_sha256(review_status_report_path)
+    source_authority = _record(source.get("authority_boundary"))
+    if (
+        source.get("artifact_kind") != READ_MODEL_PUBLICATION_KIND
+        or source.get("schema_version") != 1
+        or source.get("ok") is not True
+        or source.get("dry_run") is not False
+        or source.get("workflow_lane") != "product_idea_to_spec"
+        or source.get("review_state") != "merged"
+        or source_review_ref is None
+        or Path(source_review_ref).name != Path(REVIEW_STATUS_REF).name
+        or source_review_digest != expected_review_digest
+        or public_review_status.get("workspace_id") != workspace_id
+        or public_review_status.get("candidate_id") != candidate_id
+        or public_review_status.get("candidate_branch") != candidate_branch
+        or public_review_status.get("review_probe_only") is not False
+        or public_review_status.get("review_state") != "merged"
+        or review_summary.get("status") != "ready_for_read_model_publication"
+        or review_summary.get("review_merged") is not True
+        or review_summary.get("read_model_published") is not False
+        or source_summary.get("status") != "published"
+        or source_summary.get("read_model_published") is not True
+        or source_summary.get("review_merged") is not True
+        or source_summary.get("error_count") != 0
+        or child.get("artifact_kind") != GRAPH_READ_MODEL_PUBLICATION_KIND
+        or child.get("ok") is not True
+        or child.get("dry_run") is not False
+        or child.get("review_state") != "merged"
+        or child_summary.get("published") is not True
+        or child_summary.get("error_count") != 0
+        or _non_negative_int(child_summary.get("file_count")) in {None, 0}
+        or source_authority.get("publishes_read_models") is not True
+        or not _strict_false_boundary(
+            source_authority,
+            required=(
+                "executes_git_commands",
+                "opens_pull_requests",
+                "merges_pull_requests",
+                "canonical_spec_mutation_without_review",
+                "ontology_package_write",
+                "ontology_term_acceptance",
+                "private_artifact_publication",
+                "specspace_direct_git_write",
+            ),
+            allowed_true=("publishes_read_models",),
+        )
+    ):
+        raise PublicationError(
+            "read-model publication report is not public-publication ready"
+        )
+
+    review_url, review_number = _review_url(
+        pull_request.get("url"),
+        pull_request.get("number"),
+    )
+    merge_commit = _record(pull_request.get("mergeCommit"))
+    merge_sha = _text(merge_commit.get("oid"))
+    if merge_sha is None or not re.fullmatch(r"[0-9a-f]{40}", merge_sha):
+        raise PublicationError("merged review status does not pin a merge commit")
+
+    report = {
+        "schema_version": 1,
+        "artifact_kind": READ_MODEL_PUBLICATION_KIND,
+        "generated_at": _text(source.get("generated_at")) or _now_iso(),
+        "ok": True,
+        "dry_run": False,
+        "workflow_lane": "product_idea_to_spec",
+        "workspace_id": workspace_id,
+        "candidate_id": candidate_id,
+        "candidate_branch": candidate_branch,
+        "review_state": "merged",
+        "product_review_status_report_ref": REVIEW_STATUS_REF,
+        "product_review_status_report_sha256": hashlib.sha256(
+            _json_bytes(public_review_status)
+        ).hexdigest(),
+        "review": {
+            "url": review_url,
+            "number": review_number,
+            "merge_commit_sha": merge_sha,
+        },
+        "graph_repository_publish_read_model": {
+            "artifact_kind": GRAPH_READ_MODEL_PUBLICATION_KIND,
+            "ok": True,
+            "dry_run": False,
+            "review_state": "merged",
+            "summary": {
+                "published": True,
+                "file_count": child_summary["file_count"],
+                "error_count": 0,
+            },
+        },
+        "authority_boundary": _public_authority_boundary(
+            publishes_read_models=True
+        ),
+        "privacy_boundary": _public_privacy_boundary(),
+        "diagnostics": [],
+        "summary": {
+            "status": "published",
+            "review_merged": True,
+            "read_model_published": True,
+            "published_file_count": child_summary["file_count"],
+            "published_manifest_ref": "artifact_manifest.json",
+            "error_count": 0,
+        },
+    }
+    provenance = {
+        "source_artifact_kind": READ_MODEL_PUBLICATION_KIND,
+        "source_sha256": _file_sha256(source_report_path),
+        "source_review_status_sha256": expected_review_digest,
+        "public_review_status_sha256": report[
+            "product_review_status_report_sha256"
+        ],
+        "worker_window_sha256": _file_sha256(worker_window_path),
+        "window_id": review_provenance.get("window_id"),
+        "attempt": review_provenance.get("attempt"),
+        "request_id_sha256": review_provenance.get("request_id_sha256"),
+        "review_number": review_number,
+        "review_head_sha": review_provenance.get("review_head_sha"),
+        "review_merge_sha": merge_sha,
+    }
+    return report, provenance
+
+
 def build_packet(
     *,
     logical_ref: str,
     report: dict[str, Any],
     provenance: dict[str, Any],
 ) -> dict[str, Any]:
-    if logical_ref not in {REVIEW_OBJECT_REF, REVIEW_STATUS_REF}:
+    expected_kind_by_ref = {
+        REVIEW_OBJECT_REF: REVIEW_OBJECT_KIND,
+        REVIEW_STATUS_REF: REVIEW_STATUS_KIND,
+        READ_MODEL_PUBLICATION_REF: READ_MODEL_PUBLICATION_KIND,
+    }
+    if logical_ref not in expected_kind_by_ref:
         raise PublicationError("publication logical ref is not allowlisted")
-    expected_kind = (
-        REVIEW_OBJECT_KIND if logical_ref == REVIEW_OBJECT_REF else REVIEW_STATUS_KIND
-    )
+    expected_kind = expected_kind_by_ref[logical_ref]
     if report.get("artifact_kind") != expected_kind:
         raise PublicationError("publication report kind does not match its logical ref")
     report_bytes = _json_bytes(report)
@@ -715,7 +885,11 @@ def build_packet(
         "contract_ref": PACKET_CONTRACT_REF,
         "generated_at": _now_iso(),
         "workspace_id": WORKSPACE_ID,
-        "operation_id": OPERATION_ID,
+        "operation_id": (
+            READ_MODEL_PUBLICATION_OPERATION_ID
+            if logical_ref == READ_MODEL_PUBLICATION_REF
+            else REVIEW_STATUS_OPERATION_ID
+        ),
         "logical_ref": logical_ref,
         "public_report_sha256": hashlib.sha256(report_bytes).hexdigest(),
         "report": report,
@@ -857,6 +1031,12 @@ def parser() -> argparse.ArgumentParser:
     review_status.add_argument("--source-report", required=True)
     review_status.add_argument("--output", required=True)
 
+    read_model_publication = subparsers.add_parser("read-model-publication")
+    read_model_publication.add_argument("--worker-window-report", required=True)
+    read_model_publication.add_argument("--review-status-report", required=True)
+    read_model_publication.add_argument("--source-report", required=True)
+    read_model_publication.add_argument("--output", required=True)
+
     dispatch = subparsers.add_parser("dispatch")
     dispatch.add_argument("--packet", required=True)
     dispatch.add_argument("--github-token-file", required=True)
@@ -886,6 +1066,19 @@ def main() -> int:
             )
             payload = build_packet(
                 logical_ref=REVIEW_STATUS_REF,
+                report=report,
+                provenance=provenance,
+            )
+        elif args.command == "read-model-publication":
+            report, provenance = build_read_model_publication_report(
+                worker_window_path=Path(args.worker_window_report).resolve(),
+                review_status_report_path=Path(
+                    args.review_status_report
+                ).resolve(),
+                source_report_path=Path(args.source_report).resolve(),
+            )
+            payload = build_packet(
+                logical_ref=READ_MODEL_PUBLICATION_REF,
                 report=report,
                 provenance=provenance,
             )

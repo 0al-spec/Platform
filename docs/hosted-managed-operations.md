@@ -879,7 +879,8 @@ The packet contract is
 `platform.hosted-managed.public-report-publication.v1`. It permits only:
 
 - `runs/product_candidate_promotion_review_object_evidence.json`;
-- `runs/product_candidate_promotion_review_status_report.json`.
+- `runs/product_candidate_promotion_review_status_report.json`;
+- `runs/product_candidate_promotion_read_model_publication_report.json`.
 
 The projection removes commands, command results, local paths, raw request
 payloads, secret values, and arbitrary diagnostic text. Review-status
@@ -891,6 +892,15 @@ as diagnostic review evidence: it may move the workspace to
 including after the probed PR is merged. Both report kinds are pinned to
 `graph-candidate/hosted-operation-canary`; a similarly named foreign candidate
 branch is rejected.
+
+Read-model publication evidence is accepted only after a non-probe merged
+review-status report has completed in a bounded worker window at `attempt=1`.
+The private publication producer pins the source review-status SHA-256. The
+public projection then pins the sanitized review-status SHA-256, merged review
+identity, merge commit, and published file count. Its
+`publishes_read_models=true` field records authority that was already exercised;
+the dispatch packet and SpecGraph overlay remain unable to publish a read model
+or repeat the operation.
 
 An execution-backed review that GitHub reports as `closed` without merge is
 published as `review_closed_without_merge`. It is a terminal blocker for that
@@ -913,6 +923,12 @@ python3 scripts/hosted_managed_public_report_publication.py review-status \
   --worker-window-report /srv/0al/specgraph/runs/managed-worker-windows/<window>.json \
   --source-report /srv/0al/specgraph/runs/hosted-operation-canary/product_candidate_promotion_review_status_report.json \
   --output /srv/0al/reports/review-status-publication-packet.json
+
+python3 scripts/hosted_managed_public_report_publication.py read-model-publication \
+  --worker-window-report /srv/0al/specgraph/runs/managed-worker-windows/<window>.json \
+  --review-status-report /srv/0al/specgraph/runs/hosted-operation-canary/product_candidate_promotion_review_status_report.json \
+  --source-report /srv/0al/specgraph/runs/hosted-operation-canary/product_candidate_promotion_read_model_publication_report.json \
+  --output /srv/0al/reports/read-model-publication-packet.json
 ```
 
 Dispatch remains pinned to `0al-spec/SpecGraph`,
@@ -920,9 +936,9 @@ Dispatch remains pinned to `0al-spec/SpecGraph`,
 
 ```bash
 python3 scripts/hosted_managed_public_report_publication.py dispatch \
-  --packet /srv/0al/reports/review-status-publication-packet.json \
+  --packet /srv/0al/reports/<bounded-publication-packet>.json \
   --github-token-file /srv/0al/secrets/github-token \
-  --output /srv/0al/reports/review-status-publication-dispatch.json
+  --output /srv/0al/reports/<bounded-publication-dispatch>.json
 ```
 
 An accepted GitHub dispatch is transport evidence, not publication completion.

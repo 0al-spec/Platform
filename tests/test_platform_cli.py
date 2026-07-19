@@ -12194,6 +12194,10 @@ workspaces:
             self.assertTrue(payload["ok"], payload["diagnostics"])
             self.assertEqual(payload["summary"]["status"], "published")
             self.assertTrue(payload["summary"]["read_model_published"])
+            self.assertEqual(
+                payload["product_review_status_report_sha256"],
+                hashlib.sha256(status_output.read_bytes()).hexdigest(),
+            )
             self.assertTrue(payload["authority_boundary"]["publishes_read_models"])
             self.assertFalse(payload["authority_boundary"]["merges_pull_requests"])
             self.assertFalse(payload["authority_boundary"]["ontology_package_write"])

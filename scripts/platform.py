@@ -14756,6 +14756,9 @@ def product_candidate_promotion_publish_read_model(
         "artifact_kind": PRODUCT_CANDIDATE_PROMOTION_READ_MODEL_PUBLICATION_REPORT_KIND,
         "generated_at": utc_now_iso(),
         "product_review_status_report_ref": str(review_status_report_path),
+        "product_review_status_report_sha256": file_sha256(
+            review_status_report_path
+        ),
         "graph_repository_review_status_report_ref": None
         if graph_repository_report_path is None
         else str(graph_repository_report_path),
