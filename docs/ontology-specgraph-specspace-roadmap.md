@@ -362,16 +362,19 @@ Operational measurements inside item 4 do not expand production authority.
      execution that opened the candidate PR. Continuous read-only execution
      remains a later operating-policy decision.
    - bounded parallel static upload is implemented in SpecGraph PR `#692`.
-   - bounded hosted-report publication is being added as a one-report,
-     public-safe Platform packet consumed by the existing checksum-aware
-     SpecGraph workspace deployment. Authoritative worker reports stay private;
-     only sanitized review-object, review-status, or completed read-model
-     publication projections may enter the public workspace bundle. Final
-     publication evidence must be pinned to the current non-probe merged review
-     status and its `attempt=1` bounded worker window.
-     Measure the next production publications to confirm the transfer-time
-     effect; producer-side timestamp churn remains a separate follow-up and
-     manifest digest verification must not be weakened;
+   - bounded hosted-report publication is implemented and production-proven for
+     `hosted-operation-canary`. Platform emits one public-safe packet and
+     SpecGraph consumes it through the existing checksum-aware workspace
+     deployment. Authoritative worker reports remain private. The production
+     chain published merged review status for PR `#701`, then a 1,530-file
+     read-model publication report, with both public projections pinned by
+     SHA-256 and retained in the authoritative workspace manifest. Idea
+     Maturity reached `read_model_publication_complete`, SpecSpace production
+     smoke passed 17 of 17 checks, and post-operation backup/restore and
+     off-host export passed. Fresh workflow checkouts now validate and
+     rehydrate the current public merged-review predecessor before lifecycle
+     refresh. Producer-side timestamp churn remains a follow-up and manifest
+     digest verification must not be weakened;
    - migrate public SpecGraph artifacts from the current FTP/FTPS/SFTP origin
      to S3-compatible object storage with HTTPS/CDN delivery. Keep hosted
      Platform private reports and execution state outside the public origin.
@@ -397,14 +400,14 @@ Operational measurements inside item 4 do not expand production authority.
    `legacy_read_only` compatibility. The production rollout slice now adds an
    isolated state database/role/volume, TLS routing, independent secrets,
    dual-database backup/restore smoke, and a controlled environment-inventory
-   upgrade. Production execution remains disabled until deployment, migration,
-   restart persistence, bounded canary, encrypted off-host backup, and rollback
-   evidence are captured. The production VPS now runs the isolated PostgreSQL
-   state service with its worker stopped. The remaining cutover is the
-   sanitizer-compatible Timeweb external-state profile, migration/restart
-   evidence, dual-database backup, and one bounded read-only canary. The service
-   profile must consume App-bound Timeweb runtime variables through value-less
-   Compose environment keys: production deployment evidence showed that
+   upgrade. The production VPS runs the isolated PostgreSQL state service with
+   its worker stopped, and Timeweb SpecSpace consumes it through the
+   sanitizer-compatible external-state profile. Restart persistence, the
+   bounded read-only canary, dual-database backup/restore, encrypted off-host
+   export, provider readiness, and production workspace smoke are complete for
+   the current `review_status_execute` allowlist. The service profile consumes
+   App-bound Timeweb runtime variables through value-less Compose environment
+   keys: production deployment evidence showed that
    `${TOKEN}` expansion runs too early and that omitted keys are not injected
    into a secondary Compose service. Neither form reaches SpecSpace safely. The
    service
@@ -458,21 +461,21 @@ The next major slices must land in this order:
    retention, and backup/restore support. SpecSpace consumes that service while
    preserving its browser-facing API and authority boundary. Local files remain
    a development adapter and private worker mirror, not production authority.
-2. **Production managed-mode rollout.** In progress. Deploy the isolated state
-   service with the existing read-only operation allowlist and a stopped worker;
-   migrate and verify file state; prove restart persistence, concurrent-write
-   behavior, provider-failure handling, encrypted backup, restore, and rollback;
-   then use one bounded `review_status_execute` window before considering a
-   continuous worker or any wider allowlist.
+2. **Production managed-mode rollout.** Completed for the current bounded
+   `review_status_execute` profile. The isolated state service, restart
+   persistence, provider readiness, bounded worker execution, public
+   review-to-publication lifecycle, encrypted backup, isolated restore smoke,
+   and final production smoke are verified. Continuous workers and wider
+   operation allowlists remain separate rollout decisions.
 3. **Ontology applicability consumers.** Completed. Ontology ONT-040 remains
    the source of truth for `ModelApplicabilityProfile` and review-only
    structural change classification; SpecGraph proposal `0216` and the
    SpecSpace consumer are merged.
 
-The transition criterion between items 1 and 2 is operational evidence, not
-artifact presence. The transition criterion between items 2 and 3 is a stable
-production state/execution boundary so ontology UX work does not hide unresolved
-durability risks.
+The transition criterion between items 1 and 2 was operational evidence, not
+artifact presence. That criterion is now satisfied for the bounded production
+profile. Future allowlist expansion still requires operation-specific evidence;
+the completed rollout is not blanket execution authority.
 
 Platform should not introduce a separate task-tracking CLI yet. Markdown
 roadmaps plus GitHub PR history remain the source of truth. If automation is
