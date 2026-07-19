@@ -1092,6 +1092,59 @@ state until a separate rollout decision chooses one of the following:
 - propose an allowlist expansion with operation-specific recovery, monitoring,
   and rollback evidence.
 
+### Recorded review-to-publication lifecycle status
+
+On 2026-07-19 the dedicated `hosted-operation-canary` workspace completed the
+first production review-to-publication lifecycle. SpecGraph review PR
+[`#701`](https://github.com/0al-spec/SpecGraph/pull/701) promoted 59 approved
+candidate paths from branch `graph-candidate/hosted-operation-canary`. The
+review merged as commit
+`f6372bf6e19d5573780dea00aed65cb971e5251e`.
+
+Platform inspected the merged review through bounded worker window
+`review-status-pr701-20260719t104231z`. The request completed at `attempt=1`,
+the queue drained, and the worker stopped. The private authoritative
+review-status report remained on the VPS. Its public-safe projection was
+published with SHA-256
+`c476793f4eee35be202d923ca5deddae50eb191018363e9033ef0c623a796d8f`.
+The completed read model contained 1,530 files; its public-safe publication
+report was published with SHA-256
+`c1d3933e720e50c3fd02fbfc314b6ea0f85541d188a182c1af52949f9b0968b5`.
+Both reports are authoritative members of the scoped workspace manifest.
+
+SpecGraph PRs
+[`#703`](https://github.com/0al-spec/SpecGraph/pull/703) and
+[`#704`](https://github.com/0al-spec/SpecGraph/pull/704) closed two issues found
+by the production publication:
+
+- a fresh workflow checkout must validate final publication against the
+  currently published merged review status, not absent tracked predecessor
+  state;
+- after validation, that predecessor must be rehydrated into the ephemeral
+  scoped run directory so lifecycle refresh and the new manifest retain a
+  coherent review-to-publication chain.
+
+The final SpecGraph workflow run
+[`29685175381`](https://github.com/0al-spec/SpecGraph/actions/runs/29685175381)
+passed overlay validation, checksum-aware incremental upload, and HTTPS digest
+verification. Public Idea Maturity reported `status=ready`,
+`lifecycle_state=read_model_publication_complete`, `review_status=merged`, and
+zero remaining blockers. Platform's independent SpecSpace production smoke
+passed 17 of 17 checks against
+`https://specgraph.space/hosted-operation-canary`: the workspace used its
+scoped artifact base, showed `hosted_managed_ready`, exposed no write-capable
+authority, and served no legacy ContextBuilder shell.
+
+Post-operation backup cycle `production-20260719t113742z` passed the
+dual-database backup, isolated restore smoke, runtime restart, and final
+production probe. The encrypted off-host archive was copied to the configured
+second failure domain and its SHA-256
+`754d6179ea3c78f88c90a997aa10fef731848c945dae657d699bfd5f94279ec4`
+was verified. The steady state remains unchanged: the allowlist contains only
+`review_status_execute`, the worker is stopped, PostgreSQL and the authenticated
+services remain healthy, and another operation or persistent worker requires a
+separate rollout decision.
+
 Do not replay the signed-off request as a new semantic probe. Its idempotency
 key must continue to resolve to the existing receipt. A fresh probe requires a
 new open review object, validated input evidence, and a new queue-safe request.
