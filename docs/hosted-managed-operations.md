@@ -979,6 +979,7 @@ Timeweb-compatible profile:
 hosted_managed_execution_enabled=false
 hosted_managed_bounded_canary_enabled=false
 hosted_managed_external_state_enabled=true
+hosted_managed_promotion_dry_run_enabled=false
 hosted_managed_executor_url=https://managed.specgraph.tech
 external_state_url=https://managed.specgraph.tech/specspace-state
 ```
@@ -1002,6 +1003,14 @@ It sets persistent hosted durability, uses `/tmp/specspace-external-state-cache`
 only for private materialization, and keeps the SpecSpace client allowlist at
 `review_status_execute`. Platform's worker remains stopped except during a
 separately audited bounded window.
+
+After approval of
+[Hosted Bounded Product Operations Rollout Proposal](hosted-managed-bounded-product-rollout-proposal.md),
+set `hosted_managed_promotion_dry_run_enabled=true` to expose exactly
+`promotion_execute_dry_run,review_status_execute` to the persistent Timeweb
+client. This flag is rejected for the ephemeral canary and durable-local
+profiles. It does not start a worker; one operation-specific bounded window is
+still required for one exact queued request.
 
 The first production UI canary remains bounded. Submit exactly one
 `review_status_execute` from the Product Workspace, record the server-issued
@@ -1191,9 +1200,10 @@ The production Compose profile now has three distinct modes:
 
 It also contains the isolated `promotion-dry-run-window` profile. That profile
 is not a fourth steady state. It starts one fixed, non-restarting worker for the
-`promotion_execute_dry_run` policy and is accepted only when the service
-allowlist contains that operation alone. The continuous worker fails closed if
-the deployment is switched to this profile.
+`promotion_execute_dry_run` policy. The host wrapper accepts either the
+operation-only deployment profile or the explicit `bounded-product-dry-run`
+profile, then narrows the worker container allowlist to the dry-run operation
+alone. The continuous worker fails closed for both dry-run-capable profiles.
 
 Do not run the bounded service with `docker compose up`. After the request has
 been authenticated and enqueued while the worker is stopped, record the
@@ -1395,6 +1405,46 @@ off-host export, archive digest verification, and the final production probe
 passed. This evidence closes the approved window; it does not authorize a
 persistent worker, another dry-run window, or an irreversible operation.
 
+### Bounded product dry-run deployment profile
+
+The next tracked product profile is `bounded-product-dry-run`. It keeps the
+production HTTP service available for both independently proven operations:
+
+```text
+promotion_execute_dry_run
+review_status_execute
+```
+
+The worker remains stopped. For each request, invoke the existing host wrapper
+with either `--operation-profile promotion-dry-run` or
+`--operation-profile review-status`. The wrapper verifies that the operation is
+enabled by the deployment profile and overrides the worker container allowlist
+to that one operation. The inner bounded policy therefore still rejects every
+foreign operation.
+
+Deploy and verify the combined service profile with:
+
+```bash
+sudo /usr/bin/python3 \
+  /srv/0al/platform/scripts/hosted_managed_production_deploy.py \
+  --operation-profile bounded-product-dry-run
+
+sudo /usr/bin/python3 \
+  /srv/0al/platform/scripts/hosted_managed_production_probe.py \
+  --service-url https://managed.specgraph.tech \
+  --compose-file \
+    /srv/0al/platform/docker-compose.hosted-managed-production.example.yml \
+  --env-file /etc/0al/hosted-managed-production.env \
+  --project-name platform-managed-production \
+  --operation-profile bounded-product-dry-run
+```
+
+The probe must report the exact sorted allowlist and `worker_mode=stopped`.
+`continuous-worker` is invalid for this profile. Keep only one active request
+in the queue; the operation-specific policy intentionally blocks when another
+request is active. See the rollout proposal for Timeweb opt-in, acceptance,
+backup, and rollback steps.
+
 ### Recorded bounded worker pilot status
 
 The first post-sign-off bounded worker pilot completed against SpecGraph review
@@ -1445,8 +1495,8 @@ Proceed from the signed-off baseline in bounded stages:
 3. preserve the completed fresh `review_status_execute` pilot evidence and keep
    the worker stopped between bounded windows;
 4. preserve the completed one-shot `promotion_execute_dry_run` production
-   evidence and require a new proposal before another bounded window or
-   allowlist expansion;
+   evidence and use the tracked `bounded-product-dry-run` proposal for the next
+   explicit service/client allowlist expansion;
 5. expose only the enabled operations through SpecSpace hosted lifecycle UX;
 6. propose irreversible Git review or publication operations one at a time.
 

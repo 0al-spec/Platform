@@ -17,8 +17,10 @@ additional production windows or allowlist expansion.
 The default production profile still accepts only `review_status_execute`.
 Tracked operation profiles now let the deploy, preflight, probe, Compose, and
 bounded worker wrappers switch atomically to exactly
-`promotion_execute_dry_run` for one stopped-worker window. A mixed allowlist or
-continuous dry-run worker remains invalid.
+`promotion_execute_dry_run` for one stopped-worker window. This proposal's
+mixed allowlist remained invalid. The later bounded-product proposal introduces
+the only approved combined service profile while retaining exact
+operation-specific worker scope. A continuous dry-run worker remains invalid.
 
 Merging this proposal does not:
 
@@ -169,19 +171,27 @@ audit trail needed to distinguish a failed transport from a completed dry-run.
    once.
 6. **Immediate rollback to baseline:** complete. The worker is stopped and the
    service advertises only `review_status_execute`.
-7. **Post-rollout decision:** pending as a separate proposal. This completed
-   window does not authorize another window, a continuous worker, or the next
-   allowlist expansion.
+7. **Post-rollout decision:** recorded separately in
+   [Hosted Bounded Product Operations Rollout Proposal](hosted-managed-bounded-product-rollout-proposal.md).
+   The new proposal permits an explicit combined service/client exposure while
+   retaining one-operation worker windows. It does not authorize a continuous
+   worker or an irreversible operation.
 
 ## Approval Gate
 
 The proposal selected `promotion_execute_dry_run` as the first production
 allowlist expansion. The clean-VM evidence below satisfied the staging gate,
 and the single authorized production bounded window has now completed. The
-current decision is **restore the read-only baseline and authorize no further
-production window without a new proposal**. This does not authorize a
-persistent worker, a mixed allowlist, automatic retry, or a real promotion
-review.
+completed window restored the read-only baseline. The later
+`bounded-product-dry-run` proposal is now the only tracked path to a combined
+allowlist. This document still does not authorize a persistent worker,
+automatic retry, or a real promotion review.
+
+At completion, this proposal's decision was to **authorize no further
+production window without a new proposal**. The bounded-product proposal is
+that later proposal; it does not retroactively broaden the completed window.
+The completed one-operation decision does not authorize another window, a
+continuous worker, or an irreversible operation by itself.
 
 ### Clean-VM runtime dependency finding
 

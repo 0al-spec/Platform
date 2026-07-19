@@ -504,6 +504,61 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
         os.environ.get("PLATFORM_TEST_POSTGRES_URL"),
         "set PLATFORM_TEST_POSTGRES_URL for PostgreSQL queue integration",
     )
+    def test_real_postgresql_scoped_recovery_is_atomic_for_foreign_expired_request(
+        self,
+    ) -> None:
+        database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
+        queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)
+        try:
+            with queue.connection.cursor() as cursor:
+                cursor.execute(
+                    "TRUNCATE managed_operation_events, managed_operation_locks, "
+                    "managed_operation_jobs RESTART IDENTITY CASCADE"
+                )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp = Path(temp_dir)
+                expected = request_for(temp, "review_status_execute")
+                foreign = request_for(
+                    temp,
+                    "promotion_execute_dry_run",
+                    workspace_id="foreign-workspace",
+                )
+                for request in (expected, foreign):
+                    queue.enqueue(
+                        request,
+                        now_epoch=100,
+                        now_iso="2026-07-10T00:00:00Z",
+                    )
+                    leased = queue.lease_next(
+                        worker_id=f"worker-{request['workspace']['workspace_id']}",
+                        now_epoch=101,
+                        now_iso="2026-07-10T00:00:01Z",
+                        lease_seconds=10,
+                        expected_request_id=request["request_id"],
+                    )
+                    self.assertIsNotNone(leased)
+
+                with self.assertRaisesRegex(
+                    postgres_module.queue_module.QueueContractError,
+                    "foreign managed-operation request",
+                ):
+                    queue.recover_expired(
+                        now_epoch=112,
+                        now_iso="2026-07-10T00:00:12Z",
+                        expected_request_id=expected["request_id"],
+                    )
+                expected_job = queue.get(expected["request_id"])
+                foreign_job = queue.get(foreign["request_id"])
+
+                self.assertEqual(expected_job["status"], "leased")
+                self.assertEqual(foreign_job["status"], "leased")
+        finally:
+            queue.close()
+
+    @unittest.skipUnless(
+        os.environ.get("PLATFORM_TEST_POSTGRES_URL"),
+        "set PLATFORM_TEST_POSTGRES_URL for PostgreSQL queue integration",
+    )
     def test_real_postgresql_expired_lock_blocks_until_recovery(self) -> None:
         database_url = os.environ["PLATFORM_TEST_POSTGRES_URL"]
         first_queue = postgres_module.PostgreSQLManagedOperationQueue(database_url)

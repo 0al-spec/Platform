@@ -17,6 +17,7 @@ try:
         PROMOTION_DRY_RUN_PROFILE_ID,
         REVIEW_STATUS_PROFILE_ID,
         ProductionOperationProfile,
+        deployment_profile_by_operation_ids,
         profile_by_id,
         profile_ids,
     )
@@ -26,6 +27,7 @@ except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo r
         PROMOTION_DRY_RUN_PROFILE_ID,
         REVIEW_STATUS_PROFILE_ID,
         ProductionOperationProfile,
+        deployment_profile_by_operation_ids,
         profile_by_id,
         profile_ids,
     )
@@ -444,9 +446,22 @@ def execute_window(
     artifact_root = Path(artifact_root_value)
     if not artifact_root.is_absolute():
         raise ProductionWorkerWindowError("artifact root is not absolute")
-    if values.get("PLATFORM_MANAGED_OPERATION_ALLOWLIST") != profile.operation_id:
+    deployed_operation_ids = tuple(
+        item.strip()
+        for item in values.get("PLATFORM_MANAGED_OPERATION_ALLOWLIST", "").split(",")
+        if item.strip()
+    )
+    try:
+        deployment_profile = deployment_profile_by_operation_ids(
+            deployed_operation_ids
+        )
+    except ValueError as exc:
         raise ProductionWorkerWindowError(
-            "production allowlist does not match bounded worker policy"
+            "production allowlist is not an approved deployment profile"
+        ) from exc
+    if profile.operation_id not in deployment_profile.enabled_operation_ids:
+        raise ProductionWorkerWindowError(
+            "bounded worker operation is not enabled by the production allowlist"
         )
     policy_path = (
         Path(__file__).resolve().parents[1]
@@ -502,6 +517,8 @@ def execute_window(
                     "--database-url-file",
                     "/run/secrets/managed_operation_database_url",
                     "--strict",
+                    "--expected-request-id",
+                    request_id,
                 ],
                 runner=runner,
                 environment=environment,
@@ -523,6 +540,8 @@ def execute_window(
                     "run",
                     "--rm",
                     "--no-deps",
+                    "--env",
+                    f"PLATFORM_MANAGED_OPERATION_ALLOWLIST={profile.operation_id}",
                     "--name",
                     container_name,
                     profile.worker_service,

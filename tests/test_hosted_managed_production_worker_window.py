@@ -269,6 +269,16 @@ class HostedManagedProductionWorkerWindowTests(unittest.TestCase):
         fixture["operation_profile"] = "promotion-dry-run"
         return fixture
 
+    def use_bounded_product_allowlist(self, fixture: dict) -> None:
+        content = fixture["env_file"].read_text(encoding="utf-8")
+        content = re.sub(
+            r"PLATFORM_MANAGED_OPERATION_ALLOWLIST=[^\n]+",
+            "PLATFORM_MANAGED_OPERATION_ALLOWLIST="
+            "promotion_execute_dry_run,review_status_execute",
+            content,
+        )
+        fixture["env_file"].write_text(content, encoding="utf-8")
+
     def test_runbook_window_id_example_matches_contract(self) -> None:
         runbook = (
             Path(__file__).resolve().parents[1]
@@ -306,6 +316,21 @@ class HostedManagedProductionWorkerWindowTests(unittest.TestCase):
         self.assertEqual(len(run_commands), 1)
         self.assertIn(production_window.WINDOW_SERVICE, run_commands[0])
         self.assertIn("--no-deps", run_commands[0])
+        self.assertIn(
+            "PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute",
+            run_commands[0],
+        )
+        recovery_command = next(
+            command
+            for command in runner.commands
+            if production_window.MAINTENANCE_SERVICE in command
+        )
+        self.assertEqual(
+            recovery_command[
+                recovery_command.index("--expected-request-id") + 1
+            ],
+            REQUEST_ID,
+        )
         self.assertNotIn("must-not-leak", json.dumps(report))
         self.assertNotIn(temp_dir, json.dumps(report))
 
@@ -337,6 +362,78 @@ class HostedManagedProductionWorkerWindowTests(unittest.TestCase):
                 for command in runner.commands
             )
         )
+
+    def test_combined_deployment_still_uses_operation_specific_worker_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            review_fixture = self.fixture(root)
+            self.use_bounded_product_allowlist(review_fixture)
+            review_runner = WindowRunner(artifact_root=root / "artifacts")
+            review_report = production_window.execute_window(
+                **review_fixture,
+                runner=review_runner,
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            dry_run_fixture = self.dry_run_fixture(root)
+            self.use_bounded_product_allowlist(dry_run_fixture)
+            dry_run_runner = WindowRunner(artifact_root=root / "artifacts")
+            dry_run_report = production_window.execute_window(
+                **dry_run_fixture,
+                runner=dry_run_runner,
+            )
+
+        self.assertEqual(
+            review_report["summary"]["status"],
+            "production_bounded_worker_window_completed",
+        )
+        self.assertEqual(
+            dry_run_report["summary"]["status"],
+            "production_bounded_worker_window_completed",
+        )
+        review_command = next(
+            command
+            for command in review_runner.commands
+            if production_window.WINDOW_SERVICE in command
+        )
+        dry_run_command = next(
+            command
+            for command in dry_run_runner.commands
+            if production_window.PROMOTION_DRY_RUN_WINDOW_SERVICE in command
+        )
+        self.assertIn(
+            "PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute",
+            review_command,
+        )
+        self.assertNotIn("promotion_execute_dry_run", review_command)
+        self.assertIn(
+            "PLATFORM_MANAGED_OPERATION_ALLOWLIST=promotion_execute_dry_run",
+            dry_run_command,
+        )
+        self.assertNotIn("review_status_execute", dry_run_command)
+
+    def test_worker_rejects_unapproved_deployment_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture = self.fixture(root)
+            fixture["env_file"].write_text(
+                "PLATFORM_MANAGED_OPERATION_ALLOWLIST="
+                "review_status_execute,promotion_review_execute\n"
+                f"PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT={root / 'artifacts'}\n",
+                encoding="utf-8",
+            )
+            runner = WindowRunner(artifact_root=root / "artifacts")
+
+            with self.assertRaisesRegex(
+                production_window.ProductionWorkerWindowError,
+                "not an approved deployment profile",
+            ):
+                production_window.execute_window(**fixture, runner=runner)
+
+        self.assertEqual(runner.commands, [])
 
     def test_dry_run_blocks_when_report_claims_git_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

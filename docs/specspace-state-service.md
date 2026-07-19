@@ -40,7 +40,9 @@ independent from the managed-operation queue.
 The state service is the only container with a read-write mount of the private
 worker mirror. Managed-operation service and worker mounts are read-only. A
 stopped worker and the exact `review_status_execute` allowlist remain the
-initial rollout profile.
+default rollout profile. The later `bounded-product-dry-run` profile may expose
+the reviewed promotion dry-run alongside review status, but it does not change
+the state-service authority or start a worker.
 
 ## Storage Boundary
 

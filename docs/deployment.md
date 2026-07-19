@@ -227,7 +227,9 @@ Render the non-secret production environment from that lock with
 `scripts/render_hosted_managed_production_env.py`; this avoids manually
 transcribing image digests. Its default profile keeps the allowlist fixed to the
 read-only canary operation; an explicit tracked operation profile is required
-for a bounded dry-run transition.
+for a bounded dry-run transition. The `bounded-product-dry-run` profile exposes
+both reviewed operations to the service while keeping the worker stopped and
+requiring an operation-specific one-request window.
 
 ## Local Compose Entry Point
 
@@ -262,6 +264,10 @@ allowlist is passed to the HTTP service and worker, and the service health
 report exposes only the enabled operation ids. Add
 `promotion_execute_dry_run` only for an explicit dry-run rollout; do not enable
 Git review, publication, or consume-on-attempt operations during canary.
+After the independent dry-run sign-off, the tracked
+`bounded-product-dry-run` profile may advertise both reviewed operations. It
+does not start a worker: each bounded window narrows the worker container to
+one operation and one exact request.
 
 The `hosted-managed-contract` CI job provides the fast pre-deployment layer. It
 runs the canary against the real HTTP handler with an in-process SQLite queue
@@ -477,9 +483,11 @@ Guardrails:
   limits.
 - the Timeweb external-state profile must use HTTPS executor and state-service
   URLs, global environment references for two independent bearer tokens,
-  persistent external state, an ephemeral local cache, and the exact
-  `review_status_execute` client allowlist; local subprocess execution remains
-  disabled.
+  persistent external state, and an ephemeral local cache. Its default client
+  allowlist remains exactly `review_status_execute`; the explicit
+  `--enable-hosted-managed-promotion-dry-run` flag expands it only to
+  `promotion_execute_dry_run,review_status_execute`. Local subprocess execution
+  remains disabled.
 
 ### Timeweb Storage Contract
 

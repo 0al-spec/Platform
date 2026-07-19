@@ -27,9 +27,9 @@ try:
     )
     from scripts.hosted_managed_production_profiles import (
         REVIEW_STATUS_PROFILE_ID,
-        profile_by_id,
-        profile_by_operation_id,
-        profile_ids,
+        deployment_profile_by_id,
+        deployment_profile_by_operation_ids,
+        deployment_profile_ids,
     )
     from scripts.validate_hosted_managed_image_lock import validate_image_lock
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
@@ -42,9 +42,9 @@ except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo r
     )
     from hosted_managed_production_profiles import (
         REVIEW_STATUS_PROFILE_ID,
-        profile_by_id,
-        profile_by_operation_id,
-        profile_ids,
+        deployment_profile_by_id,
+        deployment_profile_by_operation_ids,
+        deployment_profile_ids,
     )
     from validate_hosted_managed_image_lock import validate_image_lock
 
@@ -151,18 +151,18 @@ def _require_release_only_environment_change(
     allowed_changes = set(RELEASE_IMAGE_KEYS)
     if "PLATFORM_MANAGED_OPERATION_ALLOWLIST" in changed:
         try:
-            current_profile = profile_by_operation_id(
-                current["PLATFORM_MANAGED_OPERATION_ALLOWLIST"]
+            current_profile = deployment_profile_by_operation_ids(
+                tuple(current["PLATFORM_MANAGED_OPERATION_ALLOWLIST"].split(","))
             )
-            candidate_profile = profile_by_id(operation_profile)
+            candidate_profile = deployment_profile_by_id(operation_profile)
         except (KeyError, ValueError) as exc:
             raise ProductionDeployError(
                 "operation profile transition is not approved"
             ) from exc
         if (
-            current_profile.operation_id
+            current_profile.allowlist
             == candidate["PLATFORM_MANAGED_OPERATION_ALLOWLIST"]
-            or candidate_profile.operation_id
+            or candidate_profile.allowlist
             != candidate["PLATFORM_MANAGED_OPERATION_ALLOWLIST"]
         ):
             raise ProductionDeployError(
@@ -370,7 +370,7 @@ def deploy(
     operation_profile: str = REVIEW_STATUS_PROFILE_ID,
 ) -> dict[str, Any]:
     try:
-        selected_profile = profile_by_id(operation_profile)
+        selected_profile = deployment_profile_by_id(operation_profile)
     except ValueError as exc:
         raise ProductionDeployError("production operation profile is invalid") from exc
     if not all(
@@ -434,8 +434,13 @@ def deploy(
         operation_profile=selected_profile.profile_id,
     )
     try:
-        current_profile = profile_by_operation_id(
-            _required(current_values, "PLATFORM_MANAGED_OPERATION_ALLOWLIST")
+        current_profile = deployment_profile_by_operation_ids(
+            tuple(
+                _required(
+                    current_values,
+                    "PLATFORM_MANAGED_OPERATION_ALLOWLIST",
+                ).split(",")
+            )
         )
     except ValueError as exc:
         raise ProductionDeployError(
@@ -582,6 +587,20 @@ def deploy(
     finally:
         candidate_path.unlink(missing_ok=True)
 
+    current_operation_ids = frozenset(current_profile.enabled_operation_ids)
+    selected_operation_ids = frozenset(selected_profile.enabled_operation_ids)
+    added_operation_ids = sorted(selected_operation_ids - current_operation_ids)
+    removed_operation_ids = sorted(current_operation_ids - selected_operation_ids)
+    allowlist_change = (
+        "expanded"
+        if added_operation_ids and not removed_operation_ids
+        else "reduced"
+        if removed_operation_ids and not added_operation_ids
+        else "changed"
+        if added_operation_ids or removed_operation_ids
+        else "unchanged"
+    )
+
     return {
         "artifact_kind": "platform_hosted_managed_production_deployment_report",
         "contract_ref": "platform.hosted-managed.production-deployment.v1",
@@ -592,7 +611,10 @@ def deploy(
             "source_commit": source_commit,
             "environment_sha256": render_report["summary"]["environment_sha256"],
             "operation_profile": selected_profile.profile_id,
-            "enabled_operation_ids": [selected_profile.operation_id],
+            "enabled_operation_ids": list(selected_profile.enabled_operation_ids),
+            "previous_enabled_operation_count": len(current_operation_ids),
+            "enabled_operation_count": len(selected_operation_ids),
+            "allowlist_change": allowlist_change,
             "queue_drained": True,
             "drain_attempt": drain_attempt,
             "postgresql_image_unchanged": True,
@@ -616,6 +638,10 @@ def deploy(
             "operation_profile_changed": (
                 current_profile.profile_id != selected_profile.profile_id
             ),
+            "operation_allowlist_expanded": bool(added_operation_ids),
+            "operation_allowlist_reduced": bool(removed_operation_ids),
+            "added_operation_ids": added_operation_ids,
+            "removed_operation_ids": removed_operation_ids,
             "enqueue_boundary_quiesced": True,
             "postgresql_volume_recreated": False,
             "managed_operation_enqueued": False,
@@ -657,7 +683,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--drain-interval", type=float, default=5.0)
     parser.add_argument(
         "--operation-profile",
-        choices=profile_ids(),
+        choices=deployment_profile_ids(),
         default=REVIEW_STATUS_PROFILE_ID,
     )
     args = parser.parse_args(argv)
