@@ -185,7 +185,32 @@ class HostedManagedProductionDeployTests(unittest.TestCase):
                 "promotion-dry-run",
             )
 
-    def test_mixed_current_allowlist_blocks_profile_transition(self) -> None:
+    def test_switches_to_bounded_product_dry_run_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.fixture(Path(temp_dir))
+            fixture.pop("commands")
+            fixture.pop("rendered")
+            fixture["operation_profile"] = "bounded-product-dry-run"
+            with (
+                mock.patch.object(deployment, "_preflight", return_value={"ok": True}),
+                mock.patch.object(
+                    deployment, "_queue_audit", return_value=self.queue_report()
+                ),
+                mock.patch.object(
+                    deployment,
+                    "_probe_until_healthy",
+                    return_value=(self.successful_probe(), 1),
+                ),
+            ):
+                report = deployment.deploy(**fixture)
+
+        self.assertEqual(
+            report["summary"]["enabled_operation_ids"],
+            ["promotion_execute_dry_run", "review_status_execute"],
+        )
+        self.assertTrue(report["effects"]["operation_profile_changed"])
+
+    def test_unapproved_current_allowlist_blocks_profile_transition(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             fixture = self.fixture(Path(temp_dir))
             fixture.pop("commands")
@@ -196,7 +221,7 @@ class HostedManagedProductionDeployTests(unittest.TestCase):
                 current.replace(
                     "PLATFORM_MANAGED_OPERATION_ALLOWLIST=review_status_execute",
                     "PLATFORM_MANAGED_OPERATION_ALLOWLIST="
-                    "review_status_execute,promotion_execute_dry_run",
+                    "review_status_execute,promotion_review_execute",
                 ),
                 encoding="utf-8",
             )

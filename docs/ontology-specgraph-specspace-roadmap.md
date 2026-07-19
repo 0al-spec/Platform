@@ -344,12 +344,22 @@ Operational measurements inside item 4 do not expand production authority.
      pre/post backup and off-host export, immediate rollback, and a healthy
      final probe. The default allowlist is again `review_status_execute`, the
      worker is stopped, and another window requires a new decision;
+   - the next bounded product slice is the explicit
+     `bounded-product-dry-run` deployment profile from
+     [Hosted Bounded Product Operations Rollout Proposal](hosted-managed-bounded-product-rollout-proposal.md).
+     Platform may advertise `promotion_execute_dry_run` and
+     `review_status_execute` together, and the persistent Timeweb SpecSpace
+     client may opt into the same two-operation maximum. The worker remains
+     stopped, continuous mode is forbidden, and each host window narrows the
+     worker container to one policy and one exact request. Production rollout,
+     two UI-originated requests, post-operation backup, and rollback evidence
+     remain pending;
    - connect the enabled hosted operations to SpecSpace lifecycle actions and
      observability before proposing any irreversible Git or publication action.
      The deployment contract now has a fail-closed Timeweb bounded-canary
      profile with an HTTPS executor, a Timeweb global environment token
      reference, no Compose volumes/secrets, an exact
-     `review_status_execute` client allowlist, explicitly ephemeral
+     `review_status_execute` client allowlist by default, explicitly ephemeral
      SpecSpace-owned state, and provider-binding validation. Durable queue state
      and authoritative reports remain Platform-owned. The UI-originated
      production `review_status_execute` has now completed through the Timeweb
@@ -405,9 +415,11 @@ Operational measurements inside item 4 do not expand production authority.
    sanitizer-compatible external-state profile. Restart persistence, the
    bounded read-only canary, dual-database backup/restore, encrypted off-host
    export, provider readiness, and production workspace smoke are complete for
-   the current `review_status_execute` allowlist. The service profile consumes
-   App-bound Timeweb runtime variables through value-less Compose environment
-   keys: production deployment evidence showed that
+   the current `review_status_execute` allowlist. The persistent profile may
+   opt into the tracked two-operation bounded product allowlist only after its
+   separate rollout gate; the default remains review-only. The service profile
+   consumes App-bound Timeweb runtime variables through value-less Compose
+   environment keys: production deployment evidence showed that
    `${TOKEN}` expansion runs too early and that omitted keys are not injected
    into a secondary Compose service. Neither form reaches SpecSpace safely. The
    service

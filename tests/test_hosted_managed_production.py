@@ -159,6 +159,28 @@ class HostedManagedProductionPreflightTests(unittest.TestCase):
         self.assertFalse(blocked["ok"])
         self.assertTrue(ready["ok"], ready["diagnostics"])
 
+    def test_bounded_product_profile_requires_exact_safe_subset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.fixture(Path(temp_dir))
+            fixture["operation_profile"] = "bounded-product-dry-run"
+            fixture["allowlist"] = (
+                "promotion_execute_dry_run,review_status_execute"
+            )
+            ready = preflight.run_preflight(**fixture)
+            fixture["allowlist"] += ",promotion_review_execute"
+            expanded = preflight.run_preflight(**fixture)
+
+        self.assertTrue(ready["ok"], ready["diagnostics"])
+        self.assertEqual(
+            ready["summary"]["enabled_operations"],
+            ["promotion_execute_dry_run", "review_status_execute"],
+        )
+        self.assertFalse(expanded["ok"])
+        self.assertIn(
+            "deployment_allowlist_not_exact_operation_profile",
+            expanded["diagnostics"],
+        )
+
 
 class HostedManagedRuntimeBackupTests(unittest.TestCase):
     def test_runbook_uses_bounded_backup_cycle_with_valid_id_contract(self) -> None:
@@ -526,6 +548,46 @@ class HostedManagedProductionProbeTests(unittest.TestCase):
                 compose_file=Path("/srv/platform/compose.yml"),
                 project_name="platform-managed",
                 operation_profile="promotion-dry-run",
+                worker_mode="continuous",
+            )
+
+    def test_bounded_product_profile_exposes_two_operations_with_worker_stopped(
+        self,
+    ) -> None:
+        now = datetime(2026, 7, 13, tzinfo=timezone.utc)
+        report = probe.run_probe(
+            service_url="https://managed.example.test",
+            compose_file=Path("/srv/platform/compose.yml"),
+            project_name="platform-managed",
+            operation_profile="bounded-product-dry-run",
+            now=now,
+            runner=self.fixture_runner(heartbeat_generated_at=now.isoformat()),
+            fetch_health=lambda url: (
+                self.health(url)
+                if "/specspace-state/" in url
+                else {
+                    "ok": True,
+                    "adapter": "postgresql",
+                    "enabled_operation_ids": [
+                        "promotion_execute_dry_run",
+                        "review_status_execute",
+                    ],
+                }
+            ),
+        )
+
+        self.assertTrue(report["ok"], report["diagnostics"])
+        self.assertTrue(report["summary"]["allowlist_matches_profile"])
+        self.assertFalse(report["summary"]["read_only_allowlist"])
+        with self.assertRaisesRegex(
+            probe.ProductionProbeError,
+            "continuous worker is forbidden",
+        ):
+            probe.run_probe(
+                service_url="https://managed.example.test",
+                compose_file=Path("/srv/platform/compose.yml"),
+                project_name="platform-managed",
+                operation_profile="bounded-product-dry-run",
                 worker_mode="continuous",
             )
 

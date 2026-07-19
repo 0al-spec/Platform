@@ -17,15 +17,15 @@ try:
     from scripts.validate_hosted_managed_image_lock import validate_image_lock
     from scripts.hosted_managed_production_profiles import (
         REVIEW_STATUS_PROFILE_ID,
-        profile_by_id,
-        profile_ids,
+        deployment_profile_by_id,
+        deployment_profile_ids,
     )
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     from validate_hosted_managed_image_lock import validate_image_lock
     from hosted_managed_production_profiles import (
         REVIEW_STATUS_PROFILE_ID,
-        profile_by_id,
-        profile_ids,
+        deployment_profile_by_id,
+        deployment_profile_ids,
     )
 
 
@@ -89,7 +89,7 @@ def render_environment(
     operation_profile: str = REVIEW_STATUS_PROFILE_ID,
 ) -> tuple[str, dict[str, Any]]:
     try:
-        profile = profile_by_id(operation_profile)
+        profile = deployment_profile_by_id(operation_profile)
     except ValueError as exc:
         raise ProductionEnvRenderError(
             "production operation profile is invalid"
@@ -123,7 +123,7 @@ def render_environment(
             "image_ref"
         ],
         "PLATFORM_MANAGED_OPERATION_INGRESS_IMAGE": images["ingress"]["image_ref"],
-        "PLATFORM_MANAGED_OPERATION_ALLOWLIST": profile.operation_id,
+        "PLATFORM_MANAGED_OPERATION_ALLOWLIST": profile.allowlist,
         "PLATFORM_MANAGED_OPERATION_ARTIFACT_ROOT": str(roots["artifact_root"]),
         "PLATFORM_MANAGED_OPERATION_STATE_DIR": str(roots["state_dir"]),
         "PLATFORM_MANAGED_OPERATION_BACKUP_ROOT": str(roots["backup_root"]),
@@ -147,7 +147,7 @@ def render_environment(
             "source_commit": image_lock["source_commit"],
             "image_count": 3,
             "operation_profile": profile.profile_id,
-            "enabled_operation_ids": [profile.operation_id],
+            "enabled_operation_ids": list(profile.enabled_operation_ids),
             "secret_ref_count": len(SECRET_FILENAMES),
             "environment_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
         },
@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ingress-port", type=int, default=443)
     parser.add_argument(
         "--operation-profile",
-        choices=profile_ids(),
+        choices=deployment_profile_ids(),
         default=REVIEW_STATUS_PROFILE_ID,
     )
     parser.add_argument("--overwrite", action="store_true")

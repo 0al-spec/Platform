@@ -14,14 +14,14 @@ import urllib.request
 try:
     from scripts.hosted_managed_production_profiles import (
         REVIEW_STATUS_PROFILE_ID,
-        profile_by_id,
-        profile_ids,
+        deployment_profile_by_id,
+        deployment_profile_ids,
     )
 except ModuleNotFoundError:
     from hosted_managed_production_profiles import (
         REVIEW_STATUS_PROFILE_ID,
-        profile_by_id,
-        profile_ids,
+        deployment_profile_by_id,
+        deployment_profile_ids,
     )
 
 
@@ -97,7 +97,7 @@ def run_probe(
     if worker_mode not in {"stopped", "continuous"}:
         raise ProductionProbeError("production probe worker mode is invalid")
     try:
-        profile = profile_by_id(operation_profile)
+        profile = deployment_profile_by_id(operation_profile)
     except ValueError as exc:
         raise ProductionProbeError("production operation profile is invalid") from exc
     if worker_mode == "continuous" and not profile.allow_continuous_worker:
@@ -196,7 +196,7 @@ def run_probe(
     ):
         diagnostics.append("specspace_state_service_not_postgresql_ready")
     enabled = health.get("enabled_operation_ids")
-    if enabled != [profile.operation_id]:
+    if enabled != list(profile.enabled_operation_ids):
         diagnostics.append("service_allowlist_not_operation_profile")
     expected_services = set(BASE_SERVICES)
     if worker_mode == "continuous":
@@ -269,9 +269,10 @@ def run_probe(
             "expected_service_count": len(expected_services),
             "read_only_allowlist": (
                 profile.profile_id == REVIEW_STATUS_PROFILE_ID
-                and enabled == [profile.operation_id]
+                and enabled == list(profile.enabled_operation_ids)
             ),
-            "allowlist_matches_profile": enabled == [profile.operation_id],
+            "allowlist_matches_profile": enabled
+            == list(profile.enabled_operation_ids),
             "worker_mode": worker_mode,
         },
         "diagnostics": diagnostics,
@@ -310,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--operation-profile",
-        choices=profile_ids(),
+        choices=deployment_profile_ids(),
         default=REVIEW_STATUS_PROFILE_ID,
     )
     parser.add_argument("--output")

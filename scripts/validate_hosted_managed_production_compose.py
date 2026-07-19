@@ -12,13 +12,17 @@ from typing import Any
 try:
     from scripts import hosted_managed_worker_window
     from scripts.hosted_managed_production_profiles import (
+        BOUNDED_PRODUCT_DRY_RUN_PROFILE_ID,
         PROMOTION_DRY_RUN_PROFILE_ID,
+        deployment_profile_by_id,
         profile_by_id,
     )
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_worker_window
     from hosted_managed_production_profiles import (
+        BOUNDED_PRODUCT_DRY_RUN_PROFILE_ID,
         PROMOTION_DRY_RUN_PROFILE_ID,
+        deployment_profile_by_id,
         profile_by_id,
     )
 
@@ -168,6 +172,9 @@ def _assert_digest_pinned(service_name: str, service: dict[str, Any]) -> None:
 def validate_hosted_managed_production_compose() -> dict[str, Any]:
     hosted_managed_worker_window.load_policy(WORKER_WINDOW_POLICY.resolve())
     dry_run_profile = profile_by_id(PROMOTION_DRY_RUN_PROFILE_ID)
+    bounded_product_profile = deployment_profile_by_id(
+        BOUNDED_PRODUCT_DRY_RUN_PROFILE_ID
+    )
     hosted_managed_worker_window.load_policy(
         PROMOTION_DRY_RUN_WORKER_WINDOW_POLICY.resolve()
     )
@@ -214,6 +221,36 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
     services = payload.get("services")
     if not isinstance(services, dict) or set(services) != RUNTIME_SERVICES:
         raise RuntimeError("production Compose runtime service inventory is invalid")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        bounded_product_render = subprocess.run(
+            _command(),
+            cwd=REPO_ROOT,
+            env=_environment(
+                Path(temp_dir) / "bounded-product",
+                allowlist=bounded_product_profile.allowlist,
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if bounded_product_render.returncode != 0:
+            raise RuntimeError("bounded product profile did not render")
+        bounded_product_payload = json.loads(bounded_product_render.stdout)
+    bounded_product_services = bounded_product_payload.get("services")
+    if not isinstance(bounded_product_services, dict) or set(
+        bounded_product_services
+    ) != RUNTIME_SERVICES:
+        raise RuntimeError("bounded product profile changed the service inventory")
+    bounded_product_service_environment = bounded_product_services[
+        "managed-operation-service"
+    ].get("environment")
+    if (
+        not isinstance(bounded_product_service_environment, dict)
+        or bounded_product_service_environment.get(ALLOWLIST_ENV)
+        != bounded_product_profile.allowlist
+    ):
+        raise RuntimeError("bounded product service allowlist was not preserved")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         maintenance_render = subprocess.run(
@@ -541,6 +578,7 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
             "promotion_dry_run_profile_isolated": True,
             "promotion_dry_run_policy_validated": True,
             "promotion_dry_run_continuous_worker_forbidden": True,
+            "bounded_product_service_allowlist_validated": True,
         },
     }
 

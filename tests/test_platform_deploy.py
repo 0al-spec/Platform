@@ -1204,6 +1204,75 @@ class PlatformDeployTests(unittest.TestCase):
             ],
         )
 
+    def test_timeweb_external_state_explicitly_exposes_bounded_product_dry_run(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-external-state",
+                "--enable-hosted-managed-promotion-dry-run",
+            )
+            validate = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--enable-hosted-managed-external-state",
+                "--enable-hosted-managed-promotion-dry-run",
+                "--format",
+                "json",
+            )
+            compose = (output_dir / "docker-compose.yml").read_text(
+                encoding="utf-8"
+            )
+            manifest = json.loads(
+                (output_dir / "platform-timeweb-deploy.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(validate.returncode, 0, validate.stderr)
+        self.assertIn(
+            'SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: '
+            '"promotion_execute_dry_run,review_status_execute"',
+            compose,
+        )
+        self.assertEqual(
+            manifest["hosted_managed_operation_allowlist"],
+            ["promotion_execute_dry_run", "review_status_execute"],
+        )
+
+    def test_timeweb_promotion_dry_run_requires_external_state_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            result = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(Path(root) / "timeweb"),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+                "--enable-hosted-managed-bounded-canary",
+                "--enable-hosted-managed-promotion-dry-run",
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "requires the persistent external-state hosted profile",
+            result.stderr,
+        )
+
     def test_timeweb_external_state_rejects_compose_secret_interpolation(
         self,
     ) -> None:
@@ -1667,6 +1736,7 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertIn("hosted_managed_execution_enabled:", workflow)
         self.assertIn("hosted_managed_bounded_canary_enabled:", workflow)
         self.assertIn("hosted_managed_external_state_enabled:", workflow)
+        self.assertIn("hosted_managed_promotion_dry_run_enabled:", workflow)
         self.assertIn("external_state_url:", workflow)
         self.assertIn("TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED", workflow)
         self.assertIn(
@@ -1677,6 +1747,10 @@ class PlatformDeployTests(unittest.TestCase):
             "TIMEWEB_REQUIRED_HOSTED_MANAGED_EXTERNAL_STATE_ENABLED",
             workflow,
         )
+        self.assertIn(
+            "TIMEWEB_REQUIRED_HOSTED_MANAGED_PROMOTION_DRY_RUN_ENABLED",
+            workflow,
+        )
         self.assertIn("TIMEWEB_REQUIRED_EXTERNAL_STATE_URL", workflow)
         self.assertIn("TIMEWEB_REQUIRED_HOSTED_MANAGED_EXECUTION_ENABLED", publish_script)
         self.assertIn(
@@ -1685,6 +1759,10 @@ class PlatformDeployTests(unittest.TestCase):
         )
         self.assertIn(
             "TIMEWEB_REQUIRED_HOSTED_MANAGED_EXTERNAL_STATE_ENABLED",
+            publish_script,
+        )
+        self.assertIn(
+            "TIMEWEB_REQUIRED_HOSTED_MANAGED_PROMOTION_DRY_RUN_ENABLED",
             publish_script,
         )
         self.assertIn("TIMEWEB_REQUIRED_EXTERNAL_STATE_URL", publish_script)

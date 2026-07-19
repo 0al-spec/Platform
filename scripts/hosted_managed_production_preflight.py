@@ -14,14 +14,14 @@ from urllib.parse import urlsplit
 try:
     from scripts.hosted_managed_production_profiles import (
         REVIEW_STATUS_PROFILE_ID,
-        profile_by_id,
-        profile_ids,
+        deployment_profile_by_id,
+        deployment_profile_ids,
     )
 except ModuleNotFoundError:
     from hosted_managed_production_profiles import (
         REVIEW_STATUS_PROFILE_ID,
-        profile_by_id,
-        profile_ids,
+        deployment_profile_by_id,
+        deployment_profile_ids,
     )
 
 
@@ -150,7 +150,7 @@ def run_preflight(
 ) -> dict[str, Any]:
     diagnostics: list[str] = []
     try:
-        profile = profile_by_id(operation_profile)
+        profile = deployment_profile_by_id(operation_profile)
     except ValueError:
         profile = None
         diagnostics.append("production_operation_profile_invalid")
@@ -167,7 +167,7 @@ def run_preflight(
         diagnostics.append("service_url_not_private_https_endpoint")
 
     enabled = [item.strip() for item in allowlist.split(",") if item.strip()]
-    expected = [profile.operation_id] if profile is not None else []
+    expected = list(profile.enabled_operation_ids) if profile is not None else []
     if enabled != expected:
         diagnostics.append("deployment_allowlist_not_exact_operation_profile")
 
@@ -276,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--service-url", required=True)
     parser.add_argument(
         "--operation-profile",
-        choices=profile_ids(),
+        choices=deployment_profile_ids(),
         default=REVIEW_STATUS_PROFILE_ID,
     )
     parser.add_argument("--expected-secret-uid", type=int, default=0)

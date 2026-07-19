@@ -73,6 +73,10 @@ TIMEWEB_HOSTED_MANAGED_STATE_DIR = "/data/specspace-hosted-managed-state"
 TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET = "specspace-hosted-managed-executor-token"
 TIMEWEB_BOUNDED_CANARY_STATE_DIR = "/tmp/specspace-hosted-managed-state"
 TIMEWEB_BOUNDED_CANARY_OPERATION_ID = "review_status_execute"
+TIMEWEB_BOUNDED_PRODUCT_OPERATION_IDS = (
+    "promotion_execute_dry_run",
+    "review_status_execute",
+)
 TIMEWEB_HOSTED_MANAGED_TOKEN_ENV = "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN"
 TIMEWEB_EXTERNAL_STATE_CACHE_DIR = "/tmp/specspace-external-state-cache"
 TIMEWEB_EXTERNAL_STATE_TOKEN_ENV = "SPECSPACE_EXTERNAL_STATE_TOKEN"
@@ -858,6 +862,7 @@ class TimewebHyperpromptRuntime:
 class TimewebHostedManagedRuntime:
     enabled: bool
     profile: str
+    operation_ids: tuple[str, ...]
     executor_url: str
     timeout_seconds: str
     external_state_url: str
@@ -20145,6 +20150,9 @@ def timeweb_hosted_managed_runtime_from_args(
     external_state_enabled = bool(
         getattr(args, "hosted_managed_external_state_enabled", False)
     )
+    promotion_dry_run_enabled = bool(
+        getattr(args, "hosted_managed_promotion_dry_run_enabled", False)
+    )
     if sum(
         int(enabled)
         for enabled in (
@@ -20158,6 +20166,11 @@ def timeweb_hosted_managed_runtime_from_args(
             "execution profiles are mutually exclusive"
         )
     enabled = durable_enabled or bounded_canary_enabled or external_state_enabled
+    if promotion_dry_run_enabled and not external_state_enabled:
+        raise PlatformError(
+            "Timeweb promotion dry-run exposure requires the persistent "
+            "external-state hosted profile"
+        )
     profile = (
         "timeweb_bounded_canary"
         if bounded_canary_enabled
@@ -20210,6 +20223,13 @@ def timeweb_hosted_managed_runtime_from_args(
     return TimewebHostedManagedRuntime(
         enabled=enabled,
         profile=profile,
+        operation_ids=(
+            TIMEWEB_BOUNDED_PRODUCT_OPERATION_IDS
+            if promotion_dry_run_enabled
+            else (TIMEWEB_BOUNDED_CANARY_OPERATION_ID,)
+            if profile in {"timeweb_bounded_canary", "timeweb_external_state"}
+            else ()
+        ),
         executor_url=executor_url,
         timeout_seconds=timeout_seconds,
         external_state_url=external_state_url,
@@ -20312,14 +20332,14 @@ def render_timeweb_hosted_managed_environment(
             f"      {TIMEWEB_HOSTED_MANAGED_TOKEN_ENV}:\n"
             '      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "ephemeral"\n'
             "      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "
-            f'"{TIMEWEB_BOUNDED_CANARY_OPERATION_ID}"\n'
+            f'"{",".join(runtime.operation_ids)}"\n'
         )
     elif runtime.profile == "timeweb_external_state":
         environment += (
             f"      {TIMEWEB_HOSTED_MANAGED_TOKEN_ENV}:\n"
             '      SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY: "persistent"\n'
             "      SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST: "
-            f'"{TIMEWEB_BOUNDED_CANARY_OPERATION_ID}"\n'
+            f'"{",".join(runtime.operation_ids)}"\n'
             '      SPECSPACE_EXTERNAL_STATE_ENABLED: "true"\n'
             f'      SPECSPACE_EXTERNAL_STATE_URL: "{runtime.external_state_url}"\n'
             f"      {TIMEWEB_EXTERNAL_STATE_TOKEN_ENV}:\n"
@@ -20362,7 +20382,7 @@ def render_timeweb_hosted_managed_command(
             "      - --hosted-managed-state-durability\n"
             "      - ephemeral\n"
             "      - --hosted-managed-operation-allowlist\n"
-            f"      - {TIMEWEB_BOUNDED_CANARY_OPERATION_ID}\n"
+            f"      - {','.join(runtime.operation_ids)}\n"
         )
     elif runtime.profile == "timeweb_external_state":
         command += (
@@ -20370,7 +20390,7 @@ def render_timeweb_hosted_managed_command(
             "      - --hosted-managed-state-durability\n"
             "      - persistent\n"
             "      - --hosted-managed-operation-allowlist\n"
-            f"      - {TIMEWEB_BOUNDED_CANARY_OPERATION_ID}\n"
+            f"      - {','.join(runtime.operation_ids)}\n"
             "      - --enable-external-state\n"
             "      - --external-state-url\n"
             f'      - "{runtime.external_state_url}"\n'
@@ -20543,6 +20563,8 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         f"`{specspace_state_profile}`\n"
         f"- Hosted managed executor: "
         f"`{hosted_managed_runtime.executor_url if hosted_managed_runtime.enabled else '(not used)'}`\n"
+        f"- Hosted managed operation allowlist: "
+        f"`{json.dumps(list(hosted_managed_runtime.operation_ids))}`\n"
         f"- Required Timeweb runtime variables: "
         f"`{json.dumps(required_runtime_environment_variables)}`\n"
         f"- Hyperprompt scratch workspace: "
@@ -20595,7 +20617,7 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                     else None
                 ),
                 "hosted_managed_operation_allowlist": (
-                    [TIMEWEB_BOUNDED_CANARY_OPERATION_ID]
+                    list(hosted_managed_runtime.operation_ids)
                     if hosted_managed_runtime.profile
                     in {"timeweb_bounded_canary", "timeweb_external_state"}
                     else None
@@ -20961,7 +20983,7 @@ def validate_timeweb_manifest_tree(
                 {
                     "SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY": "ephemeral",
                     "SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST": (
-                        TIMEWEB_BOUNDED_CANARY_OPERATION_ID
+                        ",".join(hosted_managed_runtime.operation_ids)
                     ),
                 }
             )
@@ -20970,7 +20992,7 @@ def validate_timeweb_manifest_tree(
                     "--specspace-state-dir": TIMEWEB_BOUNDED_CANARY_STATE_DIR,
                     "--hosted-managed-state-durability": "ephemeral",
                     "--hosted-managed-operation-allowlist": (
-                        TIMEWEB_BOUNDED_CANARY_OPERATION_ID
+                        ",".join(hosted_managed_runtime.operation_ids)
                     ),
                 }
             )
@@ -20979,7 +21001,7 @@ def validate_timeweb_manifest_tree(
                 {
                     "SPECSPACE_HOSTED_MANAGED_STATE_DURABILITY": "persistent",
                     "SPECSPACE_HOSTED_MANAGED_OPERATION_ALLOWLIST": (
-                        TIMEWEB_BOUNDED_CANARY_OPERATION_ID
+                        ",".join(hosted_managed_runtime.operation_ids)
                     ),
                     "SPECSPACE_EXTERNAL_STATE_ENABLED": "true",
                     "SPECSPACE_EXTERNAL_STATE_URL": (
@@ -20996,7 +21018,7 @@ def validate_timeweb_manifest_tree(
                     "--specspace-state-dir": TIMEWEB_EXTERNAL_STATE_CACHE_DIR,
                     "--hosted-managed-state-durability": "persistent",
                     "--hosted-managed-operation-allowlist": (
-                        TIMEWEB_BOUNDED_CANARY_OPERATION_ID
+                        ",".join(hosted_managed_runtime.operation_ids)
                     ),
                     "--external-state-url": (
                         hosted_managed_runtime.external_state_url
@@ -24910,6 +24932,7 @@ def build_parser() -> argparse.ArgumentParser:
             ),
             hosted_managed_bounded_canary_enabled=False,
             hosted_managed_external_state_enabled=False,
+            hosted_managed_promotion_dry_run_enabled=False,
         )
         command_parser.add_argument(
             "--enable-hosted-managed-execution",
@@ -24942,6 +24965,15 @@ def build_parser() -> argparse.ArgumentParser:
             help=(
                 "Render the Timeweb-compatible persistent hosted profile backed "
                 "by the authenticated external SpecSpace state service."
+            ),
+        )
+        command_parser.add_argument(
+            "--enable-hosted-managed-promotion-dry-run",
+            dest="hosted_managed_promotion_dry_run_enabled",
+            action="store_true",
+            help=(
+                "Explicitly expose promotion_execute_dry_run alongside "
+                "review_status_execute in the persistent external-state profile."
             ),
         )
         command_parser.add_argument(
