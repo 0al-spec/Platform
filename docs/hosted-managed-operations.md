@@ -1265,14 +1265,16 @@ requirements as the read-only policy. It additionally requires these two
 authoritative outputs:
 
 ```text
-runs/product_candidate_promotion_execution_report.json
-runs/git_service_promotion_execution_report.json
+runs/managed-promotion-dry-runs/<request-id>.product_candidate_promotion_execution_report.json
+runs/managed-promotion-dry-runs/<request-id>.git_service_promotion_execution_report.json
 ```
 
 The host wrapper verifies both receipt digests and report semantics. A valid
 result must be a strict dry-run: no physical candidate worktree, copied files,
 commit, branch, pull request, read-model publication, canonical spec mutation,
 or Ontology write. Queue success without both matching reports is blocked.
+The request-scoped paths also prevent a diagnostic replay from replacing the
+canonical non-dry-run execution report consumed by review status.
 
 Before a clean-VM or explicitly approved production window, deploy the same
 immutable image lock with the operation-specific profile while the worker is

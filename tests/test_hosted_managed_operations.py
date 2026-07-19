@@ -68,6 +68,20 @@ class HostedManagedOperationContractTests(unittest.TestCase):
             repair.platform_command,
             ("product-repair-rerun", "execute"),
         )
+        promotion_dry_run = hosted.operation_by_id("promotion_execute_dry_run")
+        promotion_review = hosted.operation_by_id("promotion_review_execute")
+        self.assertEqual(
+            promotion_dry_run.output_reports,
+            (
+                hosted.PROMOTION_DRY_RUN_EXECUTION_OUTPUT_REF,
+                hosted.PROMOTION_DRY_RUN_GIT_SERVICE_OUTPUT_REF,
+            ),
+        )
+        self.assertTrue(
+            set(promotion_dry_run.output_reports).isdisjoint(
+                promotion_review.output_reports
+            )
+        )
         self.assertTrue(
             all(
                 operation.binding_requirement == "ready"
@@ -207,6 +221,45 @@ class HostedManagedOperationContractTests(unittest.TestCase):
         self.assertEqual(hosted.request_diagnostics(second_review), [])
         self.assertEqual(
             first_intake["idempotency_key"], second_intake["idempotency_key"]
+        )
+
+    def test_promotion_dry_run_request_materializes_request_scoped_outputs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            inputs: dict[str, Path] = {}
+            definition = hosted.operation_by_id("promotion_execute_dry_run")
+            assert definition is not None
+            for index, ref in enumerate(definition.input_refs):
+                path = temp / f"input-{index}.json"
+                path.write_text("{}", encoding="utf-8")
+                inputs[ref] = path
+            request = hosted.build_request(
+                operation_id="promotion_execute_dry_run",
+                workspace_binding=ready_binding(),
+                workspace_binding_ref="runs/initialization.json",
+                workspace_binding_source_sha256="2" * 64,
+                inputs=inputs,
+                generated_at="2026-07-10T00:00:00Z",
+                operator_ref="operator://specspace-dry-run",
+            )
+
+        request_fragment = request["request_id"].rsplit("/", 1)[-1]
+        self.assertEqual(
+            request["expected_output_reports"],
+            [
+                "runs/managed-promotion-dry-runs/"
+                f"{request_fragment}."
+                "product_candidate_promotion_execution_report.json",
+                "runs/managed-promotion-dry-runs/"
+                f"{request_fragment}."
+                "git_service_promotion_execution_report.json",
+            ],
+        )
+        self.assertNotIn(
+            "runs/product_candidate_promotion_execution_report.json",
+            request["expected_output_reports"],
         )
 
     def test_request_rejects_registry_and_idempotency_tampering(self) -> None:

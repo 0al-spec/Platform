@@ -216,6 +216,30 @@ class HostedManagedOperationExecutorTests(unittest.TestCase):
             "runs/graph_repository_execution_plan.json",
             contracts.operation_by_id("promotion_execute_dry_run").input_refs,
         )
+        output_path = Path(
+            dry_run_command[dry_run_command.index("--output") + 1]
+        )
+        git_service_output_path = Path(
+            dry_run_command[dry_run_command.index("--git-service-output") + 1]
+        )
+        self.assertEqual(output_path.parent.name, "managed-promotion-dry-runs")
+        self.assertEqual(
+            git_service_output_path.parent,
+            output_path.parent,
+        )
+        self.assertRegex(
+            output_path.name,
+            r"^[0-9a-f]{24}\.product_candidate_promotion_execution_report\.json$",
+        )
+        self.assertRegex(
+            git_service_output_path.name,
+            r"^[0-9a-f]{24}\.git_service_promotion_execution_report\.json$",
+        )
+        review_command = command_families["promotion_review_execute"][0]
+        self.assertEqual(
+            Path(review_command[review_command.index("--output") + 1]).name,
+            "product_candidate_promotion_execution_report.json",
+        )
         self.assertEqual(len(command_families["repair_rerun_execute"]), 2)
 
     def test_worker_executes_fixed_wrapper_and_pins_output_reports(self) -> None:

@@ -273,7 +273,7 @@ contract are:
 | `repair_rerun_publish` | `product-repair-rerun publish` | `runs/platform_product_repair_rerun_publication_report.json` |
 | `candidate_approval_execute` | `product-candidate-approval approve` | `runs/platform_candidate_approval_execution_report.json` |
 | `promotion_request_execute` | `product-candidate-promotion request` | `runs/graph_repository_promotion_request.json` |
-| `promotion_execute_dry_run` | `product-candidate-promotion execute --dry-run --open-review-dry-run` | `runs/product_candidate_promotion_execution_report.json` |
+| `promotion_execute_dry_run` | `product-candidate-promotion execute --dry-run --open-review-dry-run` | `runs/managed-promotion-dry-runs/<request-id>.product_candidate_promotion_execution_report.json` |
 | `promotion_review_execute` | `product-candidate-promotion execute` | `runs/product_candidate_promotion_execution_report.json` |
 | `review_status_execute` | `product-candidate-promotion review-status` | `runs/product_candidate_promotion_review_status_report.json` |
 

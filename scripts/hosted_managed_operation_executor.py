@@ -217,12 +217,26 @@ class FilesystemManagedOperationResolver:
 
         output_paths: dict[str, Path] = {}
         output_refs: dict[str, str] = {}
-        for pattern in request["expected_output_reports"]:
-            concrete_ref = self._concrete_output_ref(pattern, request)
+        operation_outputs = _mapping(request.get("operation")).get("output_reports")
+        operation_outputs = (
+            operation_outputs if isinstance(operation_outputs, list) else []
+        )
+        expected_outputs = request["expected_output_reports"]
+        if len(operation_outputs) != len(expected_outputs):
+            raise ExecutorContractError(
+                "managed operation output registry no longer matches its request"
+            )
+        for pattern, concrete_ref in zip(
+            operation_outputs,
+            expected_outputs,
+            strict=True,
+        ):
             path = self.resolve_logical_ref(concrete_ref, workspace_id)
             path.parent.mkdir(parents=True, exist_ok=True)
             output_paths[pattern] = path
+            output_paths[concrete_ref] = path
             output_refs[pattern] = concrete_ref
+            output_refs[concrete_ref] = concrete_ref
         return ResolvedOperation(
             request=request,
             workspace_id=workspace_id,
@@ -500,6 +514,17 @@ class PlatformManagedOperationExecutor:
                 "json",
             ]]
         if operation_id in {"promotion_execute_dry_run", "promotion_review_execute"}:
+            execution_output_ref = "runs/product_candidate_promotion_execution_report.json"
+            git_service_output_ref = "runs/git_service_promotion_execution_report.json"
+            if operation_id == "promotion_execute_dry_run":
+                execution_output_ref = self.resolver._concrete_output_ref(
+                    contracts.PROMOTION_DRY_RUN_EXECUTION_OUTPUT_REF,
+                    resolved.request,
+                )
+                git_service_output_ref = self.resolver._concrete_output_ref(
+                    contracts.PROMOTION_DRY_RUN_GIT_SERVICE_OUTPUT_REF,
+                    resolved.request,
+                )
             command = [
                 *base,
                 "product-candidate-promotion",
@@ -515,9 +540,9 @@ class PlatformManagedOperationExecutor:
                 "--workspace-dir",
                 str(specgraph_dir / ".platform" / "candidates" / workspace_id),
                 "--git-service-output",
-                str(self._output(resolved, "runs/git_service_promotion_execution_report.json")),
+                str(self._output(resolved, git_service_output_ref)),
                 "--output",
-                str(self._output(resolved, "runs/product_candidate_promotion_execution_report.json")),
+                str(self._output(resolved, execution_output_ref)),
                 "--format",
                 "json",
             ]

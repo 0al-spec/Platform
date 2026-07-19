@@ -91,13 +91,18 @@ class WindowRunner:
             )
             output_reports = []
             if dry_run:
+                request_fragment = request_id.rsplit("/", 1)[-1]
                 workspace_runs = (
                     self.artifact_root / "runs" / "hosted-operation-canary"
                 )
-                workspace_runs.mkdir(parents=True, exist_ok=True)
+                dry_run_runs = workspace_runs / "managed-promotion-dry-runs"
+                dry_run_runs.mkdir(parents=True, exist_ok=True)
                 product_path = (
-                    workspace_runs
-                    / "product_candidate_promotion_execution_report.json"
+                    dry_run_runs
+                    / (
+                        f"{request_fragment}."
+                        "product_candidate_promotion_execution_report.json"
+                    )
                 )
                 product_path.write_text(
                     json.dumps(
@@ -137,7 +142,13 @@ class WindowRunner:
                     ),
                     encoding="utf-8",
                 )
-                git_path = workspace_runs / "git_service_promotion_execution_report.json"
+                git_path = (
+                    dry_run_runs
+                    / (
+                        f"{request_fragment}."
+                        "git_service_promotion_execution_report.json"
+                    )
+                )
                 git_path.write_text(
                     json.dumps(
                         {
@@ -164,10 +175,17 @@ class WindowRunner:
                 )
                 for logical_ref, report_path in (
                     (
-                        "runs/product_candidate_promotion_execution_report.json",
+                        "runs/managed-promotion-dry-runs/"
+                        f"{request_fragment}."
+                        "product_candidate_promotion_execution_report.json",
                         product_path,
                     ),
-                    ("runs/git_service_promotion_execution_report.json", git_path),
+                    (
+                        "runs/managed-promotion-dry-runs/"
+                        f"{request_fragment}."
+                        "git_service_promotion_execution_report.json",
+                        git_path,
+                    ),
                 ):
                     output_reports.append(
                         {
@@ -445,12 +463,17 @@ class HostedManagedProductionWorkerWindowTests(unittest.TestCase):
             def mutation_runner(command, **kwargs):
                 completed = original(command, **kwargs)
                 if production_window.PROMOTION_DRY_RUN_WINDOW_SERVICE in command:
+                    request_fragment = DRY_RUN_REQUEST_ID.rsplit("/", 1)[-1]
                     report_path = (
                         root
                         / "artifacts"
                         / "runs"
                         / "hosted-operation-canary"
-                        / "product_candidate_promotion_execution_report.json"
+                        / "managed-promotion-dry-runs"
+                        / (
+                            f"{request_fragment}."
+                            "product_candidate_promotion_execution_report.json"
+                        )
                     )
                     payload = json.loads(report_path.read_text(encoding="utf-8"))
                     payload["summary"]["commit_created"] = True
