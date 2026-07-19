@@ -312,7 +312,11 @@ def run_window(
     receipt_outputs = receipt_outputs if isinstance(receipt_outputs, list) else []
     expected_outputs = expected_output_reports(
         policy,
-        request_id=expected_request_id,
+        request_id=(
+            expected_request_id
+            if REQUEST_ID_RE.fullmatch(expected_request_id)
+            else None
+        ),
     )
     authoritative_reports_ready = bool(receipt_outputs) and all(
         isinstance(item, dict)

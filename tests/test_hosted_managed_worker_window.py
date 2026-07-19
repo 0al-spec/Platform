@@ -492,6 +492,59 @@ class HostedManagedWorkerWindowTests(unittest.TestCase):
         )
         self.assertIn("expected_request_missing", report["diagnostics"])
 
+    def test_platform_cli_materializes_blocked_invalid_request_id_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            artifact_root = root / "artifacts"
+            state_dir = root / "state"
+            specgraph_dir = root / "SpecGraph"
+            for path in (artifact_root, state_dir, specgraph_dir):
+                path.mkdir()
+            (specgraph_dir / "Makefile").write_text(
+                "test:\n\t@true\n",
+                encoding="utf-8",
+            )
+            window_id = "window-20260715t120000z"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "scripts" / "platform.py"),
+                    "managed-operation",
+                    "worker-window",
+                    "--database",
+                    str(root / "queue.sqlite3"),
+                    "--artifact-root",
+                    str(artifact_root),
+                    "--state-dir",
+                    str(state_dir),
+                    "--specgraph-dir",
+                    str(specgraph_dir),
+                    "--worker-id",
+                    "bounded-worker-test",
+                    "--expected-request-id",
+                    "invalid-request-id",
+                    "--window-id",
+                    window_id,
+                    "--policy",
+                    str(DRY_RUN_POLICY_PATH.resolve()),
+                    "--operation-allowlist",
+                    "promotion_execute_dry_run",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report_file = window_module.report_path(artifact_root, window_id)
+            report = json.loads(report_file.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertEqual(
+            report["summary"]["status"],
+            "bounded_worker_window_blocked",
+        )
+        self.assertIn("expected_request_id_invalid", report["diagnostics"])
+
 
 if __name__ == "__main__":
     unittest.main()
