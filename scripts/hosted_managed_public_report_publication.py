@@ -591,25 +591,26 @@ def build_review_status_report(
         "closed": "CLOSED",
         "merged": "MERGED",
     }.get(review_state)
-    expected_summary_status = (
+    projected_summary_status = (
         "review_probe_completed"
         if review_probe_only is True
         else (
             "ready_for_read_model_publication"
             if review_state == "merged"
-            else "waiting_for_review_merge"
+            else (
+                "review_closed_without_merge"
+                if review_state == "closed"
+                else "waiting_for_review_merge"
+            )
         )
     )
+    accepted_source_summary_statuses = {projected_summary_status}
+    if review_probe_only is False and review_state == "closed":
+        # Normalize the one legacy producer status without rerunning its pinned
+        # bounded worker operation.
+        accepted_source_summary_statuses.add("waiting_for_review_merge")
     review_merged = review_state == "merged"
-    expected_graph_summary_status = (
-        "review_probe_completed"
-        if review_probe_only is True
-        else (
-            "ready_for_read_model_publication"
-            if review_merged
-            else "waiting_for_review_merge"
-        )
-    )
+    expected_graph_summary_status = projected_summary_status
     if (
         source.get("artifact_kind") != REVIEW_STATUS_KIND
         or source.get("schema_version") != 1
@@ -623,7 +624,7 @@ def build_review_status_report(
         or graph_review.get("ok") is not True
         or graph_review.get("review_state") != review_state
         or graph_summary.get("review_merged") is not review_merged
-        or summary.get("status") != expected_summary_status
+        or summary.get("status") not in accepted_source_summary_statuses
         or summary.get("review_merged") is not review_merged
         or summary.get("read_model_published") is not False
         or not _strict_false_boundary(
@@ -673,7 +674,7 @@ def build_review_status_report(
         "privacy_boundary": _public_privacy_boundary(),
         "diagnostics": [],
         "summary": {
-            "status": expected_summary_status,
+            "status": projected_summary_status,
             "review_merged": review_merged,
             "read_model_published": False,
             "error_count": 0,

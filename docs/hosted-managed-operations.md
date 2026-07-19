@@ -892,6 +892,15 @@ including after the probed PR is merged. Both report kinds are pinned to
 `graph-candidate/hosted-operation-canary`; a similarly named foreign candidate
 branch is rejected.
 
+An execution-backed review that GitHub reports as `closed` without merge is
+published as `review_closed_without_merge`. It is a terminal blocker for that
+review object, not a waiting state: read-model publication remains unavailable
+until a new controlled promotion review is opened and later merged. Publication
+accepts the legacy `waiting_for_review_merge` source status only when the same
+digest-pinned source report explicitly says `review_state=closed`; the
+public-safe projection is normalized to the closed status without replaying the
+worker operation.
+
 Build packets on the hosted worker without printing secret values:
 
 ```bash
