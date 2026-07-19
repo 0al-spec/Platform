@@ -651,7 +651,8 @@ On the production host, from the commit-pinned Platform checkout, run:
 ```bash
 sudo /usr/bin/python3 \
   /srv/0al/platform/scripts/hosted_managed_production_backup_cycle.py \
-  --service-url https://managed.example.org
+  --service-url https://managed.example.org \
+  --operation-profile review-status
 
 backup_id="$(sudo cat /srv/0al/evidence/current-backup-id.txt)"
 sudo cat /srv/0al/evidence/hosted-managed-backup-cycle.json
@@ -662,6 +663,11 @@ The generated backup remains private under
 public-safe summaries under `/srv/0al/evidence/`; they are evidence, not the
 backup payload. A failed cycle must not be retried until the final runtime probe
 passes or the service state has been diagnosed manually.
+
+Pass the active deployment profile explicitly. For the combined bounded
+rollout, use `--operation-profile bounded-product-dry-run`; the pre-backup and
+post-restart probes must validate that same exact allowlist instead of
+temporarily switching the deployment to the read-only profile.
 
 The lower-level `hosted_managed_runtime_backup.py backup` and `restore-smoke`
 commands remain available for diagnostics and tests, but operators should not
