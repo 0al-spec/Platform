@@ -539,7 +539,7 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
                     self.assertIsNotNone(leased)
 
                 with self.assertRaisesRegex(
-                    queue_module.QueueContractError,
+                    postgres_module.queue_module.QueueContractError,
                     "foreign managed-operation request",
                 ):
                     queue.recover_expired(
