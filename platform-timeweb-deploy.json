@@ -7,6 +7,7 @@
   "hosted_managed_executor_timeout_seconds": "5",
   "hosted_managed_executor_url": "https://managed.specgraph.tech",
   "hosted_managed_operation_allowlist": [
+    "promotion_execute_dry_run",
     "review_status_execute"
   ],
   "hosted_managed_state_durability": "persistent",
@@ -23,7 +24,7 @@
   },
   "readme": "README.md",
   "release_commit": "14135beefbd39fba9a5c4fe2a765b8429bd3bd67",
-  "release_created_at": "2026-07-19T23:17:52Z",
+  "release_created_at": "2026-07-19T23:19:30Z",
   "required_runtime_environment_variables": [
     "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN",
     "SPECSPACE_EXTERNAL_STATE_TOKEN"
