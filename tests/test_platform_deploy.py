@@ -86,6 +86,14 @@ class _SpecSpaceSmokeHandler(BaseHTTPRequestHandler):
     health_payload: dict[str, object] = {
         "api_version": "v1",
         "deployment": {"commit": "abc123"},
+        "operator_access_control": {
+            "available": True,
+            "status": "single_operator",
+            "enabled": True,
+            "operator_authenticated": False,
+            "private_state_requires_operator": True,
+            "managed_operations_require_operator": True,
+        },
     }
     workspace_payload: dict[str, object] = _specspace_smoke_workspace_payload()
     transient_failures: dict[str, int] = {}
@@ -105,6 +113,9 @@ class _SpecSpaceSmokeHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/v1/idea-to-spec-workspace?"):
             self._write_json(self.workspace_payload)
             return
+        if self.path.startswith("/api/v1/real-idea-entry-requests?"):
+            self._write_unauthorized()
+            return
         if self.path == "/team-decision-log":
             self.send_response(200)
             self.send_header("content-type", "text/html; charset=utf-8")
@@ -120,6 +131,13 @@ class _SpecSpaceSmokeHandler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path.startswith("/api/v1/idea-to-spec-review-status/execute?"):
+            self._write_unauthorized()
+            return
+        self.send_response(404)
+        self.end_headers()
+
     def log_message(self, _format: str, *_args: object) -> None:
         return
 
@@ -128,6 +146,20 @@ class _SpecSpaceSmokeHandler(BaseHTTPRequestHandler):
         self.send_header("content-type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+    def _write_unauthorized(self) -> None:
+        self.send_response(401)
+        self.send_header(
+            "www-authenticate",
+            'Basic realm="SpecSpace operator", charset="UTF-8"',
+        )
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(
+            json.dumps(
+                {"reason": "operator_authentication_required"}
+            ).encode("utf-8")
+        )
 
 
 class _SmokeServer:
@@ -308,6 +340,81 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertIn(
             "specspace_managed_mode_status",
             {diagnostic["code"] for diagnostic in payload["diagnostics"]},
+        )
+
+    def test_specspace_product_smoke_blocks_anonymous_operator_surface(
+        self,
+    ) -> None:
+        class AnonymousOperatorHandler(_SpecSpaceSmokeHandler):
+            health_payload = {
+                "api_version": "v1",
+                "deployment": {"commit": "abc123"},
+                "operator_access_control": {
+                    "status": "disabled",
+                    "enabled": False,
+                },
+            }
+            workspace_payload = _specspace_smoke_workspace_payload()
+            workspace_payload["workspace_creation"] = {
+                "active_request": {
+                    "root_intent_summary": "private idea",
+                }
+            }
+
+            def do_GET(self) -> None:  # noqa: N802
+                if self.path.startswith("/api/v1/real-idea-entry-requests?"):
+                    self._write_json({"idea_text": "private idea"})
+                    return
+                super().do_GET()
+
+            def do_POST(self) -> None:  # noqa: N802
+                if self.path.startswith(
+                    "/api/v1/idea-to-spec-review-status/execute?"
+                ):
+                    self._write_json({"status": "accepted"})
+                    return
+                super().do_POST()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), AnonymousOperatorHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address
+        try:
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                f"http://{host}:{port}",
+                "--workspace",
+                "team-decision-log",
+                "--artifact-base-url",
+                "https://specgraph.tech/workspaces/team-decision-log",
+                "--format",
+                "json",
+                "--no-write-report",
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        diagnostic_ids = {
+            diagnostic["code"] for diagnostic in payload["diagnostics"]
+        }
+        self.assertIn(
+            "specspace_single_operator_access_control_enabled",
+            diagnostic_ids,
+        )
+        self.assertIn("specspace_anonymous_private_state_rejected", diagnostic_ids)
+        self.assertIn(
+            "specspace_anonymous_managed_execution_rejected",
+            diagnostic_ids,
+        )
+        self.assertIn(
+            "specspace_public_workspace_omits_private_idea_fields",
+            diagnostic_ids,
         )
 
     def test_specspace_product_smoke_cli_accepts_hosted_managed_profile(self) -> None:
@@ -828,6 +935,20 @@ class PlatformDeployTests(unittest.TestCase):
                 'SPECSPACE_HYPERPROMPT_BUNDLE_RETENTION_COUNT: "20"',
                 compose,
             )
+            self.assertIn('SPECSPACE_OPERATOR_AUTH_ENABLED: "true"', compose)
+            self.assertIn(
+                'SPECSPACE_OPERATOR_AUTH_USERNAME: "operator"',
+                compose,
+            )
+            self.assertIn(
+                "      SPECSPACE_OPERATOR_AUTH_PASSWORD:\n",
+                compose,
+            )
+            self.assertNotIn("${SPECSPACE_OPERATOR_AUTH_PASSWORD}", compose)
+            self.assertIn(
+                'SPECSPACE_OPERATOR_AUTH_ALLOWED_ORIGIN: "https://specgraph.space"',
+                compose,
+            )
             self.assertIn("--product-workspace-artifact-base-url", compose)
             self.assertIn(
                 '"team-decision-log=https://specgraph.tech/workspaces/team-decision-log"',
@@ -853,6 +974,18 @@ class PlatformDeployTests(unittest.TestCase):
             self.assertTrue(manifest["hyperprompt_http_compile_enabled"])
             self.assertEqual(manifest["hyperprompt_work_dir"], "/tmp")
             self.assertEqual(manifest["hyperprompt_compile_timeout_seconds"], "60")
+            self.assertEqual(
+                manifest["operator_access_control_profile"],
+                "single_operator_basic",
+            )
+            self.assertEqual(
+                manifest["operator_auth_allowed_origin"],
+                "https://specgraph.space",
+            )
+            self.assertEqual(
+                manifest["required_runtime_environment_variables"],
+                ["SPECSPACE_OPERATOR_AUTH_PASSWORD"],
+            )
             self.assertEqual(
                 manifest["specspace_state_profile"],
                 "read_only_no_mutable_state",
@@ -920,6 +1053,68 @@ class PlatformDeployTests(unittest.TestCase):
                 },
             )
             self.assertTrue(json.loads(result.stdout)["valid"])
+
+    def test_timeweb_validate_rejects_missing_or_inline_operator_secret(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "timeweb"
+            render = self.run_cli(
+                "deploy",
+                "timeweb-render",
+                "--output-dir",
+                str(output_dir),
+                "--specspace-api-image-ref",
+                API_IMAGE,
+                "--specspace-ui-image-ref",
+                UI_IMAGE,
+            )
+            compose_path = output_dir / "docker-compose.yml"
+            original = compose_path.read_text(encoding="utf-8")
+
+            compose_path.write_text(
+                original.replace(
+                    "      SPECSPACE_OPERATOR_AUTH_PASSWORD:\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+            missing = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+            compose_path.write_text(
+                original.replace(
+                    "      SPECSPACE_OPERATOR_AUTH_PASSWORD:\n",
+                    '      SPECSPACE_OPERATOR_AUTH_PASSWORD: "secret"\n',
+                ),
+                encoding="utf-8",
+            )
+            inline = self.run_cli(
+                "deploy",
+                "timeweb-validate",
+                "--path",
+                str(output_dir),
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(missing.returncode, 1, missing.stderr)
+        self.assertIn(
+            "must declare SPECSPACE_OPERATOR_AUTH_PASSWORD",
+            missing.stdout,
+        )
+        self.assertEqual(inline.returncode, 1, inline.stderr)
+        self.assertIn(
+            "must not assign a Compose value to SPECSPACE_OPERATOR_AUTH_PASSWORD",
+            inline.stdout,
+        )
 
     def test_timeweb_render_can_enable_hosted_managed_execution(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -1107,7 +1302,10 @@ class PlatformDeployTests(unittest.TestCase):
         )
         self.assertEqual(
             manifest["required_runtime_environment_variables"],
-            ["SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN"],
+            [
+                "SPECSPACE_OPERATOR_AUTH_PASSWORD",
+                "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN",
+            ],
         )
 
     def test_timeweb_render_external_state_is_persistent_and_sanitizer_compatible(
@@ -1199,6 +1397,7 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertEqual(
             manifest["required_runtime_environment_variables"],
             [
+                "SPECSPACE_OPERATOR_AUTH_PASSWORD",
                 "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN",
                 "SPECSPACE_EXTERNAL_STATE_TOKEN",
             ],

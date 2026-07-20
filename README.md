@@ -348,6 +348,12 @@ manifest without storing Timeweb secrets or rebuilding service images.
 The Timeweb renderer also enables SpecSpace HTTP-provider Hyperprompt compile
 with a `/tmp` scratch workspace and bounded runtime limits; use
 `--disable-hyperprompt-http-compile` for a manifest-level rollback.
+Every Timeweb profile also enables SpecSpace's backend-enforced single-operator
+boundary. Configure `SPECSPACE_OPERATOR_AUTH_PASSWORD` as an independent global
+Timeweb App secret; the generated Compose declares it without a value and never
+stores it in Git. Public-safe reads remain anonymous, while raw mutable state
+and all mutation/managed-operation routes require HTTP Basic authentication
+over HTTPS.
 Use `--product-workspace-artifact-base-url` or
 `SPECSPACE_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL` when a product workspace should
 read a separate public-safe artifact bundle from the root SpecGraph showcase.
@@ -375,8 +381,10 @@ Validate that posture with:
 
 The smoke checks both `/team-decision-log` and
 `/team-decision-log?view=demo`, verifies the workspace-specific artifact base,
-and requires production managed execution to stay disabled unless the deployment
-profile intentionally changes.
+requires anonymous private-state GET and managed POST requests to return `401`,
+rejects private idea fields in the anonymous projection, and requires
+production managed execution to stay disabled unless the deployment profile
+intentionally changes.
 
 The GitHub Actions workflow `Timeweb Publish` is the production Timeweb deploy
 publisher. SpecSpace CI produces the service image lock and triggers this

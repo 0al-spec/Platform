@@ -316,6 +316,20 @@ For production smoke, use the Platform wrapper:
   --format json
 ```
 
+Production smoke also verifies the access-control boundary. The anonymous
+client must still read health, the sanitized Product Workspace projection, and
+the route shells, while these probes must return `401` before request
+validation:
+
+```text
+GET  /api/v1/real-idea-entry-requests
+POST /api/v1/idea-to-spec-review-status/execute
+```
+
+It also recursively rejects `idea_text` and `root_intent_summary` in the
+anonymous Product Workspace payload. Use `--no-require-operator-auth` only for
+a bounded pre-rollout compatibility probe, never as production sign-off.
+
 Expected production posture is `status: "read_only"` with
 `platform_execution_disabled` in `disabled_reasons`. A production deployment
 that reports `backend_managed_ready` should be treated as an intentional

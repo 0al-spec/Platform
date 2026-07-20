@@ -826,11 +826,19 @@ request again as `replay-canary.json`. The replay must preserve request id,
 idempotency key, output refs and `attempt=1`.
 
 For Timeweb SpecSpace, publish the dedicated hosted manifest profile only after
-the executor token has been configured in the Timeweb deployment environment:
+the operator password and executor token have been configured in the Timeweb
+deployment environment:
 
 ```text
+SPECSPACE_OPERATOR_AUTH_PASSWORD=<independent random operator password>
 SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN=<same service token stored on the VPS>
 ```
+
+The operator password protects the Internet-facing SpecSpace private-state and
+managed-operation routes. The executor token authenticates SpecSpace to
+Platform. They are different trust boundaries and must not reuse a value.
+External state and hosted execution fail closed when the SpecSpace
+single-operator boundary is disabled.
 
 ### External SpecSpace Mutable-State Backend Prerequisite
 
@@ -990,21 +998,22 @@ hosted_managed_executor_url=https://managed.specgraph.tech
 external_state_url=https://managed.specgraph.tech/specspace-state
 ```
 
-Timeweb must provide two independent global secret variables:
+Timeweb must provide three independent global secret variables:
 
 ```text
+SPECSPACE_OPERATOR_AUTH_PASSWORD
 SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN
 SPECSPACE_EXTERNAL_STATE_TOKEN
 ```
 
-Both global variables must also be attached to the SpecSpace application.
-Timeweb injects them into the running container through value-less environment
+All global variables must be attached to the SpecSpace application. Timeweb
+injects them into the running container through value-less environment
 keys in the `specspace-api` service. The rendered Compose file must not assign
-or interpolate either variable because Compose expansion happens before App
+or interpolate any variable because Compose expansion happens before App
 runtime-variable injection. Omitting the keys entirely also fails because
 Timeweb does not pass App variables to that secondary service implicitly. The
 generated deployment metadata lists the required variable names without
-containing either value.
+containing any value.
 It sets persistent hosted durability, uses `/tmp/specspace-external-state-cache`
 only for private materialization, and keeps the SpecSpace client allowlist at
 `review_status_execute`. Platform's worker remains stopped except during a
