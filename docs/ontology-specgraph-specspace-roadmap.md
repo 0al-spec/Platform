@@ -400,6 +400,18 @@ Operational measurements inside item 4 do not expand production authority.
    Every allowlist expansion remains a separate rollout with operation-specific
    confirmation, idempotency, monitoring, recovery, backup, and rollback
    evidence.
+   Before the next expansion, close the Internet access-control boundary:
+   SpecSpace now has a backend-enforced single-operator profile in progress.
+   Public-safe read projections stay anonymous, while raw mutable state and all
+   mutation/managed-operation routes require HTTP Basic authentication over
+   HTTPS, exact-origin mutation checks, and no-store responses. Platform's
+   Timeweb renderer requires an independent value-less operator password, and
+   production smoke proves anonymous private GET and managed POST requests
+   return `401`. Roll out this profile first in read-only mode; re-enable
+   external state and bounded operations only after authenticated operator
+   access is verified. Full user sessions, workspace ownership/roles, rate
+   limiting, and a durable security audit log remain a later multi-user
+   production slice.
 5. **External SpecSpace mutable-state backend.** Producer and consumer
    contracts are implemented. Platform defines the narrow service contract in
    [External SpecSpace State Service](specspace-state-service.md): authenticated

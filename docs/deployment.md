@@ -367,6 +367,30 @@ scripts/platform.py deploy timeweb-validate \
   --path dist/platform-timeweb-deploy
 ```
 
+Every generated Timeweb profile enables SpecSpace's bounded single-operator
+HTTP Basic authentication boundary. Before deploying the generated tree, add
+one independent global secret to the Timeweb application:
+
+```text
+SPECSPACE_OPERATOR_AUTH_PASSWORD
+```
+
+Generate a random value of at least 32 characters and keep it separate from the
+Platform managed-operation token and both PostgreSQL passwords. The generated
+Compose declares the variable without a value; Timeweb injects the secret at
+runtime. Neither the renderer nor GitHub receives the value. The non-secret
+defaults are:
+
+```text
+SPECSPACE_OPERATOR_AUTH_USERNAME=operator
+SPECSPACE_OPERATOR_AUTH_ALLOWED_ORIGIN=https://specgraph.space
+```
+
+Open `https://specgraph.space/api/v1/operator-session` once to establish the
+browser's native Basic Auth session. Public-safe artifact and Product Workspace
+projections remain anonymous; raw SpecSpace state and every mutation or managed
+operation require the operator credentials.
+
 `--image-lock` is the preferred handoff from service-producing CI to Platform.
 It keeps the composite deploy renderer independent from how service images are
 built:
@@ -470,6 +494,10 @@ Guardrails:
 - no source `build` sections;
 - no bind mounts; named volumes and Compose secrets are forbidden in the
   Timeweb read-only, bounded-canary, and external-state profiles;
+- every Timeweb profile must enable the single-operator boundary and declare
+  `SPECSPACE_OPERATOR_AUTH_PASSWORD` as a value-less runtime environment key;
+  mutable external state or managed execution must fail startup when this
+  boundary is disabled;
 - Timeweb runtime secrets must be attached to the application in the control
   panel and declared only as value-less environment keys in Compose. They must
   not appear as `${VAR}` interpolation or assigned values. Timeweb resolves
@@ -550,6 +578,22 @@ The production control plane is split by ownership boundary:
 - Platform CI renders and validates the manifest-only deploy tree.
 - Platform CI publishes the generated tree to `0al-spec/Platform:timeweb-deploy`.
 - Timeweb Cloud Apps deploys from `0al-spec/Platform:timeweb-deploy`.
+
+The first deployment after introducing operator access control must use this
+order:
+
+1. Keep the generated Timeweb profile read-only.
+2. Add `SPECSPACE_OPERATOR_AUTH_PASSWORD` as a global Timeweb App secret.
+3. Deploy the auth-enabled API/UI image pair.
+4. Run `specspace product-smoke`; anonymous private-state GET and managed POST
+   must both return `401`.
+5. Open `/api/v1/operator-session`, authenticate, and verify the operator can
+   read the intended private workspace state.
+6. Only then restore the external-state profile and the bounded managed
+   operation allowlist.
+
+If step 4 or 5 fails, return to the read-only profile. Do not expose mutable
+state as a workaround.
 
 Platform exposes the publisher as a GitHub Actions workflow:
 

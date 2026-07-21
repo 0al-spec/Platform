@@ -7,6 +7,7 @@ import argparse
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
+from http import HTTPStatus
 import json
 import math
 import os
@@ -68,6 +69,8 @@ DEFAULT_TIMEWEB_EXTERNAL_STATE_URL = (
     "https://managed.specgraph.tech/specspace-state"
 )
 DEFAULT_TIMEWEB_EXTERNAL_STATE_TIMEOUT_SECONDS = "5"
+DEFAULT_TIMEWEB_OPERATOR_AUTH_USERNAME = "operator"
+DEFAULT_TIMEWEB_OPERATOR_AUTH_ALLOWED_ORIGIN = "https://specgraph.space"
 TIMEWEB_HOSTED_MANAGED_STATE_VOLUME = "specspace-hosted-managed-state"
 TIMEWEB_HOSTED_MANAGED_STATE_DIR = "/data/specspace-hosted-managed-state"
 TIMEWEB_HOSTED_MANAGED_TOKEN_SECRET = "specspace-hosted-managed-executor-token"
@@ -80,6 +83,7 @@ TIMEWEB_BOUNDED_PRODUCT_OPERATION_IDS = (
 TIMEWEB_HOSTED_MANAGED_TOKEN_ENV = "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN"
 TIMEWEB_EXTERNAL_STATE_CACHE_DIR = "/tmp/specspace-external-state-cache"
 TIMEWEB_EXTERNAL_STATE_TOKEN_ENV = "SPECSPACE_EXTERNAL_STATE_TOKEN"
+TIMEWEB_OPERATOR_AUTH_PASSWORD_ENV = "SPECSPACE_OPERATOR_AUTH_PASSWORD"
 DEFAULT_PRODUCT_WORKSPACE_ID = "team-decision-log"
 DEFAULT_DEPLOYED_PRODUCT_WORKSPACE_IDS = (
     DEFAULT_PRODUCT_WORKSPACE_ID,
@@ -867,6 +871,12 @@ class TimewebHostedManagedRuntime:
     timeout_seconds: str
     external_state_url: str
     external_state_timeout_seconds: str
+
+
+@dataclass(frozen=True)
+class TimewebOperatorAuthRuntime:
+    username: str
+    allowed_origin: str
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -20251,6 +20261,49 @@ def timeweb_hosted_managed_runtime_from_args(
     )
 
 
+def timeweb_operator_auth_runtime_from_args(
+    args: argparse.Namespace,
+) -> TimewebOperatorAuthRuntime:
+    username = str(
+        getattr(
+            args,
+            "operator_auth_username",
+            DEFAULT_TIMEWEB_OPERATOR_AUTH_USERNAME,
+        )
+    ).strip()
+    if not re.fullmatch(r"[A-Za-z0-9._@-]{1,128}", username):
+        raise PlatformError(
+            "Timeweb SpecSpace operator auth username must contain only "
+            "ASCII letters, digits, '.', '_', '@', or '-'"
+        )
+    allowed_origin = str(
+        getattr(
+            args,
+            "operator_auth_allowed_origin",
+            DEFAULT_TIMEWEB_OPERATOR_AUTH_ALLOWED_ORIGIN,
+        )
+    ).strip().rstrip("/")
+    parsed = urllib.parse.urlparse(allowed_origin)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise PlatformError(
+            "Timeweb SpecSpace operator auth allowed origin must be an HTTPS "
+            "origin without credentials, path, query, or fragment"
+        )
+    return TimewebOperatorAuthRuntime(
+        username=username,
+        allowed_origin=allowed_origin,
+    )
+
+
 def product_workspace_artifact_base_urls_from_args(args: argparse.Namespace) -> dict[str, str]:
     raw_values = getattr(args, "product_workspace_artifact_base_url", None)
     values: list[str] = []
@@ -20330,6 +20383,17 @@ def render_timeweb_hyperprompt_environment(runtime: TimewebHyperpromptRuntime) -
     return "".join(lines)
 
 
+def render_timeweb_operator_auth_environment(
+    runtime: TimewebOperatorAuthRuntime,
+) -> str:
+    return (
+        '      SPECSPACE_OPERATOR_AUTH_ENABLED: "true"\n'
+        f'      SPECSPACE_OPERATOR_AUTH_USERNAME: "{runtime.username}"\n'
+        f"      {TIMEWEB_OPERATOR_AUTH_PASSWORD_ENV}:\n"
+        f'      SPECSPACE_OPERATOR_AUTH_ALLOWED_ORIGIN: "{runtime.allowed_origin}"\n'
+    )
+
+
 def render_timeweb_hosted_managed_environment(
     runtime: TimewebHostedManagedRuntime,
 ) -> str:
@@ -20367,14 +20431,17 @@ def render_timeweb_hosted_managed_environment(
 def timeweb_required_runtime_environment_variables(
     runtime: TimewebHostedManagedRuntime,
 ) -> list[str]:
+    required = [TIMEWEB_OPERATOR_AUTH_PASSWORD_ENV]
     if runtime.profile == "timeweb_external_state":
-        return [
-            TIMEWEB_HOSTED_MANAGED_TOKEN_ENV,
-            TIMEWEB_EXTERNAL_STATE_TOKEN_ENV,
-        ]
-    if runtime.profile in {"timeweb_bounded_canary", "durable"}:
-        return [TIMEWEB_HOSTED_MANAGED_TOKEN_ENV]
-    return []
+        required.extend(
+            [
+                TIMEWEB_HOSTED_MANAGED_TOKEN_ENV,
+                TIMEWEB_EXTERNAL_STATE_TOKEN_ENV,
+            ]
+        )
+    elif runtime.profile in {"timeweb_bounded_canary", "durable"}:
+        required.append(TIMEWEB_HOSTED_MANAGED_TOKEN_ENV)
+    return required
 
 
 def render_timeweb_hosted_managed_command(
@@ -20458,6 +20525,7 @@ def render_timeweb_compose(
     specpm_registry_url: str,
     release_commit: str,
     hyperprompt_runtime: TimewebHyperpromptRuntime,
+    operator_auth_runtime: TimewebOperatorAuthRuntime,
     hosted_managed_runtime: TimewebHostedManagedRuntime,
 ) -> str:
     product_workspace_args = "".join(
@@ -20483,6 +20551,7 @@ def render_timeweb_compose(
         f"      SPECSPACE_UI_IMAGE_REF: \"{ui_image_ref}\"\n"
         f"      SPECSPACE_RELEASE_COMMIT: \"{release_commit}\"\n"
         f"{render_timeweb_hyperprompt_environment(hyperprompt_runtime)}"
+        f"{render_timeweb_operator_auth_environment(operator_auth_runtime)}"
         f"{render_timeweb_hosted_managed_environment(hosted_managed_runtime)}"
         "    command:\n"
         "      - python\n"
@@ -20509,6 +20578,7 @@ def render_timeweb_compose(
 def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
     image_refs = resolve_timeweb_image_refs(args)
     hyperprompt_runtime = timeweb_hyperprompt_runtime_from_args(args)
+    operator_auth_runtime = timeweb_operator_auth_runtime_from_args(args)
     hosted_managed_runtime = timeweb_hosted_managed_runtime_from_args(args)
 
     output_dir = Path(args.output_dir)
@@ -20550,6 +20620,7 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
             specpm_registry_url=args.specpm_registry_url,
             release_commit=release_commit,
             hyperprompt_runtime=hyperprompt_runtime,
+            operator_auth_runtime=operator_auth_runtime,
             hosted_managed_runtime=hosted_managed_runtime,
         ),
         encoding="utf-8",
@@ -20571,6 +20642,8 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
         f"- SpecPM registry source: `{args.specpm_registry_url}`\n"
         f"- HTTP Hyperprompt compile: "
         f"`{'enabled' if hyperprompt_runtime.http_compile_enabled else 'disabled'}`\n"
+        f"- SpecSpace operator access control: `single_operator_basic`\n"
+        f"- Operator allowed origin: `{operator_auth_runtime.allowed_origin}`\n"
         f"- Hosted managed execution: "
         f"`{'enabled' if hosted_managed_runtime.enabled else 'disabled'}`\n"
         f"- SpecSpace mutable state profile: "
@@ -20619,6 +20692,11 @@ def write_timeweb_manifest(args: argparse.Namespace) -> TimewebManifest:
                 "hyperprompt_max_output_bytes": hyperprompt_runtime.max_output_bytes,
                 "hyperprompt_bundle_retention_count": (
                     hyperprompt_runtime.bundle_retention_count
+                ),
+                "operator_access_control_profile": "single_operator_basic",
+                "operator_auth_username": operator_auth_runtime.username,
+                "operator_auth_allowed_origin": (
+                    operator_auth_runtime.allowed_origin
                 ),
                 "hosted_managed_execution_enabled": hosted_managed_runtime.enabled,
                 "hosted_managed_execution_profile": hosted_managed_runtime.profile,
@@ -20841,6 +20919,7 @@ def validate_timeweb_manifest_tree(
     product_workspace_artifact_base_urls: dict[str, str],
     specpm_registry_url: str,
     hyperprompt_runtime: TimewebHyperpromptRuntime,
+    operator_auth_runtime: TimewebOperatorAuthRuntime,
     hosted_managed_runtime: TimewebHostedManagedRuntime,
 ) -> list[str]:
     target_file = "docker-compose.yml"
@@ -20963,6 +21042,43 @@ def validate_timeweb_manifest_tree(
                     f"{target_file} specspace-api environment must set {key} "
                     f"to {expected}, got {actual!r}"
                 )
+
+    expected_operator_environment = {
+        "SPECSPACE_OPERATOR_AUTH_ENABLED": "true",
+        "SPECSPACE_OPERATOR_AUTH_USERNAME": operator_auth_runtime.username,
+        "SPECSPACE_OPERATOR_AUTH_ALLOWED_ORIGIN": (
+            operator_auth_runtime.allowed_origin
+        ),
+    }
+    for key, expected in expected_operator_environment.items():
+        if api_environment.get(key) != expected:
+            errors.append(
+                f"{target_file} specspace-api environment must set {key} "
+                f"to {expected}, got {api_environment.get(key)!r}"
+            )
+    if TIMEWEB_OPERATOR_AUTH_PASSWORD_ENV not in api_environment:
+        errors.append(
+            f"{target_file} must declare {TIMEWEB_OPERATOR_AUTH_PASSWORD_ENV} "
+            "as a value-less App Platform runtime pass-through"
+        )
+    elif api_environment[TIMEWEB_OPERATOR_AUTH_PASSWORD_ENV] is not None:
+        errors.append(
+            f"{target_file} must not assign a Compose value to "
+            f"{TIMEWEB_OPERATOR_AUTH_PASSWORD_ENV}"
+        )
+    if f"${{{TIMEWEB_OPERATOR_AUTH_PASSWORD_ENV}}}" in text:
+        errors.append(
+            f"{target_file} must not interpolate "
+            f"{TIMEWEB_OPERATOR_AUTH_PASSWORD_ENV} through Compose"
+        )
+    if (
+        "SPECSPACE_OPERATOR_AUTH_PASSWORD_FILE" in api_environment
+        or "--operator-auth-password-file" in api_command
+    ):
+        errors.append(
+            f"{target_file} Timeweb profile must receive the operator password "
+            "from the global environment"
+        )
 
     hosted_command_tokens = {
         "--enable-hosted-managed-execution",
@@ -21257,6 +21373,7 @@ def validate_timeweb_manifest_tree(
 def deploy_timeweb_render(args: argparse.Namespace) -> int:
     manifest = write_timeweb_manifest(args)
     hyperprompt_runtime = timeweb_hyperprompt_runtime_from_args(args)
+    operator_auth_runtime = timeweb_operator_auth_runtime_from_args(args)
     hosted_managed_runtime = timeweb_hosted_managed_runtime_from_args(args)
     errors = validate_timeweb_manifest_tree(
         manifest.output_dir,
@@ -21264,6 +21381,7 @@ def deploy_timeweb_render(args: argparse.Namespace) -> int:
         product_workspace_artifact_base_urls=product_workspace_artifact_base_urls_from_args(args),
         specpm_registry_url=args.specpm_registry_url,
         hyperprompt_runtime=hyperprompt_runtime,
+        operator_auth_runtime=operator_auth_runtime,
         hosted_managed_runtime=hosted_managed_runtime,
     )
     if errors:
@@ -21288,6 +21406,7 @@ def deploy_timeweb_render(args: argparse.Namespace) -> int:
 def deploy_timeweb_validate(args: argparse.Namespace) -> int:
     root = Path(args.path)
     hyperprompt_runtime = timeweb_hyperprompt_runtime_from_args(args)
+    operator_auth_runtime = timeweb_operator_auth_runtime_from_args(args)
     hosted_managed_runtime = timeweb_hosted_managed_runtime_from_args(args)
     errors = validate_timeweb_manifest_tree(
         root,
@@ -21295,6 +21414,7 @@ def deploy_timeweb_validate(args: argparse.Namespace) -> int:
         product_workspace_artifact_base_urls=product_workspace_artifact_base_urls_from_args(args),
         specpm_registry_url=args.specpm_registry_url,
         hyperprompt_runtime=hyperprompt_runtime,
+        operator_auth_runtime=operator_auth_runtime,
         hosted_managed_runtime=hosted_managed_runtime,
     )
     payload = {
@@ -21322,13 +21442,20 @@ def specspace_product_smoke_fetch(
     *,
     expect_json: bool,
     timeout: float,
+    method: str = "GET",
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, Any]:
+    request_headers = {
+        "Accept": "application/json" if expect_json else "text/html, */*",
+        "User-Agent": "0al-platform-specspace-product-smoke/1.0",
+    }
+    request_headers.update(headers or {})
     request = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/json" if expect_json else "text/html, */*",
-            "User-Agent": "0al-platform-specspace-product-smoke/1.0",
-        },
+        data=body,
+        headers=request_headers,
+        method=method,
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -21354,6 +21481,9 @@ def specspace_product_smoke_fetch_with_retry(
     timeout: float,
     attempts: int,
     retry_delay_seconds: float,
+    method: str = "GET",
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, Any, int]:
     last_error: PlatformError | None = None
     effective_attempts = max(1, attempts)
@@ -21363,6 +21493,9 @@ def specspace_product_smoke_fetch_with_retry(
                 url,
                 expect_json=expect_json,
                 timeout=timeout,
+                method=method,
+                body=body,
+                headers=headers,
             )
         except PlatformError as exc:
             last_error = exc
@@ -21456,6 +21589,34 @@ def specspace_product_smoke_expected_artifact_base_url(
     return value
 
 
+def specspace_product_smoke_private_field_paths(
+    value: Any,
+    *,
+    path: str = "$",
+) -> list[str]:
+    paths: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if key in {"idea_text", "root_intent_summary"}:
+                paths.append(child_path)
+            paths.extend(
+                specspace_product_smoke_private_field_paths(
+                    child,
+                    path=child_path,
+                )
+            )
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            paths.extend(
+                specspace_product_smoke_private_field_paths(
+                    child,
+                    path=f"{path}[{index}]",
+                )
+            )
+    return paths
+
+
 def specspace_product_workspace_smoke_report(
     *,
     base_url: str,
@@ -21465,6 +21626,7 @@ def specspace_product_workspace_smoke_report(
     timeout: float,
     attempts: int,
     retry_delay_seconds: float,
+    require_operator_auth: bool,
 ) -> dict[str, Any]:
     diagnostics: list[dict[str, Any]] = []
     checks: list[dict[str, Any]] = []
@@ -21505,6 +21667,14 @@ def specspace_product_workspace_smoke_report(
         base_url,
         f"{route_path}?view=demo",
     )
+    private_state_url = specspace_product_smoke_url(
+        base_url,
+        f"/api/v1/real-idea-entry-requests?{workspace_query}",
+    )
+    managed_execute_url = specspace_product_smoke_url(
+        base_url,
+        f"/api/v1/idea-to-spec-review-status/execute?{workspace_query}",
+    )
 
     health_status, health_payload, health_attempts = specspace_product_smoke_fetch_with_retry(
         health_url,
@@ -21524,6 +21694,36 @@ def specspace_product_workspace_smoke_report(
         attempts=attempts,
         retry_delay_seconds=retry_delay_seconds,
     )
+    private_state_status = None
+    private_state_attempts = 0
+    managed_execute_status = None
+    managed_execute_attempts = 0
+    if require_operator_auth:
+        (
+            private_state_status,
+            _private_state_payload,
+            private_state_attempts,
+        ) = specspace_product_smoke_fetch_with_retry(
+            private_state_url,
+            expect_json=False,
+            timeout=timeout,
+            attempts=attempts,
+            retry_delay_seconds=retry_delay_seconds,
+        )
+        (
+            managed_execute_status,
+            _managed_execute_payload,
+            managed_execute_attempts,
+        ) = specspace_product_smoke_fetch_with_retry(
+            managed_execute_url,
+            expect_json=False,
+            timeout=timeout,
+            attempts=attempts,
+            retry_delay_seconds=retry_delay_seconds,
+            method="POST",
+            body=b"{}",
+            headers={"Content-Type": "application/json"},
+        )
     route_status, route_html, route_attempts = specspace_product_smoke_fetch_with_retry(
         route_url,
         expect_json=False,
@@ -21558,6 +21758,43 @@ def specspace_product_workspace_smoke_report(
         "health deployment metadata must include commit or version",
         evidence={"deployment": deployment_mapping},
     )
+    if require_operator_auth:
+        access_control = health_mapping.get("operator_access_control")
+        access_control = (
+            access_control if isinstance(access_control, dict) else {}
+        )
+        record_check(
+            "specspace_single_operator_access_control_enabled",
+            access_control.get("enabled") is True
+            and access_control.get("status") == "single_operator"
+            and access_control.get("private_state_requires_operator") is True
+            and access_control.get("managed_operations_require_operator") is True,
+            "production SpecSpace must report the single-operator access boundary",
+            evidence={
+                "status": access_control.get("status"),
+                "enabled": access_control.get("enabled"),
+            },
+        )
+        record_check(
+            "specspace_anonymous_private_state_rejected",
+            private_state_status == HTTPStatus.UNAUTHORIZED,
+            "anonymous raw SpecSpace state must return HTTP 401",
+            evidence={
+                "url": private_state_url,
+                "status": private_state_status,
+                "attempts": private_state_attempts,
+            },
+        )
+        record_check(
+            "specspace_anonymous_managed_execution_rejected",
+            managed_execute_status == HTTPStatus.UNAUTHORIZED,
+            "anonymous managed execution must return HTTP 401 before request validation",
+            evidence={
+                "url": managed_execute_url,
+                "status": managed_execute_status,
+                "attempts": managed_execute_attempts,
+            },
+        )
 
     record_check(
         "specspace_product_workspace_api_available",
@@ -21570,6 +21807,15 @@ def specspace_product_workspace_smoke_report(
         },
     )
     workspace_mapping = workspace_payload if isinstance(workspace_payload, dict) else {}
+    private_field_paths = specspace_product_smoke_private_field_paths(
+        workspace_mapping
+    )
+    record_check(
+        "specspace_public_workspace_omits_private_idea_fields",
+        not private_field_paths,
+        "anonymous Product Workspace projection must omit private idea fields",
+        evidence={"private_field_paths": private_field_paths},
+    )
     workspace_meta = workspace_mapping.get("workspace")
     workspace_meta = workspace_meta if isinstance(workspace_meta, dict) else {}
     selected_workspace = (
@@ -21784,6 +22030,8 @@ def specspace_product_workspace_smoke_report(
                 "workspace": workspace_attempts,
                 "route": route_attempts,
                 "demo_view": demo_route_attempts,
+                "private_state": private_state_attempts,
+                "managed_execute": managed_execute_attempts,
             },
             "check_count": len(checks),
             "failed_check_count": sum(1 for check in checks if check["status"] != "passed"),
@@ -21804,6 +22052,8 @@ def specspace_product_workspace_smoke_report(
             "workspace": workspace_url,
             "route": route_url,
             "demo_view": demo_route_url,
+            "private_state": private_state_url,
+            "managed_execute": managed_execute_url,
         },
         "checks": checks,
         "diagnostics": diagnostics,
@@ -21823,6 +22073,7 @@ def specspace_product_smoke(args: argparse.Namespace) -> int:
         timeout=args.timeout,
         attempts=args.attempts,
         retry_delay_seconds=args.retry_delay,
+        require_operator_auth=not args.no_require_operator_auth,
     )
     if not args.no_write_report:
         output_path = Path(args.output)
@@ -24735,6 +24986,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Delay in seconds between retryable product smoke fetch attempts.",
     )
     product_smoke_parser.add_argument(
+        "--no-require-operator-auth",
+        action="store_true",
+        help=(
+            "Compatibility opt-out for local/legacy deployments. Production "
+            "smoke requires anonymous private-state and managed routes to return 401."
+        ),
+    )
+    product_smoke_parser.add_argument(
         "--output",
         default=str(DEFAULT_SPECSPACE_PRODUCT_SMOKE_REPORT),
         help=(
@@ -24945,6 +25204,26 @@ def build_parser() -> argparse.ArgumentParser:
             help="Number of SpecSpace-owned Hyperprompt scratch bundles to retain.",
         )
 
+    def add_timeweb_operator_auth_args(
+        command_parser: argparse.ArgumentParser,
+    ) -> None:
+        command_parser.add_argument(
+            "--operator-auth-username",
+            default=os.environ.get(
+                "SPECSPACE_OPERATOR_AUTH_USERNAME",
+                DEFAULT_TIMEWEB_OPERATOR_AUTH_USERNAME,
+            ),
+            help="Single operator username rendered into the Timeweb API service.",
+        )
+        command_parser.add_argument(
+            "--operator-auth-allowed-origin",
+            default=os.environ.get(
+                "SPECSPACE_OPERATOR_AUTH_ALLOWED_ORIGIN",
+                DEFAULT_TIMEWEB_OPERATOR_AUTH_ALLOWED_ORIGIN,
+            ),
+            help="Exact HTTPS browser origin allowed to send operator mutations.",
+        )
+
     def add_timeweb_hosted_managed_args(command_parser: argparse.ArgumentParser) -> None:
         command_parser.set_defaults(
             hosted_managed_execution_enabled=bool_from_env(
@@ -25099,6 +25378,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="UTC release timestamp to embed in deployment metadata.",
     )
     add_timeweb_hyperprompt_args(timeweb_render_parser)
+    add_timeweb_operator_auth_args(timeweb_render_parser)
     add_timeweb_hosted_managed_args(timeweb_render_parser)
     timeweb_render_parser.add_argument(
         "--format",
@@ -25149,6 +25429,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Required readonly SpecPM registry URL.",
     )
     add_timeweb_hyperprompt_args(timeweb_validate_parser)
+    add_timeweb_operator_auth_args(timeweb_validate_parser)
     add_timeweb_hosted_managed_args(timeweb_validate_parser)
     timeweb_validate_parser.add_argument(
         "--format",
