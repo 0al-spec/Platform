@@ -2,12 +2,14 @@
   "artifact_base_url": "https://specgraph.tech",
   "artifact_kind": "platform_timeweb_deploy_manifest",
   "compose_file": "docker-compose.yml",
-  "hosted_managed_execution_enabled": false,
-  "hosted_managed_execution_profile": "read_only",
+  "hosted_managed_execution_enabled": true,
+  "hosted_managed_execution_profile": "timeweb_external_state",
   "hosted_managed_executor_timeout_seconds": "5",
-  "hosted_managed_executor_url": null,
-  "hosted_managed_operation_allowlist": null,
-  "hosted_managed_state_durability": null,
+  "hosted_managed_executor_url": "https://managed.specgraph.tech",
+  "hosted_managed_operation_allowlist": [
+    "review_status_execute"
+  ],
+  "hosted_managed_state_durability": "persistent",
   "hyperprompt_bundle_retention_count": "20",
   "hyperprompt_compile_timeout_seconds": "60",
   "hyperprompt_http_compile_enabled": true,
@@ -15,19 +17,26 @@
   "hyperprompt_max_output_bytes": "2097152",
   "hyperprompt_work_dir": "/tmp",
   "image_lock": "dist/platform-service-images.json",
+  "operator_access_control_profile": "single_operator_basic",
+  "operator_auth_allowed_origin": "https://specgraph.space",
+  "operator_auth_username": "operator",
   "product_workspace_artifact_base_urls": {
     "hosted-operation-canary": "https://specgraph.tech/workspaces/hosted-operation-canary",
     "team-decision-log": "https://specgraph.tech/workspaces/team-decision-log"
   },
   "readme": "README.md",
-  "release_commit": "14135beefbd39fba9a5c4fe2a765b8429bd3bd67",
-  "release_created_at": "2026-07-20T07:21:20Z",
-  "required_runtime_environment_variables": [],
+  "release_commit": "83f6b9664230d11aa3da3babb6a8327a7a82eba3",
+  "release_created_at": "2026-07-21T21:23:56Z",
+  "required_runtime_environment_variables": [
+    "SPECSPACE_OPERATOR_AUTH_PASSWORD",
+    "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN",
+    "SPECSPACE_EXTERNAL_STATE_TOKEN"
+  ],
   "schema_version": 1,
   "specpm_registry_url": "https://specpm.dev",
-  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:bb9b1a6625e1603c20c4a37fab84d8aacbd1ad2bba50950e62162942ec80c0cb",
-  "specspace_external_state_enabled": false,
-  "specspace_external_state_url": null,
-  "specspace_state_profile": "read_only_no_mutable_state",
-  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:964aa1899cfbabfedbca23c40ddf6abe2ae923bb9c3fafc9437d4e5d3306bc21"
+  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:66f07d8118a386627f09f9901f91877fa0d480b0b95603609d91fef53532adbc",
+  "specspace_external_state_enabled": true,
+  "specspace_external_state_url": "https://managed.specgraph.tech/specspace-state",
+  "specspace_state_profile": "external_postgresql",
+  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:0eaaabd89bd5fedcfc625b69fd8167e2346f5675d5e33dd911989e938d462e0f"
 }
