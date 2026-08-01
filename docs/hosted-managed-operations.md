@@ -1618,6 +1618,15 @@ Proceed from the signed-off baseline in bounded stages:
 5. expose only the enabled operations through SpecSpace hosted lifecycle UX;
 6. propose irreversible Git review or publication operations one at a time.
 
+The first operation selected under step 6 is `promotion_review_execute`, as
+specified by the
+[Hosted Promotion Review Production Rollout Proposal](hosted-managed-promotion-review-rollout-proposal.md).
+It remains disabled in production. The implementation must validate semantic
+confirmation, current request-scoped dry-run evidence, pinned repository and
+base identity, immutable real-review reports, fenced execution, provider-side
+Git review state, and reconciliation after ambiguous success before any
+allowlist change is proposed.
+
 Each phase must preserve a narrow allowlist, durable authoritative reports,
 queue drain, monitoring, recovery, rollback, and a post-operation worker-state
 decision. Production canary sign-off is a prerequisite, not blanket authority
