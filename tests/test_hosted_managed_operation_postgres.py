@@ -78,6 +78,7 @@ class PostgreSQLManagedOperationQueueTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(receipt["status"], "succeeded")
         self.assertEqual(job["status"], "succeeded")
+        self.assertEqual(job["request"], request)
         self.assertEqual(
             [event["status"] for event in events],
             ["queued", "leased", "running", "succeeded"],

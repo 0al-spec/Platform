@@ -32,6 +32,7 @@ try:
     from scripts import hosted_managed_operation_queue
     from scripts import hosted_managed_operation_service
     from scripts import hosted_managed_worker_window
+    from scripts import specspace_state_client
     from scripts import specspace_state_service
     from scripts import specspace_state_store
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
@@ -41,6 +42,7 @@ except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo r
     import hosted_managed_operation_queue
     import hosted_managed_operation_service
     import hosted_managed_worker_window
+    import specspace_state_client
     import specspace_state_service
     import specspace_state_store
 
@@ -16750,6 +16752,8 @@ def managed_operation_request(args: argparse.Namespace) -> int:
         operator_ref=args.operator_ref,
         confirmation_ref=args.confirmation_ref,
         confirmation_sha256=confirmation_sha256,
+        confirmation_revision=args.confirmation_revision,
+        confirmation_lifecycle_state=args.confirmation_lifecycle_state,
     )
     payload["diagnostics"].extend(
         f"{item.code}: {item.message}" for item in binding_diagnostics
@@ -16886,6 +16890,32 @@ def _specspace_state_auth_token(args: argparse.Namespace) -> str:
     return token
 
 
+def _specspace_confirmation_token(args: argparse.Namespace) -> str | None:
+    token = os.environ.get(args.confirmation_token_env, "")
+    if args.confirmation_token_file:
+        if token:
+            raise PlatformError(
+                "SpecSpace confirmation token must use either environment or "
+                "file input, not both"
+            )
+        try:
+            token = Path(args.confirmation_token_file).read_text(
+                encoding="utf-8"
+            ).strip()
+        except OSError as exc:
+            raise PlatformError(
+                "SpecSpace confirmation token file is unreadable"
+            ) from exc
+    if not token:
+        return None
+    if len(token) < 32:
+        raise PlatformError(
+            f"{args.confirmation_token_env} must contain a confirmation token "
+            "of at least 32 characters"
+        )
+    return token
+
+
 def specspace_state_serve(args: argparse.Namespace) -> int:
     store = _open_specspace_state_store(args)
     store.close()
@@ -16902,6 +16932,7 @@ def specspace_state_serve(args: argparse.Namespace) -> int:
             port=args.port,
             service=service,
             auth_token=_specspace_state_auth_token(args),
+            confirmation_token=_specspace_confirmation_token(args),
         )
     except specspace_state_service.StateServiceError as exc:
         raise PlatformError(str(exc)) from exc
@@ -17341,9 +17372,49 @@ def managed_operation_queue_recover(args: argparse.Namespace) -> int:
     return 0 if not args.strict or not policy_findings else 1
 
 
+def _managed_operation_confirmation_state_client(
+    args: argparse.Namespace,
+    *,
+    allowed_operation_ids: frozenset[str],
+) -> specspace_state_client.SpecSpaceStateClient | None:
+    if "promotion_review_execute" not in allowed_operation_ids:
+        return None
+    if not args.specspace_state_service_url:
+        raise PlatformError(
+            "promotion review execution requires --specspace-state-service-url"
+        )
+    state_token = os.environ.get(
+        args.specspace_state_confirmation_token_env,
+        "",
+    )
+    if args.specspace_state_confirmation_token_file:
+        if state_token:
+            raise PlatformError(
+                "SpecSpace confirmation token must use either environment or file input"
+            )
+        try:
+            state_token = Path(
+                args.specspace_state_confirmation_token_file
+            ).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise PlatformError(
+                "SpecSpace confirmation token file is unreadable"
+            ) from exc
+    try:
+        return specspace_state_client.SpecSpaceStateClient(
+            base_url=args.specspace_state_service_url,
+            token=state_token,
+            timeout_seconds=args.specspace_state_timeout_seconds,
+            allow_insecure_private_http=args.allow_insecure_specspace_state_http,
+        )
+    except specspace_state_client.SpecSpaceStateClientError as exc:
+        raise PlatformError(str(exc)) from exc
+
+
 def _managed_operation_executor(
     args: argparse.Namespace,
     *,
+    allowed_operation_ids: frozenset[str],
     maximum_timeout_seconds: int | None = None,
 ) -> hosted_managed_operation_executor.PlatformManagedOperationExecutor:
     def validate_binding(binding: dict[str, Any], workspace_id: str) -> list[str]:
@@ -17357,11 +17428,23 @@ def _managed_operation_executor(
             )
         ]
 
+    state_client = _managed_operation_confirmation_state_client(
+        args,
+        allowed_operation_ids=allowed_operation_ids,
+    )
     resolver = hosted_managed_operation_executor.FilesystemManagedOperationResolver(
         artifact_root=Path(args.artifact_root),
         state_dir=Path(args.state_dir),
         specgraph_dir=Path(args.specgraph_dir),
         binding_validator=validate_binding,
+        confirmation_record_reader=(
+            None
+            if state_client is None
+            else lambda workspace_id, record_key: state_client.get_record(
+                workspace_id=workspace_id,
+                record_key=record_key,
+            )
+        ),
     )
     return hosted_managed_operation_executor.PlatformManagedOperationExecutor(
         resolver=resolver,
@@ -17376,9 +17459,12 @@ def _managed_operation_worker_cycle(args: argparse.Namespace) -> dict[str, Any]:
         raise PlatformError(
             "hosted managed-operation worker lease must be at least 600 seconds"
         )
-    queue = _open_managed_operation_queue(args)
     allowed_operation_ids = managed_operation_allowlist_from_args(args)
-    executor = _managed_operation_executor(args)
+    executor = _managed_operation_executor(
+        args,
+        allowed_operation_ids=allowed_operation_ids,
+    )
+    queue = _open_managed_operation_queue(args)
     try:
         recovered = queue.recover_expired(
             now_epoch=time.time(),
@@ -17451,13 +17537,14 @@ def managed_operation_worker_window(args: argparse.Namespace) -> int:
                 if summary.get("status") == "bounded_worker_window_completed"
                 else 1
             )
+        allowed_operation_ids = managed_operation_allowlist_from_args(args)
+        executor = _managed_operation_executor(
+            args,
+            allowed_operation_ids=allowed_operation_ids,
+            maximum_timeout_seconds=int(policy["max_duration_seconds"]),
+        )
         queue = _open_managed_operation_queue(args)
         try:
-            allowed_operation_ids = managed_operation_allowlist_from_args(args)
-            executor = _managed_operation_executor(
-                args,
-                maximum_timeout_seconds=int(policy["max_duration_seconds"]),
-            )
             report = hosted_managed_worker_window.run_window(
                 queue=queue,
                 executor=executor,
@@ -17634,6 +17721,10 @@ def managed_operation_serve(args: argparse.Namespace) -> int:
     queue.close()
     queue_factory = lambda: _open_managed_operation_queue(args)
     allowed_operation_ids = managed_operation_allowlist_from_args(args)
+    state_client = _managed_operation_confirmation_state_client(
+        args,
+        allowed_operation_ids=allowed_operation_ids,
+    )
     service = hosted_managed_operation_service.HostedManagedOperationService(
         queue_factory=queue_factory,
         adapter=args.queue_adapter,
@@ -17641,6 +17732,7 @@ def managed_operation_serve(args: argparse.Namespace) -> int:
         now_epoch=time.time,
         now_iso=utc_now_iso,
         allowed_operation_ids=allowed_operation_ids,
+        state_client=state_client,
     )
     try:
         server = hosted_managed_operation_service.create_server(
@@ -22496,6 +22588,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--auth-token-file",
         help="Mounted secret file containing the state API bearer token.",
     )
+    specspace_state_serve_parser.add_argument(
+        "--confirmation-token-env",
+        default="PLATFORM_SPECSPACE_CONFIRMATION_TOKEN",
+        help=(
+            "Optional environment variable containing the separate "
+            "confirmation read/consume token."
+        ),
+    )
+    specspace_state_serve_parser.add_argument(
+        "--confirmation-token-file",
+        help=(
+            "Optional mounted secret file containing the separate confirmation "
+            "read/consume token."
+        ),
+    )
     specspace_state_serve_parser.set_defaults(func=specspace_state_serve)
     specspace_state_export_parser = specspace_state_subcommands.add_parser(
         "export",
@@ -22576,6 +22683,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirmation",
         help="Local confirmation evidence used only to calculate its pinned digest.",
     )
+    managed_operation_request_parser.add_argument(
+        "--confirmation-revision",
+        type=int,
+        help="Consumed SpecSpace state revision pinned by an irreversible request.",
+    )
+    managed_operation_request_parser.add_argument(
+        "--confirmation-lifecycle-state",
+        choices=("consumed",),
+        help="Required consumed lifecycle state for irreversible confirmation evidence.",
+    )
     managed_operation_request_parser.add_argument("--output")
     managed_operation_request_parser.set_defaults(func=managed_operation_request)
     managed_operation_validate_parser = managed_operation_subcommands.add_parser(
@@ -22646,7 +22763,43 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     managed_operation_recover_parser.set_defaults(func=managed_operation_queue_recover)
-    managed_operation_worker_common = argparse.ArgumentParser(add_help=False)
+    managed_operation_confirmation_state_common = argparse.ArgumentParser(
+        add_help=False
+    )
+    managed_operation_confirmation_state_common.add_argument(
+        "--specspace-state-service-url",
+        help=(
+            "Internal authenticated SpecSpace state service URL required only "
+            "for semantic confirmation consumption."
+        ),
+    )
+    managed_operation_confirmation_state_common.add_argument(
+        "--specspace-state-confirmation-token-env",
+        default="PLATFORM_SPECSPACE_CONFIRMATION_TOKEN",
+        help="Environment variable containing the confirmation-only token.",
+    )
+    managed_operation_confirmation_state_common.add_argument(
+        "--specspace-state-confirmation-token-file",
+        help="Mounted secret file containing the confirmation-only token.",
+    )
+    managed_operation_confirmation_state_common.add_argument(
+        "--specspace-state-timeout-seconds",
+        type=float,
+        default=5.0,
+        help="Bounded timeout for confirmation state reads and CAS consumption.",
+    )
+    managed_operation_confirmation_state_common.add_argument(
+        "--allow-insecure-specspace-state-http",
+        action="store_true",
+        help=(
+            "Allow authenticated plain HTTP to a private container-network state "
+            "service; loopback HTTP is allowed without this flag."
+        ),
+    )
+    managed_operation_worker_common = argparse.ArgumentParser(
+        add_help=False,
+        parents=[managed_operation_confirmation_state_common],
+    )
     managed_operation_worker_common.add_argument("--database")
     managed_operation_worker_common.add_argument(
         "--database-url-file",
@@ -22735,6 +22888,7 @@ def build_parser() -> argparse.ArgumentParser:
     managed_operation_serve_parser = managed_operation_subcommands.add_parser(
         "serve",
         help="Serve authenticated enqueue and status APIs for hosted workers.",
+        parents=[managed_operation_confirmation_state_common],
     )
     managed_operation_serve_parser.add_argument("--database")
     managed_operation_serve_parser.add_argument(

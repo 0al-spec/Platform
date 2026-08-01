@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import threading
 from typing import Any, Callable
@@ -34,6 +35,16 @@ MUTATION_FIELDS = frozenset(
 )
 DELETE_FIELDS = frozenset(
     {"workspace_id", "record_key", "expected_revision", "idempotency_key"}
+)
+CONFIRMATION_CONSUME_FIELDS = frozenset(
+    {
+        "workspace_id",
+        "record_key",
+        "expected_revision",
+        "expected_content_sha256",
+        "operation_id",
+        "request_identity_sha256",
+    }
 )
 
 
@@ -278,6 +289,30 @@ class SpecSpaceStateService:
             "authority_boundary": authority_boundary(),
         }
 
+    def get_confirmation(
+        self,
+        *,
+        workspace_id: str,
+        record_key: str,
+    ) -> dict[str, Any]:
+        workspace_id = contracts.validate_workspace_id(workspace_id)
+        record_key = contracts.validate_record_key(
+            record_key,
+            workspace_id=workspace_id,
+        )
+        if not record_key.startswith(
+            f"confirmations/{workspace_id}/promotion_review_execute/"
+        ):
+            raise StateServiceError(
+                "confirmation operation identity is invalid",
+                status=HTTPStatus.NOT_FOUND,
+                code="state_confirmation_not_found",
+            )
+        return self.get_record(
+            workspace_id=workspace_id,
+            record_key=record_key,
+        )
+
     def list_records(
         self,
         *,
@@ -448,6 +483,150 @@ class SpecSpaceStateService:
             "authority_boundary": authority_boundary(),
         }
 
+    def consume_confirmation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if set(payload) != CONFIRMATION_CONSUME_FIELDS:
+            raise StateServiceError(
+                "confirmation consumption request does not match the contract"
+            )
+        workspace_id = contracts.validate_workspace_id(payload.get("workspace_id"))
+        record_key = contracts.validate_record_key(
+            payload.get("record_key"),
+            workspace_id=workspace_id,
+        )
+        expected_revision = payload.get("expected_revision")
+        if (
+            not isinstance(expected_revision, int)
+            or isinstance(expected_revision, bool)
+            or expected_revision < 1
+        ):
+            raise StateServiceError("confirmation expected_revision is invalid")
+        expected_digest = payload.get("expected_content_sha256")
+        request_identity = payload.get("request_identity_sha256")
+        if (
+            not isinstance(expected_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)
+            or not isinstance(request_identity, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", request_identity)
+        ):
+            raise StateServiceError("confirmation digest identity is invalid")
+        operation_id = payload.get("operation_id")
+        expected_key_prefix = f"confirmations/{workspace_id}/"
+        if (
+            operation_id != "promotion_review_execute"
+            or not record_key.startswith(
+                expected_key_prefix + "promotion_review_execute/"
+            )
+        ):
+            raise StateServiceError("confirmation operation identity is invalid")
+
+        idempotency_key = f"promotion-review-consume:{request_identity}"
+        with self._mirror_lock:
+            store = self._store()
+            try:
+                current = store.get(
+                    workspace_id,
+                    record_key,
+                    include_deleted=True,
+                )
+                if current is None:
+                    raise StateServiceError(
+                        "confirmation record was not found",
+                        status=HTTPStatus.NOT_FOUND,
+                        code="state_confirmation_not_found",
+                    )
+                if (
+                    current["lifecycle_state"] == "consumed"
+                    and current["idempotency_key"] == idempotency_key
+                    and current["content_sha256"] == expected_digest
+                ):
+                    record = current
+                    replayed = True
+                else:
+                    if current["lifecycle_state"] != "active":
+                        raise StateServiceError(
+                            "confirmation is not active",
+                            status=HTTPStatus.CONFLICT,
+                            code="state_confirmation_not_active",
+                        )
+                    if current["revision"] != expected_revision:
+                        raise StateServiceError(
+                            "confirmation revision changed",
+                            status=HTTPStatus.CONFLICT,
+                            code="state_confirmation_revision_conflict",
+                        )
+                    if current["content_sha256"] != expected_digest:
+                        raise StateServiceError(
+                            "confirmation content changed",
+                            status=HTTPStatus.CONFLICT,
+                            code="state_confirmation_digest_conflict",
+                        )
+                    content = current.get("content")
+                    if (
+                        not isinstance(content, dict)
+                        or content.get("artifact_kind")
+                        != "platform_hosted_promotion_review_confirmation"
+                        or content.get("schema_version") != 1
+                        or content.get("workspace_id") != workspace_id
+                        or content.get("operation_id") != operation_id
+                        or content.get("status") != "ready"
+                        or content.get("confirmed") is not True
+                    ):
+                        raise StateServiceError(
+                            "confirmation content is not claimable",
+                            status=HTTPStatus.CONFLICT,
+                            code="state_confirmation_content_invalid",
+                        )
+                    try:
+                        record = store.mutate(
+                            contracts.StateMutation(
+                                workspace_id=workspace_id,
+                                record_key=record_key,
+                                expected_revision=expected_revision,
+                                idempotency_key=idempotency_key,
+                                lifecycle_state="consumed",
+                                content=content,
+                                supplied_content_sha256=expected_digest,
+                            ),
+                            now_iso=self.now_iso(),
+                        )
+                    except contracts.StateConflictError as exc:
+                        raise StateServiceError(
+                            "confirmation claim lost its compare-and-swap",
+                            status=HTTPStatus.CONFLICT,
+                            code="state_confirmation_revision_conflict",
+                        ) from exc
+                    replayed = False
+                with self._mirror_state_lock:
+                    self._mirror_ready = False
+                try:
+                    self._materialize(record)
+                except Exception:
+                    with self._mirror_state_lock:
+                        self._mirror_ready = False
+                    raise
+                with self._mirror_state_lock:
+                    self._mirror_ready = True
+            finally:
+                store.close()
+        return {
+            "artifact_kind": (
+                "platform_specspace_state_confirmation_consumption_report"
+            ),
+            "schema_version": 1,
+            "ok": True,
+            "record": contracts.record_projection(record, include_content=False),
+            "request_identity_sha256": request_identity,
+            "summary": {
+                "status": "specspace_confirmation_consumed",
+                "workspace_id": workspace_id,
+                "record_key": record_key,
+                "revision": int(record["revision"]),
+                "lifecycle_state": record["lifecycle_state"],
+                "idempotent_replay": replayed,
+            },
+            "authority_boundary": authority_boundary(),
+        }
+
     def delete(self, payload: dict[str, Any]) -> dict[str, Any]:
         unknown = sorted(set(payload) - DELETE_FIELDS)
         if unknown or any(field not in payload for field in DELETE_FIELDS):
@@ -488,6 +667,7 @@ class SpecSpaceStateService:
 class SpecSpaceStateHTTPServer(ThreadingHTTPServer):
     service: SpecSpaceStateService
     auth_token: str
+    confirmation_token: str | None
 
 
 class SpecSpaceStateHandler(BaseHTTPRequestHandler):
@@ -498,6 +678,12 @@ class SpecSpaceStateHandler(BaseHTTPRequestHandler):
 
     def _authorized(self) -> bool:
         expected = f"Bearer {self.server.auth_token}"
+        return hmac.compare_digest(self.headers.get("Authorization", ""), expected)
+
+    def _confirmation_authorized(self) -> bool:
+        if self.server.confirmation_token is None:
+            return False
+        expected = f"Bearer {self.server.confirmation_token}"
         return hmac.compare_digest(self.headers.get("Authorization", ""), expected)
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
@@ -556,6 +742,29 @@ class SpecSpaceStateHandler(BaseHTTPRequestHandler):
                 HTTPStatus.OK if report["ok"] else HTTPStatus.SERVICE_UNAVAILABLE,
                 report,
             )
+            return
+        if parsed.path == "/v1/specspace-state/confirmation":
+            if not self._confirmation_authorized():
+                self._write_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {"ok": False, "error": "unauthorized"},
+                )
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                report = self.server.service.get_confirmation(
+                    workspace_id=query.get("workspace_id", [""])[0],
+                    record_key=query.get("record_key", [""])[0],
+                )
+            except (StateServiceError, contracts.StateStoreError) as exc:
+                error = (
+                    exc
+                    if isinstance(exc, StateServiceError)
+                    else StateServiceError(str(exc))
+                )
+                self._error(error)
+                return
+            self._write_json(HTTPStatus.OK, report)
             return
         if not self._authorized():
             self._write_json(
@@ -640,6 +849,31 @@ class SpecSpaceStateHandler(BaseHTTPRequestHandler):
             return
         self._write_json(HTTPStatus.OK, report)
 
+    def do_POST(self) -> None:
+        if not self._confirmation_authorized():
+            self._write_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"ok": False, "error": "unauthorized"},
+            )
+            return
+        if self.path != "/v1/specspace-state/confirmation/consume":
+            self._write_json(
+                HTTPStatus.NOT_FOUND,
+                {"ok": False, "error": "not_found"},
+            )
+            return
+        try:
+            report = self.server.service.consume_confirmation(self._body())
+        except (StateServiceError, contracts.StateStoreError) as exc:
+            error = (
+                exc
+                if isinstance(exc, StateServiceError)
+                else StateServiceError(str(exc))
+            )
+            self._error(error)
+            return
+        self._write_json(HTTPStatus.OK, report)
+
     def do_DELETE(self) -> None:
         if not self._authorized():
             self._write_json(
@@ -672,12 +906,21 @@ def create_server(
     port: int,
     service: SpecSpaceStateService,
     auth_token: str,
+    confirmation_token: str | None = None,
 ) -> SpecSpaceStateHTTPServer:
     if len(auth_token) < 32:
         raise StateServiceError(
             "SpecSpace state service token must contain at least 32 characters"
         )
+    if confirmation_token is not None and (
+        len(confirmation_token) < 32 or confirmation_token == auth_token
+    ):
+        raise StateServiceError(
+            "SpecSpace confirmation token must be distinct and contain at least "
+            "32 characters"
+        )
     server = SpecSpaceStateHTTPServer((host, port), SpecSpaceStateHandler)
     server.service = service
     server.auth_token = auth_token
+    server.confirmation_token = confirmation_token
     return server

@@ -105,6 +105,20 @@ def validate_lifecycle_state(value: Any) -> str:
     return value
 
 
+def validate_state_transition(
+    current: dict[str, Any] | None,
+    mutation: StateMutation,
+) -> None:
+    if (
+        current is not None
+        and current.get("lifecycle_state") == "consumed"
+        and mutation.record_key.startswith(
+            f"confirmations/{mutation.workspace_id}/promotion_review_execute/"
+        )
+    ):
+        raise StateConflictError("consumed confirmation state is terminal")
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -378,6 +392,7 @@ class SQLiteSpecSpaceStateStore:
                     f"state revision conflict: expected {mutation.expected_revision}, "
                     f"current {current_revision}"
                 )
+            validate_state_transition(current, mutation)
             revision = current_revision + 1
             created_at = (
                 str(current["created_at"]) if current is not None else now_iso

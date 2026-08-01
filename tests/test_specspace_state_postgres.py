@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -13,11 +14,16 @@ if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
 import specspace_state_postgres as postgres_module
+import specspace_state_service as service_module
 import specspace_state_store as store_module
 
 
 WORKSPACE_ID = "postgres-state-workspace"
 RECORD_KEY = "real_idea_entry_requests.json"
+CONFIRMATION_KEY = (
+    "confirmations/postgres-state-workspace/promotion_review_execute/"
+    "0123456789abcdef0123456789abcdef.json"
+)
 
 
 @unittest.skipUnless(
@@ -113,6 +119,76 @@ class PostgreSQLSpecSpaceStateStoreTests(unittest.TestCase):
             results = sorted(executor.map(write, (1, 2)))
 
         self.assertEqual(results, ["conflict", "written"])
+
+    def test_concurrent_confirmation_consumption_allows_one_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            def service(index: int) -> service_module.SpecSpaceStateService:
+                return service_module.SpecSpaceStateService(
+                    store_factory=lambda: (
+                        postgres_module.PostgreSQLSpecSpaceStateStore(
+                            self.database_url
+                        )
+                    ),
+                    adapter="postgresql",
+                    mirror_root=root / f"mirror-{index}",
+                    now_iso=lambda: "2026-08-01T00:05:00Z",
+                )
+
+            confirmation = {
+                "artifact_kind": "platform_hosted_promotion_review_confirmation",
+                "schema_version": 1,
+                "workspace_id": WORKSPACE_ID,
+                "operation_id": "promotion_review_execute",
+                "status": "ready",
+                "confirmed": True,
+            }
+            created = service(0).mutate(
+                {
+                    "workspace_id": WORKSPACE_ID,
+                    "record_key": CONFIRMATION_KEY,
+                    "expected_revision": 0,
+                    "idempotency_key": "confirmation-create:postgres:0001",
+                    "lifecycle_state": "active",
+                    "content": confirmation,
+                }
+            )
+
+            def consume(index: int) -> str:
+                try:
+                    service(index).consume_confirmation(
+                        {
+                            "workspace_id": WORKSPACE_ID,
+                            "record_key": CONFIRMATION_KEY,
+                            "expected_revision": 1,
+                            "expected_content_sha256": created["record"][
+                                "content_sha256"
+                            ],
+                            "operation_id": "promotion_review_execute",
+                            "request_identity_sha256": str(index) * 64,
+                        }
+                    )
+                    return "consumed"
+                except service_module.StateServiceError:
+                    return "conflict"
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = sorted(executor.map(consume, (1, 2)))
+
+            with self.assertRaises(service_module.StateServiceError):
+                service(3).mutate(
+                    {
+                        "workspace_id": WORKSPACE_ID,
+                        "record_key": CONFIRMATION_KEY,
+                        "expected_revision": 2,
+                        "idempotency_key": "confirmation-reactivate:postgres:0001",
+                        "lifecycle_state": "active",
+                        "content": confirmation,
+                    }
+                )
+
+        self.assertEqual(results, ["conflict", "consumed"])
 
 
 if __name__ == "__main__":

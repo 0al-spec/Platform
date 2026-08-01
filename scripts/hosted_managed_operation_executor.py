@@ -12,9 +12,13 @@ from typing import Any, Callable, Protocol
 try:
     from scripts import hosted_managed_operation_queue as queue_module
     from scripts import hosted_managed_operations as contracts
+    from scripts import hosted_managed_promotion_review as promotion_review
+    from scripts import specspace_state_store as state_contracts
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_operation_queue as queue_module
     import hosted_managed_operations as contracts
+    import hosted_managed_promotion_review as promotion_review
+    import specspace_state_store as state_contracts
 
 
 class ExecutorContractError(ValueError):
@@ -32,6 +36,7 @@ class CommandRunner(Protocol):
 
 
 BindingValidator = Callable[[dict[str, Any], str], list[str]]
+ConfirmationRecordReader = Callable[[str, str], dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -93,11 +98,15 @@ class FilesystemManagedOperationResolver:
         state_dir: Path,
         specgraph_dir: Path,
         binding_validator: BindingValidator,
+        now_iso: Callable[[], str] = promotion_review.utc_now_iso,
+        confirmation_record_reader: ConfirmationRecordReader | None = None,
     ) -> None:
         self.artifact_root = artifact_root.resolve()
         self.state_dir = state_dir.resolve()
         self.specgraph_dir = specgraph_dir.resolve()
         self.binding_validator = binding_validator
+        self.now_iso = now_iso
+        self.confirmation_record_reader = confirmation_record_reader
 
     def load_binding_source(
         self,
@@ -179,6 +188,7 @@ class FilesystemManagedOperationResolver:
         workspace_id = str(_mapping(request.get("workspace")).get("workspace_id") or "")
         binding_source_path, binding = self._binding_source(request)
         confirmation_path: Path | None = None
+        confirmation_payload: dict[str, Any] | None = None
         confirmation = request.get("confirmation")
         if isinstance(confirmation, dict):
             confirmation_ref = str(confirmation.get("logical_ref") or "")
@@ -186,8 +196,12 @@ class FilesystemManagedOperationResolver:
                 confirmation_ref, workspace_id
             )
             try:
-                confirmation_digest, _, _, _ = contracts.digest_path(
-                    confirmation_path
+                confirmation_payload = _read_json(
+                    confirmation_path,
+                    "promotion review confirmation",
+                )
+                confirmation_digest = state_contracts.content_sha256(
+                    confirmation_payload
                 )
             except (OSError, ValueError) as exc:
                 raise ExecutorContractError(
@@ -214,6 +228,72 @@ class FilesystemManagedOperationResolver:
             ):
                 raise ExecutorContractError(f"pinned input type changed after enqueue: {logical_ref}")
             input_paths[logical_ref] = path
+
+        operation = _mapping(request.get("operation"))
+        if operation.get("operation_id") == promotion_review.CONFIRMATION_OPERATION_ID:
+            if confirmation_path is None or confirmation_payload is None:
+                raise ExecutorContractError(
+                    "promotion review confirmation evidence is missing"
+                )
+            if self.confirmation_record_reader is None:
+                raise ExecutorContractError(
+                    "promotion review confirmation state reader is not configured"
+                )
+            confirmation_ref = str(_mapping(confirmation).get("logical_ref") or "")
+            record_key = confirmation_ref.removeprefix("specspace-state://")
+            try:
+                state_record = self.confirmation_record_reader(
+                    workspace_id,
+                    record_key,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise ExecutorContractError(
+                    "promotion review confirmation state is unavailable"
+                ) from exc
+            expected_consumption_key = (
+                "promotion-review-consume:" + str(request.get("idempotency_key") or "")
+            )
+            if (
+                state_record.get("workspace_id") != workspace_id
+                or state_record.get("record_key") != record_key
+                or state_record.get("revision") != confirmation.get("revision")
+                or state_record.get("lifecycle_state") != "consumed"
+                or state_record.get("idempotency_key") != expected_consumption_key
+                or state_record.get("content_sha256") != confirmation.get("sha256")
+                or state_record.get("content") != confirmation_payload
+            ):
+                raise ExecutorContractError(
+                    "promotion review confirmation consumption evidence is invalid"
+                )
+            try:
+                promotion_review.validate_confirmation(
+                    payload=confirmation_payload,
+                    expected_workspace_id=workspace_id,
+                    expected_operator_ref=str(request.get("operator_ref") or ""),
+                    expected_confirmation_ref=confirmation_ref,
+                    expected_binding={
+                        "binding_id": binding.get("binding_id"),
+                        "binding_revision_sha256": binding.get(
+                            "binding_revision_sha256"
+                        ),
+                        "source_sha256": _mapping(
+                            request.get("workspace_binding")
+                        ).get("source_sha256"),
+                    },
+                    expected_input_digests={
+                        record["logical_ref"]: record["sha256"]
+                        for record in request["inputs"]
+                    },
+                    now_iso=self.now_iso(),
+                    resolve_ref=lambda ref: self.resolve_logical_ref(
+                        ref,
+                        workspace_id,
+                    ),
+                )
+            except promotion_review.PromotionReviewConfirmationError as exc:
+                raise ExecutorContractError(
+                    "promotion review confirmation semantic validation failed"
+                ) from exc
 
         output_paths: dict[str, Path] = {}
         output_refs: dict[str, str] = {}

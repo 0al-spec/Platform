@@ -23,8 +23,13 @@ import specspace_state_store as store_module
 
 
 TOKEN = "specspace-state-test-token-0123456789abcdef"
+CONFIRMATION_TOKEN = "confirmation-consumer-test-token-0123456789abcdef"
 WORKSPACE_ID = "workspace-a"
 RECORD_KEY = "real_idea_entry_requests.json"
+CONFIRMATION_KEY = (
+    "confirmations/workspace-a/promotion_review_execute/"
+    "0123456789abcdef0123456789abcdef.json"
+)
 
 
 def mutation(
@@ -46,6 +51,23 @@ def mutation(
             "requests": [{"workspace_id": WORKSPACE_ID, "raw_idea": "private"}],
         },
     )
+
+
+def confirmation_content() -> dict:
+    return {
+        "artifact_kind": "platform_hosted_promotion_review_confirmation",
+        "schema_version": 1,
+        "contract_ref": "platform.hosted-promotion-review-confirmation.v1",
+        "confirmation_id": (
+            "confirmation://workspace-a/promotion_review_execute/"
+            "0123456789abcdef0123456789abcdef"
+        ),
+        "workspace_id": WORKSPACE_ID,
+        "operation_id": "promotion_review_execute",
+        "operator_ref": "operator://specspace-basic/session-a",
+        "status": "ready",
+        "confirmed": True,
+    }
 
 
 class SpecSpaceStateStoreTests(unittest.TestCase):
@@ -176,10 +198,11 @@ class SpecSpaceStateServiceTests(unittest.TestCase):
         method: str = "GET",
         payload: dict | None = None,
         authorized: bool = True,
+        token: str = TOKEN,
     ) -> dict:
         headers = {"Content-Type": "application/json"}
         if authorized:
-            headers["Authorization"] = f"Bearer {TOKEN}"
+            headers["Authorization"] = f"Bearer {token}"
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         with urllib.request.urlopen(
             urllib.request.Request(
@@ -444,6 +467,165 @@ class SpecSpaceStateServiceTests(unittest.TestCase):
         self.assertEqual(unauthorized.exception.code, HTTPStatus.UNAUTHORIZED)
         self.assertEqual(conflict.exception.code, HTTPStatus.CONFLICT)
         self.assertNotIn("must not leak", conflict_body)
+
+    def test_confirmation_consumption_is_atomic_and_same_request_replay_safe(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            service = self.build_service(root)
+            created = service.mutate(
+                {
+                    "workspace_id": WORKSPACE_ID,
+                    "record_key": CONFIRMATION_KEY,
+                    "expected_revision": 0,
+                    "idempotency_key": "confirmation-create:workspace-a:0001",
+                    "lifecycle_state": "active",
+                    "content": confirmation_content(),
+                }
+            )
+            consume_payload = {
+                "workspace_id": WORKSPACE_ID,
+                "record_key": CONFIRMATION_KEY,
+                "expected_revision": 1,
+                "expected_content_sha256": created["record"]["content_sha256"],
+                "operation_id": "promotion_review_execute",
+                "request_identity_sha256": "7" * 64,
+            }
+
+            first = service.consume_confirmation(consume_payload)
+            replay = service.consume_confirmation(
+                {**consume_payload, "expected_revision": 2}
+            )
+            with self.assertRaisesRegex(
+                service_module.StateServiceError,
+                "consumed confirmation state is terminal",
+            ):
+                service.mutate(
+                    {
+                        "workspace_id": WORKSPACE_ID,
+                        "record_key": CONFIRMATION_KEY,
+                        "expected_revision": 2,
+                        "idempotency_key": "confirmation-reactivate:workspace-a:0001",
+                        "lifecycle_state": "active",
+                        "content": confirmation_content(),
+                    }
+                )
+            with self.assertRaisesRegex(
+                service_module.StateServiceError,
+                "confirmation is not active",
+            ):
+                service.consume_confirmation(
+                    {
+                        **consume_payload,
+                        "expected_revision": 2,
+                        "request_identity_sha256": "8" * 64,
+                    }
+                )
+
+        self.assertEqual(first["record"]["revision"], 2)
+        self.assertEqual(first["record"]["lifecycle_state"], "consumed")
+        self.assertFalse(first["summary"]["idempotent_replay"])
+        self.assertEqual(replay["record"]["revision"], 2)
+        self.assertTrue(replay["summary"]["idempotent_replay"])
+        self.assertEqual(
+            first["record"]["content_sha256"],
+            created["record"]["content_sha256"],
+        )
+
+    def test_http_confirmation_consumption_requires_authentication(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            server = service_module.create_server(
+                host="127.0.0.1",
+                port=0,
+                service=self.build_service(root),
+                auth_token=TOKEN,
+                confirmation_token=CONFIRMATION_TOKEN,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            content = confirmation_content()
+            try:
+                created = self.request(
+                    base_url,
+                    "/v1/specspace-state/record",
+                    method="PUT",
+                    payload={
+                        "workspace_id": WORKSPACE_ID,
+                        "record_key": CONFIRMATION_KEY,
+                        "expected_revision": 0,
+                        "idempotency_key": "confirmation-create:workspace-a:0001",
+                        "lifecycle_state": "active",
+                        "content": content,
+                    },
+                )
+                payload = {
+                    "workspace_id": WORKSPACE_ID,
+                    "record_key": CONFIRMATION_KEY,
+                    "expected_revision": 1,
+                    "expected_content_sha256": created["record"]["content_sha256"],
+                    "operation_id": "promotion_review_execute",
+                    "request_identity_sha256": "9" * 64,
+                }
+                with self.assertRaises(urllib.error.HTTPError) as unauthorized:
+                    self.request(
+                        base_url,
+                        "/v1/specspace-state/confirmation/consume",
+                        method="POST",
+                        payload=payload,
+                        authorized=False,
+                    )
+                consumed = self.request(
+                    base_url,
+                    "/v1/specspace-state/confirmation/consume",
+                    method="POST",
+                    payload=payload,
+                    token=CONFIRMATION_TOKEN,
+                )
+                query = urllib.parse.urlencode(
+                    {
+                        "workspace_id": WORKSPACE_ID,
+                        "record_key": CONFIRMATION_KEY,
+                    }
+                )
+                confirmation = self.request(
+                    base_url,
+                    f"/v1/specspace-state/confirmation?{query}",
+                    token=CONFIRMATION_TOKEN,
+                )
+                with self.assertRaises(urllib.error.HTTPError) as primary_denied:
+                    self.request(
+                        base_url,
+                        f"/v1/specspace-state/confirmation?{query}",
+                    )
+                with self.assertRaises(urllib.error.HTTPError) as write_denied:
+                    self.request(
+                        base_url,
+                        "/v1/specspace-state/record",
+                        method="PUT",
+                        payload={
+                            "workspace_id": WORKSPACE_ID,
+                            "record_key": RECORD_KEY,
+                            "expected_revision": 0,
+                            "idempotency_key": "state-write:workspace-a:denied",
+                            "lifecycle_state": "active",
+                            "content": {"requests": []},
+                        },
+                        token=CONFIRMATION_TOKEN,
+                    )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(unauthorized.exception.code, HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(primary_denied.exception.code, HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(write_denied.exception.code, HTTPStatus.UNAUTHORIZED)
+        self.assertTrue(consumed["ok"])
+        self.assertEqual(consumed["record"]["lifecycle_state"], "consumed")
+        self.assertEqual(confirmation["record"]["revision"], 2)
 
     def test_workspace_scoped_mirror_is_preferred_by_managed_resolver(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
