@@ -232,7 +232,6 @@ MANAGED_OPERATIONS: tuple[ManagedOperationDefinition, ...] = (
         input_refs=(
             "runs/graph_repository_promotion_request.json",
             "runs/candidate_approval_decision.json",
-            "runs/product_candidate_promotion_execution_report.json",
             "runs/graph_repository_execution_plan.json",
         ),
         output_reports=(
@@ -452,6 +451,8 @@ def build_request(
     operator_ref: str | None = None,
     confirmation_ref: str | None = None,
     confirmation_sha256: str | None = None,
+    confirmation_revision: int | None = None,
+    confirmation_lifecycle_state: str | None = None,
 ) -> dict[str, Any]:
     definition = operation_by_id(operation_id)
     diagnostics: list[str] = []
@@ -482,15 +483,36 @@ def build_request(
     )
     if binding_status not in allowed_binding_statuses:
         diagnostics.append("workspace binding status does not satisfy the operation requirement")
-    confirmation: dict[str, str] | None = None
+    confirmation: dict[str, Any] | None = None
     if definition is not None and definition.requires_explicit_confirmation:
         if not confirmation_ref or not SHA256_RE.fullmatch(confirmation_sha256 or ""):
             diagnostics.append("operation requires digest-pinned confirmation evidence")
         elif not safe_artifact_ref(confirmation_ref):
             diagnostics.append("confirmation ref must be a safe logical artifact ref")
+        elif (
+            not isinstance(confirmation_revision, int)
+            or isinstance(confirmation_revision, bool)
+            or confirmation_revision < 2
+        ):
+            diagnostics.append("operation requires a consumed confirmation revision")
+        elif confirmation_lifecycle_state != "consumed":
+            diagnostics.append("operation requires consumed confirmation evidence")
         else:
-            confirmation = {"logical_ref": confirmation_ref, "sha256": confirmation_sha256 or ""}
-    elif confirmation_ref is not None or confirmation_sha256 is not None:
+            confirmation = {
+                "logical_ref": confirmation_ref,
+                "sha256": confirmation_sha256 or "",
+                "revision": confirmation_revision,
+                "lifecycle_state": confirmation_lifecycle_state,
+            }
+    elif any(
+        value is not None
+        for value in (
+            confirmation_ref,
+            confirmation_sha256,
+            confirmation_revision,
+            confirmation_lifecycle_state,
+        )
+    ):
         diagnostics.append("operation does not accept confirmation evidence")
     if operator_ref is not None and not safe_operator_ref(operator_ref):
         diagnostics.append("operator ref must be an opaque queue-safe ref")
@@ -726,12 +748,26 @@ def request_diagnostics(payload: dict[str, Any]) -> list[str]:
     confirmation = payload.get("confirmation")
     if definition is not None and definition.requires_explicit_confirmation:
         confirmation = confirmation if isinstance(confirmation, dict) else {}
-        if set(confirmation) != {"logical_ref", "sha256"}:
+        if set(confirmation) != {
+            "logical_ref",
+            "sha256",
+            "revision",
+            "lifecycle_state",
+        }:
             diagnostics.append("request confirmation does not match the v1 contract")
         if not safe_artifact_ref(confirmation.get("logical_ref")):
             diagnostics.append("request is missing a safe confirmation ref")
         if not SHA256_RE.fullmatch(str(confirmation.get("sha256") or "")):
             diagnostics.append("request confirmation digest is invalid")
+        revision = confirmation.get("revision")
+        if (
+            not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or revision < 2
+        ):
+            diagnostics.append("request confirmation revision is invalid")
+        if confirmation.get("lifecycle_state") != "consumed":
+            diagnostics.append("request confirmation is not consumed")
     elif confirmation is not None:
         diagnostics.append("request contains confirmation for an operation that does not accept it")
     operator_ref = payload.get("operator_ref")

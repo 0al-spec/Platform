@@ -138,6 +138,7 @@ fixed adapter for its registered operation id:
   --artifact-root ../SpecGraph \
   --state-dir ../SpecSpace/.specspace-dev/state \
   --specgraph-dir ../SpecGraph \
+  --operation-allowlist review_status_execute \
   --worker-id local-candidate-worker
 ```
 
@@ -156,7 +157,10 @@ Worker roots are deployment configuration, not request fields. The adapter:
 1. Reloads the binding source and verifies its pinned digest and revision.
 2. Resolves every registry input beneath the configured state, runs, or
    SpecGraph roots and verifies its digest, size, media type, and artifact kind.
-3. Reloads digest-pinned confirmation evidence for non-dry-run Git review.
+3. Reloads digest-pinned confirmation evidence for non-dry-run Git review and
+   revalidates its workspace, operator, current bounded expiry, current input
+   digests, request-scoped predecessor dry-run reports, and closed authority
+   boundary before constructing a Git-capable command.
 4. Builds one fixed Platform argument list for the selected operation id.
 5. Runs the wrapper with the registry timeout and no request-provided argv,
    environment, cwd, or output path.
@@ -181,6 +185,7 @@ export PLATFORM_MANAGED_OPERATION_TOKEN="$(openssl rand -hex 32)"
   --artifact-root ../SpecGraph \
   --state-dir ../SpecSpace/.specspace-dev/state \
   --specgraph-dir ../SpecGraph \
+  --operation-allowlist review_status_execute \
   --host 127.0.0.1 \
   --port 8091
 ```
@@ -202,6 +207,60 @@ The bearer token is read from `PLATFORM_MANAGED_OPERATION_TOKEN` (or another
 explicit environment variable name). It is never accepted as a CLI argument or
 returned by health/status. Non-loopback deployment requires TLS or an
 authenticated private service network.
+
+### Promotion-review confirmation foundation
+
+`promotion_review_execute` remains disabled in every production deployment
+profile. A hosted service that explicitly includes it in a non-production
+allowlist must also receive an authenticated internal SpecSpace state-service
+connection:
+
+```bash
+export PLATFORM_MANAGED_OPERATION_TOKEN="$(openssl rand -hex 32)"
+export PLATFORM_SPECSPACE_CONFIRMATION_TOKEN="$(openssl rand -hex 32)"
+.venv/bin/python scripts/platform.py managed-operation serve \
+  --database .platform/managed-operations.sqlite3 \
+  --artifact-root ../SpecGraph \
+  --state-dir ../SpecSpace/.specspace-dev/state \
+  --specgraph-dir ../SpecGraph \
+  --operation-allowlist promotion_review_execute \
+  --specspace-state-service-url http://127.0.0.1:8092
+```
+
+The worker must receive the same confirmation-only state-service URL and token
+options whenever its allowlist includes `promotion_review_execute`; otherwise it
+fails before opening or leasing the queue. The worker reloads the consumed
+record from authoritative state and compares its revision, lifecycle,
+idempotency key, content digest, and mirror content before Git execution.
+
+Loopback HTTP is accepted for local tests. Plain HTTP to a private container
+hostname requires the explicit `--allow-insecure-specspace-state-http` option;
+public or cross-host deployments must use HTTPS. The flag does not weaken token
+authentication and is intended only for a private container network.
+
+The service accepts only a `specspace-state://` confirmation that satisfies
+`platform.hosted-promotion-review-confirmation.v1`. It compares the durable
+record with its local mirror, binds the current workspace, operator, promotion
+request, approval decision, and execution plan, and separately pins
+request-scoped predecessor dry-run reports. It then consumes the confirmation
+with state-service CAS before enqueue. A consumed confirmation can replay only
+the same deterministic queue request while that durable queue row remains
+present. If the service exits after CAS and before enqueue, or the queue row is
+otherwise absent, Platform fails closed and requires reconciliation; it never
+reconstructs an irreversible Git request from consumed state alone.
+
+The confirmation token is distinct from the primary SpecSpace state token. It
+can read only operation-scoped confirmation records and call their CAS consume
+endpoint; it cannot list raw workspace state or call generic state PUT/DELETE
+routes.
+
+Queue workers repeat semantic and digest validation before subprocess startup.
+The confirmation itself carries no Git authority, and queue success remains
+transport evidence rather than lifecycle completion. This foundation does not
+prove the producer-to-input provenance of the dry-run pair and does not provide
+repository pinning, immutable real-review reports, reconciliation, the
+operation-specific bounded worker policy, clean-VM evidence, or signed
+production rollout authorization required by the proposal.
 
 ## Standalone Single-Node Runtime
 

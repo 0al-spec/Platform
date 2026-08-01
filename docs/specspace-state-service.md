@@ -84,7 +84,8 @@ public health probe does not recursively scan the mirror or wait for the
 mutation lock. A failed materialization makes `mirror_ready=false` until a
 successful rebuild reconciles database rows, paths, and content digests.
 
-All state routes require `Authorization: Bearer <token>`:
+Generic state routes require the primary
+`Authorization: Bearer <state-token>` credential:
 
 ```text
 GET    /v1/specspace-state/record
@@ -94,6 +95,27 @@ GET    /v1/specspace-state/export
 PUT    /v1/specspace-state/record
 DELETE /v1/specspace-state/record
 ```
+
+Hosted promotion-review execution uses a second, distinct confirmation-only
+token. That token is accepted only by these narrow routes:
+
+```text
+GET  /v1/specspace-state/confirmation
+POST /v1/specspace-state/confirmation/consume
+```
+
+The confirmation token cannot list, export, create, replace, or delete generic
+workspace state. The primary token cannot call the confirmation routes. This
+keeps the Platform service and worker from acquiring read access to raw ideas,
+clarification answers, repair drafts, or approval intents. Both tokens must be
+at least 32 characters and must differ.
+
+The v1 confirmation token is operation-scoped but deployment-wide rather than
+workspace-scoped. The initial single-operator rollout must therefore keep the
+service private and the irreversible operation production-disabled until the
+separate one-workspace rollout authorization and bounded policy exist.
+Per-workspace credentials or signed workspace claims are required before a
+multi-tenant deployment.
 
 The service accepts only the known SpecSpace state filenames plus bounded
 workspace-matching confirmation refs. It rejects absolute paths, `..`, control
@@ -129,10 +151,12 @@ make specspace-state-contract
   --database /tmp/specspace-state.sqlite3
 
 PLATFORM_SPECSPACE_STATE_TOKEN='<at-least-32-characters>' \
+PLATFORM_SPECSPACE_CONFIRMATION_TOKEN='<different-at-least-32-characters>' \
 .venv/bin/python scripts/platform.py specspace-state serve \
   --state-adapter sqlite \
   --database /tmp/specspace-state.sqlite3 \
   --mirror-root /tmp/specspace-state-mirror \
+  --confirmation-token-env PLATFORM_SPECSPACE_CONFIRMATION_TOKEN \
   --host 127.0.0.1 \
   --port 8092
 ```

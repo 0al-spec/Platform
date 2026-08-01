@@ -59,6 +59,8 @@ def request_for(
         if confirmation
         else None,
         confirmation_sha256="3" * 64 if confirmation else None,
+        confirmation_revision=2 if confirmation else None,
+        confirmation_lifecycle_state="consumed" if confirmation else None,
     )
 
 
@@ -168,6 +170,7 @@ class HostedManagedOperationQueueTests(unittest.TestCase):
             queue.close()
 
         self.assertEqual(receipt["request_ref"], second["request_id"])
+        self.assertEqual(second_job["request"], second)
         self.assertEqual(first_job["status"], "queued")
         self.assertEqual(second_job["status"], "succeeded")
         self.assertEqual(

@@ -14,10 +14,16 @@ try:
     from scripts import hosted_managed_operation_executor as executor_module
     from scripts import hosted_managed_operation_queue as queue_module
     from scripts import hosted_managed_operations as contracts
+    from scripts import hosted_managed_promotion_review as promotion_review
+    from scripts import specspace_state_client as state_client_module
+    from scripts import specspace_state_store as state_contracts
 except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo root.
     import hosted_managed_operation_executor as executor_module
     import hosted_managed_operation_queue as queue_module
     import hosted_managed_operations as contracts
+    import hosted_managed_promotion_review as promotion_review
+    import specspace_state_client as state_client_module
+    import specspace_state_store as state_contracts
 
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -50,6 +56,7 @@ class HostedManagedOperationService:
         now_epoch: Callable[[], float],
         now_iso: Callable[[], str],
         allowed_operation_ids: frozenset[str] | None = None,
+        state_client: state_client_module.SpecSpaceStateClient | None = None,
     ) -> None:
         if queue_factory is None and database_path is None:
             raise HostedServiceError("hosted service queue storage is not configured")
@@ -64,6 +71,7 @@ class HostedManagedOperationService:
         self.allowed_operation_ids = contracts.normalize_operation_allowlist(
             allowed_operation_ids
         )
+        self.state_client = state_client
 
     def _queue(self) -> queue_module.ManagedOperationQueue:
         return self.queue_factory()
@@ -87,6 +95,35 @@ class HostedManagedOperationService:
             "operation_count": len(self.allowed_operation_ids),
             "enabled_operation_ids": sorted(self.allowed_operation_ids),
             "adapter": self.adapter,
+        }
+
+    @staticmethod
+    def _enqueue_report(
+        *,
+        request: dict[str, Any],
+        receipt: dict[str, Any],
+    ) -> dict[str, Any]:
+        operation = request.get("operation")
+        operation = operation if isinstance(operation, dict) else {}
+        workspace = request.get("workspace")
+        workspace = workspace if isinstance(workspace, dict) else {}
+        return {
+            "artifact_kind": "platform_hosted_managed_operation_enqueue_report",
+            "schema_version": 1,
+            "ok": True,
+            "request": request,
+            "receipt": receipt,
+            "summary": {
+                "status": "hosted_managed_operation_queued",
+                "request_id": request["request_id"],
+                "operation_id": operation.get("operation_id"),
+                "workspace_id": workspace.get("workspace_id"),
+            },
+            "authority_boundary": {
+                "enqueue_is_execution_authority": False,
+                "queue_status_is_lifecycle_evidence": False,
+                "platform_output_reports_are_authoritative": True,
+            },
         }
 
     def enqueue(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -142,21 +179,83 @@ class HostedManagedOperationService:
 
         confirmation_ref = payload.get("confirmation_ref")
         confirmation_sha256: str | None = None
-        if confirmation_ref is not None:
+        confirmation_revision: int | None = None
+        confirmation_lifecycle_state: str | None = None
+        confirmation_record_key: str | None = None
+        confirmation_record: dict[str, Any] | None = None
+        confirmation_validation_time: str | None = None
+        generated_at = self.now_iso()
+        operator_ref = (
+            payload.get("operator_ref")
+            if isinstance(payload.get("operator_ref"), str)
+            else None
+        )
+        if definition.requires_explicit_confirmation:
             if not isinstance(confirmation_ref, str):
-                raise HostedServiceError("confirmation_ref must be a logical ref")
+                raise HostedServiceError("confirmation_ref is required")
+            if not confirmation_ref.startswith("specspace-state://"):
+                raise HostedServiceError("confirmation_ref must use SpecSpace state")
+            if self.state_client is None:
+                raise HostedServiceError(
+                    "semantic confirmation state service is not configured",
+                    status=HTTPStatus.CONFLICT,
+                )
+            confirmation_record_key = confirmation_ref.removeprefix(
+                "specspace-state://"
+            )
             try:
                 confirmation_path = self.resolver.resolve_logical_ref(
                     confirmation_ref,
                     workspace_id,
                 )
-                confirmation_sha256, _, _, _ = contracts.digest_path(
-                    confirmation_path
+                mirror_content = json.loads(
+                    confirmation_path.read_text(encoding="utf-8")
                 )
-            except (executor_module.ExecutorContractError, OSError, ValueError) as exc:
+                if not isinstance(mirror_content, dict):
+                    raise ValueError("confirmation mirror must be an object")
+                mirror_sha256 = state_contracts.content_sha256(mirror_content)
+                confirmation_record = self.state_client.get_record(
+                    workspace_id=workspace_id,
+                    record_key=confirmation_record_key,
+                )
+            except (
+                executor_module.ExecutorContractError,
+                json.JSONDecodeError,
+                OSError,
+                ValueError,
+                state_client_module.SpecSpaceStateClientError,
+            ) as exc:
                 raise HostedServiceError(
                     "confirmation evidence is missing or unreadable"
                 ) from exc
+            confirmation_sha256 = str(
+                confirmation_record.get("content_sha256") or ""
+            )
+            if mirror_sha256 != confirmation_sha256:
+                raise HostedServiceError(
+                    "confirmation state mirror does not match durable state",
+                    status=HTTPStatus.CONFLICT,
+                )
+            current_revision = confirmation_record.get("revision")
+            current_lifecycle = confirmation_record.get("lifecycle_state")
+            if (
+                not isinstance(current_revision, int)
+                or isinstance(current_revision, bool)
+                or current_lifecycle not in {"active", "consumed"}
+            ):
+                raise HostedServiceError(
+                    "confirmation state cannot be consumed",
+                    status=HTTPStatus.CONFLICT,
+                )
+            confirmation_revision = current_revision + (
+                1 if current_lifecycle == "active" else 0
+            )
+            confirmation_lifecycle_state = "consumed"
+            confirmation_validation_time = generated_at
+        elif confirmation_ref is not None:
+            raise HostedServiceError(
+                "operation does not accept confirmation evidence"
+            )
 
         request = contracts.build_request(
             operation_id=definition.operation_id,
@@ -164,14 +263,12 @@ class HostedManagedOperationService:
             workspace_binding_ref=binding_ref,
             workspace_binding_source_sha256=binding_digest,
             inputs=input_paths,
-            generated_at=self.now_iso(),
-            operator_ref=(
-                payload.get("operator_ref")
-                if isinstance(payload.get("operator_ref"), str)
-                else None
-            ),
+            generated_at=generated_at,
+            operator_ref=operator_ref,
             confirmation_ref=confirmation_ref,
             confirmation_sha256=confirmation_sha256,
+            confirmation_revision=confirmation_revision,
+            confirmation_lifecycle_state=confirmation_lifecycle_state,
         )
         diagnostics = contracts.request_diagnostics(request)
         if diagnostics:
@@ -179,8 +276,115 @@ class HostedManagedOperationService:
                 "; ".join(diagnostics),
                 status=HTTPStatus.CONFLICT,
             )
+
         queue = self._queue()
         try:
+            if definition.requires_explicit_confirmation:
+                assert self.state_client is not None
+                assert confirmation_record is not None
+                assert confirmation_record_key is not None
+                expected_consumption_key = (
+                    "promotion-review-consume:" + str(request["idempotency_key"])
+                )
+                current_lifecycle = confirmation_record.get("lifecycle_state")
+                if (
+                    current_lifecycle == "consumed"
+                    and confirmation_record.get("idempotency_key")
+                    != expected_consumption_key
+                ):
+                    raise HostedServiceError(
+                        "confirmation was consumed by another request",
+                        status=HTTPStatus.CONFLICT,
+                    )
+                existing = queue.get(str(request["request_id"]))
+                if existing is not None:
+                    stored_request = existing.get("request")
+                    if (
+                        current_lifecycle != "consumed"
+                        or not isinstance(stored_request, dict)
+                        or existing.get("idempotency_key")
+                        != request.get("idempotency_key")
+                        or existing.get("request_sha256")
+                        != queue_module.canonical_sha256(stored_request)
+                        or contracts.request_diagnostics(stored_request)
+                    ):
+                        raise HostedServiceError(
+                            "queued promotion review does not match consumed confirmation",
+                            status=HTTPStatus.CONFLICT,
+                        )
+                    receipt = existing.get("receipt")
+                    if not isinstance(receipt, dict):
+                        raise HostedServiceError(
+                            "queued promotion review receipt is invalid",
+                            status=HTTPStatus.CONFLICT,
+                        )
+                    return self._enqueue_report(
+                        request=stored_request,
+                        receipt=receipt,
+                    )
+                if current_lifecycle == "consumed":
+                    raise HostedServiceError(
+                        "consumed confirmation has no matching queue request; "
+                        "promotion review reconciliation is required",
+                        status=HTTPStatus.CONFLICT,
+                    )
+
+                expected_input_digests = {
+                    logical_ref: contracts.digest_path(path)[0]
+                    for logical_ref, path in input_paths.items()
+                }
+                try:
+                    promotion_review.validate_confirmation(
+                        payload=confirmation_record["content"],
+                        expected_workspace_id=workspace_id,
+                        expected_operator_ref=str(operator_ref or ""),
+                        expected_confirmation_ref=str(confirmation_ref or ""),
+                        expected_binding={
+                            "binding_id": binding.get("binding_id"),
+                            "binding_revision_sha256": binding.get(
+                                "binding_revision_sha256"
+                            ),
+                            "source_sha256": binding_digest,
+                        },
+                        expected_input_digests=expected_input_digests,
+                        now_iso=str(confirmation_validation_time or ""),
+                        resolve_ref=lambda ref: self.resolver.resolve_logical_ref(
+                            ref,
+                            workspace_id,
+                        ),
+                    )
+                except promotion_review.PromotionReviewConfirmationError as exc:
+                    raise HostedServiceError(
+                        str(exc),
+                        status=HTTPStatus.CONFLICT,
+                    ) from exc
+
+                if current_lifecycle == "active":
+                    try:
+                        consumed = self.state_client.consume_confirmation(
+                            workspace_id=workspace_id,
+                            record_key=confirmation_record_key,
+                            expected_revision=int(confirmation_record["revision"]),
+                            expected_content_sha256=str(
+                                confirmation_record["content_sha256"]
+                            ),
+                            request_identity_sha256=str(request["idempotency_key"]),
+                        )
+                    except state_client_module.SpecSpaceStateClientConflict as exc:
+                        raise HostedServiceError(
+                            "confirmation was already consumed by another request",
+                            status=HTTPStatus.CONFLICT,
+                        ) from exc
+                    except state_client_module.SpecSpaceStateClientError as exc:
+                        raise HostedServiceError(
+                            "confirmation state service is unavailable",
+                            status=HTTPStatus.SERVICE_UNAVAILABLE,
+                        ) from exc
+                    if consumed.get("revision") != confirmation_revision:
+                        raise HostedServiceError(
+                            "confirmation consumed revision does not match the request",
+                            status=HTTPStatus.CONFLICT,
+                        )
             receipt = queue.enqueue(
                 request,
                 now_epoch=self.now_epoch(),
@@ -190,24 +394,7 @@ class HostedManagedOperationService:
             raise HostedServiceError(str(exc), status=HTTPStatus.CONFLICT) from exc
         finally:
             queue.close()
-        return {
-            "artifact_kind": "platform_hosted_managed_operation_enqueue_report",
-            "schema_version": 1,
-            "ok": True,
-            "request": request,
-            "receipt": receipt,
-            "summary": {
-                "status": "hosted_managed_operation_queued",
-                "request_id": request["request_id"],
-                "operation_id": definition.operation_id,
-                "workspace_id": workspace_id,
-            },
-            "authority_boundary": {
-                "enqueue_is_execution_authority": False,
-                "queue_status_is_lifecycle_evidence": False,
-                "platform_output_reports_are_authoritative": True,
-            },
-        }
+        return self._enqueue_report(request=request, receipt=receipt)
 
     def status(self, request_id: str, *, include_events: bool = False) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.startswith(
@@ -229,7 +416,7 @@ class HostedManagedOperationService:
         projection = {
             key: value
             for key, value in job.items()
-            if key not in {"lease_owner", "lease_expires_at"}
+            if key not in {"lease_owner", "lease_expires_at", "request"}
         }
         projection["lease_active"] = lease_active
         return {

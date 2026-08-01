@@ -586,6 +586,7 @@ class PostgreSQLManagedOperationQueue:
             "operation_id": row["operation_id"],
             "workspace_id": row["workspace_id"],
             "request_sha256": row["request_sha256"],
+            "request": self._loads(row["request_json"]),
             "status": row["status"],
             "attempt": row["attempt"],
             "lease_owner": row["lease_owner"],
