@@ -816,14 +816,25 @@ with `chown 1000:1000`. A hardened host may intentionally have no passwd entry
 for runtime UID 1000, in which case `install -o 1000` can interpret `1000` as a
 missing user name and fail even though numeric container ownership is correct.
 
-Verify SpecSpace in hosted mode with `specspace product-smoke` and
-`--expect-managed-mode hosted_managed_ready`. This expects the SpecSpace
-readiness pair `status=hosted_managed_ready` and `mode=hosted_managed`; the
-separate `backend_managed_ready` profile is reserved for the local subprocess
-executor. Reboot the host, rerun strict
-recovery, create `probe-after-reboot.json`, and submit the identical canary
-request again as `replay-canary.json`. The replay must preserve request id,
-idempotency key, output refs and `attempt=1`.
+Verify the anonymous production surface with `specspace product-smoke` and
+`--expect-managed-mode read_only`. The smoke intentionally sends no operator
+credentials, so it must observe the public projection, require private-state
+GET and managed-operation POST requests to return `401`, and require zero
+enabled operations. It must not be used to assert the authenticated executor
+mode.
+
+After that smoke passes, open `/api/v1/operator-session` in an HTTPS browser and
+authenticate as the configured operator. The session response must report
+`authenticated=true` and `authentication_is_execution_authority=false`. In the
+same browser session, inspect the selected Product Workspace and require the
+operator-only readiness pair `status=hosted_managed_ready` and
+`mode=hosted_managed`; the separate `backend_managed_ready` profile remains
+reserved for the local subprocess executor. Do not copy raw idea, answer, draft,
+or intent payloads into rollout evidence.
+
+Reboot the host, rerun strict recovery, create `probe-after-reboot.json`, and
+submit the identical canary request again as `replay-canary.json`. The replay
+must preserve request id, idempotency key, output refs and `attempt=1`.
 
 For Timeweb SpecSpace, publish the dedicated hosted manifest profile only after
 the operator password and executor token have been configured in the Timeweb
