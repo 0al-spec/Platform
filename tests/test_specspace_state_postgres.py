@@ -136,6 +136,14 @@ class PostgreSQLSpecSpaceStateStoreTests(unittest.TestCase):
                     now_iso=lambda: "2026-08-01T00:05:00Z",
                 )
 
+            confirmation = {
+                "artifact_kind": "platform_hosted_promotion_review_confirmation",
+                "schema_version": 1,
+                "workspace_id": WORKSPACE_ID,
+                "operation_id": "promotion_review_execute",
+                "status": "ready",
+                "confirmed": True,
+            }
             created = service(0).mutate(
                 {
                     "workspace_id": WORKSPACE_ID,
@@ -143,16 +151,7 @@ class PostgreSQLSpecSpaceStateStoreTests(unittest.TestCase):
                     "expected_revision": 0,
                     "idempotency_key": "confirmation-create:postgres:0001",
                     "lifecycle_state": "active",
-                    "content": {
-                        "artifact_kind": (
-                            "platform_hosted_promotion_review_confirmation"
-                        ),
-                        "schema_version": 1,
-                        "workspace_id": WORKSPACE_ID,
-                        "operation_id": "promotion_review_execute",
-                        "status": "ready",
-                        "confirmed": True,
-                    },
+                    "content": confirmation,
                 }
             )
 
@@ -176,6 +175,18 @@ class PostgreSQLSpecSpaceStateStoreTests(unittest.TestCase):
 
             with ThreadPoolExecutor(max_workers=2) as executor:
                 results = sorted(executor.map(consume, (1, 2)))
+
+            with self.assertRaises(service_module.StateServiceError):
+                service(3).mutate(
+                    {
+                        "workspace_id": WORKSPACE_ID,
+                        "record_key": CONFIRMATION_KEY,
+                        "expected_revision": 2,
+                        "idempotency_key": "confirmation-reactivate:postgres:0001",
+                        "lifecycle_state": "active",
+                        "content": confirmation,
+                    }
+                )
 
         self.assertEqual(results, ["conflict", "consumed"])
 

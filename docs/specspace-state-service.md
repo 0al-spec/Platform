@@ -70,6 +70,11 @@ under compare-and-swap, and records an immutable version row. Reusing an
 idempotency key with another workspace, key, lifecycle state, or content digest
 is rejected.
 
+A consumed `promotion_review_execute` confirmation is terminal. Generic state
+PUT/DELETE, a new idempotency key, or a later revision cannot reactivate,
+supersede, delete, or consume it for another irreversible request. Only an
+exact replay of the original consumption identity returns the current record.
+
 ## HTTP Contract
 
 The health route is public and contains no record content:

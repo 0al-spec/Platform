@@ -499,6 +499,20 @@ class SpecSpaceStateServiceTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(
                 service_module.StateServiceError,
+                "consumed confirmation state is terminal",
+            ):
+                service.mutate(
+                    {
+                        "workspace_id": WORKSPACE_ID,
+                        "record_key": CONFIRMATION_KEY,
+                        "expected_revision": 2,
+                        "idempotency_key": "confirmation-reactivate:workspace-a:0001",
+                        "lifecycle_state": "active",
+                        "content": confirmation_content(),
+                    }
+                )
+            with self.assertRaisesRegex(
+                service_module.StateServiceError,
                 "confirmation is not active",
             ):
                 service.consume_confirmation(

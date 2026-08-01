@@ -272,6 +272,7 @@ class PostgreSQLSpecSpaceStateStore:
                         f"state revision conflict: expected "
                         f"{mutation.expected_revision}, current {current_revision}"
                     )
+                contracts.validate_state_transition(current, mutation)
                 revision = current_revision + 1
                 created_at = (
                     str(current["created_at"]) if current is not None else now_iso
