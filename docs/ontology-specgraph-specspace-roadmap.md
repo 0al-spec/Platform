@@ -426,6 +426,14 @@ Operational measurements inside item 4 do not expand production authority.
    Linux and CI retain the mode-`0600` password-file contract, and the feature
    is a trusted single-user Mac convenience rather than same-user process
    isolation; a separately signed helper remains a later hardening option.
+   The next bounded hosted operation is selected in the
+   [Hosted Promotion Review Production Rollout Proposal](hosted-managed-promotion-review-rollout-proposal.md).
+   `promotion_review_execute` remains absent from every production deployment
+   profile until semantic confirmation, current request-scoped dry-run evidence,
+   repository and base-commit pinning, immutable Git review reports, lease
+   fencing, ambiguous-success reconciliation, clean-VM evidence, and a separate
+   production rollout decision are complete. The proposal does not authorize an
+   allowlist change, a continuous worker, or read-model publication.
 5. **External SpecSpace mutable-state backend.** Producer and consumer
    contracts are implemented. Platform defines the narrow service contract in
    [External SpecSpace State Service](specspace-state-service.md): authenticated
