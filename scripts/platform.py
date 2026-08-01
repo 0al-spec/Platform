@@ -101,6 +101,9 @@ DEFAULT_HOSTED_MANAGED_CANARY_REPORT = (
     REPO_ROOT / "runs" / "platform_hosted_managed_operation_canary_report.json"
 )
 SPECSPACE_PRODUCT_SMOKE_RETRYABLE_STATUSES = {502, 503, 504}
+SPECSPACE_PRODUCT_SMOKE_KEYCHAIN_BINARY = Path("/usr/bin/security")
+SPECSPACE_PRODUCT_SMOKE_KEYCHAIN_TIMEOUT_SECONDS = 15
+SPECSPACE_PRODUCT_SMOKE_MAX_PASSWORD_BYTES = 4096
 SPECSPACE_PRODUCT_SMOKE_WRITE_AUTHORITY_KEYS = {
     "may_accept_ontology_terms",
     "may_apply_answers",
@@ -21641,14 +21644,11 @@ def specspace_product_smoke_private_field_paths(
     return paths
 
 
-def specspace_product_smoke_operator_auth_headers(
+def specspace_product_smoke_validate_operator_auth_target(
     *,
     base_url: str,
     username: str,
-    password_file: str | None,
-) -> dict[str, str] | None:
-    if not password_file:
-        return None
+) -> None:
     parsed_base_url = urllib.parse.urlsplit(base_url)
     loopback_http = (
         parsed_base_url.scheme == "http"
@@ -21668,6 +21668,26 @@ def specspace_product_smoke_operator_auth_headers(
             "SpecSpace operator auth username must contain only ASCII letters, "
             "digits, dot, underscore, at sign, or hyphen"
         )
+
+
+def specspace_product_smoke_validate_operator_password(
+    password: str,
+    *,
+    source_label: str,
+) -> str:
+    normalized = password.rstrip("\r\n")
+    if (
+        len(normalized) < 32
+        or len(normalized.encode("utf-8")) > SPECSPACE_PRODUCT_SMOKE_MAX_PASSWORD_BYTES
+        or "\n" in normalized
+        or "\r" in normalized
+        or "\x00" in normalized
+    ):
+        raise PlatformError(f"SpecSpace operator auth {source_label} is invalid")
+    return normalized
+
+
+def specspace_product_smoke_password_from_file(password_file: str) -> str:
     path = Path(password_file).expanduser()
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
         raise PlatformError(
@@ -21675,19 +21695,115 @@ def specspace_product_smoke_operator_auth_headers(
         )
     try:
         path_stat = path.stat()
-        if path_stat.st_size > 4096:
+        if path_stat.st_size > SPECSPACE_PRODUCT_SMOKE_MAX_PASSWORD_BYTES:
             raise PlatformError("SpecSpace operator auth password file is too large")
         if stat.S_IMODE(path_stat.st_mode) & 0o077:
             raise PlatformError(
                 "SpecSpace operator auth password file must not be group/world accessible"
             )
-        password = path.read_text(encoding="utf-8").rstrip("\r\n")
-    except OSError as exc:
+        password = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
         raise PlatformError(
             "SpecSpace operator auth password file is unreadable"
         ) from exc
-    if len(password) < 32 or "\n" in password or "\r" in password:
-        raise PlatformError("SpecSpace operator auth password file is invalid")
+    return specspace_product_smoke_validate_operator_password(
+        password,
+        source_label="password file",
+    )
+
+
+def specspace_product_smoke_password_from_keychain(
+    *,
+    service: str,
+    account: str,
+) -> str:
+    if sys.platform != "darwin":
+        raise PlatformError(
+            "SpecSpace operator auth Keychain lookup requires macOS; use "
+            "--operator-auth-password-file on other platforms"
+        )
+    if (
+        not service
+        or service != service.strip()
+        or len(service) > 256
+        or len(service.encode("utf-8")) > 1024
+        or service.startswith("-")
+        or not service.isprintable()
+    ):
+        raise PlatformError(
+            "SpecSpace operator auth Keychain service must be a bounded, "
+            "single-line service name"
+        )
+    try:
+        completed = subprocess.run(
+            [
+                str(SPECSPACE_PRODUCT_SMOKE_KEYCHAIN_BINARY),
+                "find-generic-password",
+                "-s",
+                service,
+                "-a",
+                account,
+                "-w",
+            ],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=SPECSPACE_PRODUCT_SMOKE_KEYCHAIN_TIMEOUT_SECONDS,
+            shell=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise PlatformError(
+            "SpecSpace operator auth Keychain lookup failed; unlock the login "
+            "Keychain and authorize access"
+        ) from exc
+    if completed.returncode != 0:
+        raise PlatformError(
+            "SpecSpace operator auth Keychain lookup failed; verify the generic "
+            "password item and authorize access"
+        )
+    if len(completed.stdout) > SPECSPACE_PRODUCT_SMOKE_MAX_PASSWORD_BYTES + 2:
+        raise PlatformError(
+            "SpecSpace operator auth Keychain password is invalid"
+        )
+    try:
+        password = completed.stdout.decode("utf-8")
+    except UnicodeError as exc:
+        raise PlatformError(
+            "SpecSpace operator auth Keychain password is invalid"
+        ) from exc
+    return specspace_product_smoke_validate_operator_password(
+        password,
+        source_label="Keychain password",
+    )
+
+
+def specspace_product_smoke_operator_auth_headers(
+    *,
+    base_url: str,
+    username: str,
+    password_file: str | None,
+    keychain_service: str | None,
+) -> dict[str, str] | None:
+    if password_file is not None and keychain_service is not None:
+        raise PlatformError(
+            "SpecSpace operator auth accepts either a password file or a Keychain "
+            "service, not both"
+        )
+    if password_file is None and keychain_service is None:
+        return None
+    specspace_product_smoke_validate_operator_auth_target(
+        base_url=base_url,
+        username=username,
+    )
+    password = (
+        specspace_product_smoke_password_from_file(password_file)
+        if password_file is not None
+        else specspace_product_smoke_password_from_keychain(
+            service=keychain_service or "",
+            account=username,
+        )
+    )
     encoded = base64.b64encode(
         f"{username}:{password}".encode("utf-8")
     ).decode("ascii")
@@ -22244,6 +22360,7 @@ def specspace_product_smoke(args: argparse.Namespace) -> int:
         base_url=args.base_url,
         username=args.operator_auth_username,
         password_file=args.operator_auth_password_file,
+        keychain_service=args.operator_auth_keychain_service,
     )
     if operator_auth_headers and args.no_require_operator_auth:
         raise PlatformError(
@@ -25161,15 +25278,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         help=(
             "Operator username for an authenticated readiness probe. Used only "
-            "when --operator-auth-password-file is provided."
+            "when a password file or macOS Keychain service is provided."
         ),
     )
-    product_smoke_parser.add_argument(
+    product_smoke_auth_source = product_smoke_parser.add_mutually_exclusive_group()
+    product_smoke_auth_source.add_argument(
         "--operator-auth-password-file",
         help=(
             "Absolute non-symlink file containing the SpecSpace operator password. "
             "Enables an authenticated, report-only readiness probe without reading "
             "raw private-state endpoints."
+        ),
+    )
+    product_smoke_auth_source.add_argument(
+        "--operator-auth-keychain-service",
+        help=(
+            "Experimental macOS-only generic-password service name. The Keychain "
+            "account is the operator auth username; the password is read in memory "
+            "and is never written to the smoke report."
         ),
     )
     product_smoke_parser.add_argument(
