@@ -709,12 +709,16 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
             "failed_check_count": 0,
             "diagnostic_count": 0,
             "expected_managed_mode": "hosted_managed_ready",
+            "authentication_profile": "operator_basic",
+            "operator_authenticated": True,
         }
         reports["rollback_specspace_smoke"]["summary"] = {
             "ok": True,
             "failed_check_count": 0,
             "diagnostic_count": 0,
             "expected_managed_mode": "read_only",
+            "authentication_profile": "anonymous",
+            "operator_authenticated": False,
         }
         reports["hosted_specspace_smoke"].pop("ok")
         reports["rollback_specspace_smoke"].pop("ok")
@@ -757,6 +761,33 @@ class HostedManagedProductionSignoffTests(unittest.TestCase):
         )
         self.assertFalse(report["ok"])
         self.assertIn("backup_restore_contract_invalid", report["diagnostics"])
+
+    def test_signoff_requires_authenticated_hosted_specspace_evidence(self) -> None:
+        evidence = self.evidence()
+        evidence["hosted_specspace_smoke"]["summary"][
+            "operator_authenticated"
+        ] = False
+        report = signoff.build_signoff(
+            evidence,
+            now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
+        )
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "hosted_specspace_operator_auth_not_verified",
+            report["diagnostics"],
+        )
+
+    def test_signoff_requires_anonymous_rollback_specspace_evidence(self) -> None:
+        evidence = self.evidence()
+        evidence["rollback_specspace_smoke"]["summary"][
+            "authentication_profile"
+        ] = "operator_basic"
+        report = signoff.build_signoff(
+            evidence,
+            now=datetime(2026, 7, 13, 1, tzinfo=timezone.utc),
+        )
+        self.assertFalse(report["ok"])
+        self.assertIn("rollback_specspace_not_anonymous", report["diagnostics"])
 
     def test_signoff_rejects_local_backend_specspace_profile(self) -> None:
         evidence = self.evidence()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -14,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -21437,6 +21439,19 @@ def specspace_product_smoke_url(base_url: str, path: str) -> str:
     return f"{base}{path}"
 
 
+class _SpecSpaceProductSmokeNoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
+
+
 def specspace_product_smoke_fetch(
     url: str,
     *,
@@ -21457,8 +21472,17 @@ def specspace_product_smoke_fetch(
         headers=request_headers,
         method=method,
     )
+    opener = (
+        urllib.request.build_opener(_SpecSpaceProductSmokeNoRedirectHandler())
+        if "Authorization" in request_headers
+        else None
+    )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with (
+            opener.open(request, timeout=timeout)
+            if opener is not None
+            else urllib.request.urlopen(request, timeout=timeout)
+        ) as response:
             body = response.read().decode("utf-8", errors="replace")
             status = int(response.status)
     except urllib.error.HTTPError as exc:
@@ -21617,6 +21641,59 @@ def specspace_product_smoke_private_field_paths(
     return paths
 
 
+def specspace_product_smoke_operator_auth_headers(
+    *,
+    base_url: str,
+    username: str,
+    password_file: str | None,
+) -> dict[str, str] | None:
+    if not password_file:
+        return None
+    parsed_base_url = urllib.parse.urlsplit(base_url)
+    loopback_http = (
+        parsed_base_url.scheme == "http"
+        and parsed_base_url.hostname in {"127.0.0.1", "localhost", "::1"}
+    )
+    if (
+        not parsed_base_url.netloc
+        or parsed_base_url.username is not None
+        or parsed_base_url.password is not None
+        or (parsed_base_url.scheme != "https" and not loopback_http)
+    ):
+        raise PlatformError(
+            "SpecSpace operator authentication requires HTTPS or loopback HTTP"
+        )
+    if not re.fullmatch(r"[A-Za-z0-9._@-]{1,128}", username):
+        raise PlatformError(
+            "SpecSpace operator auth username must contain only ASCII letters, "
+            "digits, dot, underscore, at sign, or hyphen"
+        )
+    path = Path(password_file).expanduser()
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise PlatformError(
+            "SpecSpace operator auth password file must be an absolute regular file"
+        )
+    try:
+        path_stat = path.stat()
+        if path_stat.st_size > 4096:
+            raise PlatformError("SpecSpace operator auth password file is too large")
+        if stat.S_IMODE(path_stat.st_mode) & 0o077:
+            raise PlatformError(
+                "SpecSpace operator auth password file must not be group/world accessible"
+            )
+        password = path.read_text(encoding="utf-8").rstrip("\r\n")
+    except OSError as exc:
+        raise PlatformError(
+            "SpecSpace operator auth password file is unreadable"
+        ) from exc
+    if len(password) < 32 or "\n" in password or "\r" in password:
+        raise PlatformError("SpecSpace operator auth password file is invalid")
+    encoded = base64.b64encode(
+        f"{username}:{password}".encode("utf-8")
+    ).decode("ascii")
+    return {"Authorization": f"Basic {encoded}"}
+
+
 def specspace_product_workspace_smoke_report(
     *,
     base_url: str,
@@ -21627,6 +21704,7 @@ def specspace_product_workspace_smoke_report(
     attempts: int,
     retry_delay_seconds: float,
     require_operator_auth: bool,
+    operator_auth_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     diagnostics: list[dict[str, Any]] = []
     checks: list[dict[str, Any]] = []
@@ -21675,6 +21753,11 @@ def specspace_product_workspace_smoke_report(
         base_url,
         f"/api/v1/idea-to-spec-review-status/execute?{workspace_query}",
     )
+    operator_session_url = specspace_product_smoke_url(
+        base_url,
+        "/api/v1/operator-session",
+    )
+    operator_probe = bool(operator_auth_headers)
 
     health_status, health_payload, health_attempts = specspace_product_smoke_fetch_with_retry(
         health_url,
@@ -21682,6 +21765,7 @@ def specspace_product_workspace_smoke_report(
         timeout=timeout,
         attempts=attempts,
         retry_delay_seconds=retry_delay_seconds,
+        headers=operator_auth_headers,
     )
     (
         workspace_status,
@@ -21693,12 +21777,29 @@ def specspace_product_workspace_smoke_report(
         timeout=timeout,
         attempts=attempts,
         retry_delay_seconds=retry_delay_seconds,
+        headers=operator_auth_headers,
     )
+    operator_session_status = None
+    operator_session_payload: Any = None
+    operator_session_attempts = 0
     private_state_status = None
     private_state_attempts = 0
     managed_execute_status = None
     managed_execute_attempts = 0
-    if require_operator_auth:
+    if operator_probe:
+        (
+            operator_session_status,
+            operator_session_payload,
+            operator_session_attempts,
+        ) = specspace_product_smoke_fetch_with_retry(
+            operator_session_url,
+            expect_json=True,
+            timeout=timeout,
+            attempts=attempts,
+            retry_delay_seconds=retry_delay_seconds,
+            headers=operator_auth_headers,
+        )
+    elif require_operator_auth:
         (
             private_state_status,
             _private_state_payload,
@@ -21730,6 +21831,7 @@ def specspace_product_workspace_smoke_report(
         timeout=timeout,
         attempts=attempts,
         retry_delay_seconds=retry_delay_seconds,
+        headers=operator_auth_headers,
     )
     (
         demo_route_status,
@@ -21741,6 +21843,7 @@ def specspace_product_workspace_smoke_report(
         timeout=timeout,
         attempts=attempts,
         retry_delay_seconds=retry_delay_seconds,
+        headers=operator_auth_headers,
     )
 
     record_check(
@@ -21775,26 +21878,77 @@ def specspace_product_workspace_smoke_report(
                 "enabled": access_control.get("enabled"),
             },
         )
-        record_check(
-            "specspace_anonymous_private_state_rejected",
-            private_state_status == HTTPStatus.UNAUTHORIZED,
-            "anonymous raw SpecSpace state must return HTTP 401",
-            evidence={
-                "url": private_state_url,
-                "status": private_state_status,
-                "attempts": private_state_attempts,
-            },
-        )
-        record_check(
-            "specspace_anonymous_managed_execution_rejected",
-            managed_execute_status == HTTPStatus.UNAUTHORIZED,
-            "anonymous managed execution must return HTTP 401 before request validation",
-            evidence={
-                "url": managed_execute_url,
-                "status": managed_execute_status,
-                "attempts": managed_execute_attempts,
-            },
-        )
+        if operator_probe:
+            record_check(
+                "specspace_operator_health_authenticated",
+                access_control.get("operator_authenticated") is True,
+                "authenticated health probe must identify the operator session",
+                evidence={
+                    "operator_authenticated": access_control.get(
+                        "operator_authenticated"
+                    ),
+                },
+            )
+            operator_session = (
+                operator_session_payload
+                if isinstance(operator_session_payload, dict)
+                else {}
+            )
+            session_boundary = operator_session.get("authority_boundary")
+            session_boundary = (
+                session_boundary if isinstance(session_boundary, dict) else {}
+            )
+            record_check(
+                "specspace_operator_session_authenticated",
+                operator_session_status == HTTPStatus.OK
+                and operator_session.get("authenticated") is True
+                and operator_session.get("status") == "operator_authenticated",
+                "operator session endpoint must return authenticated status",
+                evidence={
+                    "url": operator_session_url,
+                    "status": operator_session_status,
+                    "attempts": operator_session_attempts,
+                    "authenticated": operator_session.get("authenticated"),
+                    "session_status": operator_session.get("status"),
+                },
+            )
+            record_check(
+                "specspace_operator_session_authority_closed",
+                session_boundary.get("authentication_is_execution_authority")
+                is False
+                and session_boundary.get("managed_operations_remain_allowlisted")
+                is True,
+                "operator authentication must not grant execution authority",
+                evidence={
+                    "authentication_is_execution_authority": session_boundary.get(
+                        "authentication_is_execution_authority"
+                    ),
+                    "managed_operations_remain_allowlisted": session_boundary.get(
+                        "managed_operations_remain_allowlisted"
+                    ),
+                },
+            )
+        else:
+            record_check(
+                "specspace_anonymous_private_state_rejected",
+                private_state_status == HTTPStatus.UNAUTHORIZED,
+                "anonymous raw SpecSpace state must return HTTP 401",
+                evidence={
+                    "url": private_state_url,
+                    "status": private_state_status,
+                    "attempts": private_state_attempts,
+                },
+            )
+            record_check(
+                "specspace_anonymous_managed_execution_rejected",
+                managed_execute_status == HTTPStatus.UNAUTHORIZED,
+                "anonymous managed execution must return HTTP 401 before request validation",
+                evidence={
+                    "url": managed_execute_url,
+                    "status": managed_execute_status,
+                    "attempts": managed_execute_attempts,
+                },
+            )
 
     record_check(
         "specspace_product_workspace_api_available",
@@ -21807,15 +21961,16 @@ def specspace_product_workspace_smoke_report(
         },
     )
     workspace_mapping = workspace_payload if isinstance(workspace_payload, dict) else {}
-    private_field_paths = specspace_product_smoke_private_field_paths(
-        workspace_mapping
-    )
-    record_check(
-        "specspace_public_workspace_omits_private_idea_fields",
-        not private_field_paths,
-        "anonymous Product Workspace projection must omit private idea fields",
-        evidence={"private_field_paths": private_field_paths},
-    )
+    if not operator_probe:
+        private_field_paths = specspace_product_smoke_private_field_paths(
+            workspace_mapping
+        )
+        record_check(
+            "specspace_public_workspace_omits_private_idea_fields",
+            not private_field_paths,
+            "anonymous Product Workspace projection must omit private idea fields",
+            evidence={"private_field_paths": private_field_paths},
+        )
     workspace_meta = workspace_mapping.get("workspace")
     workspace_meta = workspace_meta if isinstance(workspace_meta, dict) else {}
     selected_workspace = (
@@ -22023,6 +22178,19 @@ def specspace_product_workspace_smoke_report(
             "workspace": workspace,
             "artifact_base_url": artifact_base_url,
             "expected_managed_mode": expect_managed_mode,
+            "authentication_profile": (
+                "operator_basic" if operator_probe else "anonymous"
+            ),
+            "operator_authenticated": (
+                operator_probe
+                and isinstance(health_mapping.get("operator_access_control"), dict)
+                and health_mapping["operator_access_control"].get(
+                    "operator_authenticated"
+                )
+                is True
+                and isinstance(operator_session_payload, dict)
+                and operator_session_payload.get("authenticated") is True
+            ),
             "deployment_commit": deployment_mapping.get("commit"),
             "deployment_version": deployment_mapping.get("version"),
             "attempts": {
@@ -22032,6 +22200,7 @@ def specspace_product_workspace_smoke_report(
                 "demo_view": demo_route_attempts,
                 "private_state": private_state_attempts,
                 "managed_execute": managed_execute_attempts,
+                "operator_session": operator_session_attempts,
             },
             "check_count": len(checks),
             "failed_check_count": sum(1 for check in checks if check["status"] != "passed"),
@@ -22052,8 +22221,14 @@ def specspace_product_workspace_smoke_report(
             "workspace": workspace_url,
             "route": route_url,
             "demo_view": demo_route_url,
-            "private_state": private_state_url,
-            "managed_execute": managed_execute_url,
+            **(
+                {"operator_session": operator_session_url}
+                if operator_probe
+                else {
+                    "private_state": private_state_url,
+                    "managed_execute": managed_execute_url,
+                }
+            ),
         },
         "checks": checks,
         "diagnostics": diagnostics,
@@ -22065,6 +22240,16 @@ def specspace_product_smoke(args: argparse.Namespace) -> int:
         args.artifact_base_url,
         workspace=args.workspace,
     )
+    operator_auth_headers = specspace_product_smoke_operator_auth_headers(
+        base_url=args.base_url,
+        username=args.operator_auth_username,
+        password_file=args.operator_auth_password_file,
+    )
+    if operator_auth_headers and args.no_require_operator_auth:
+        raise PlatformError(
+            "authenticated SpecSpace product smoke cannot disable the operator "
+            "access-control checks"
+        )
     report = specspace_product_workspace_smoke_report(
         base_url=args.base_url,
         workspace=args.workspace,
@@ -22074,6 +22259,7 @@ def specspace_product_smoke(args: argparse.Namespace) -> int:
         attempts=args.attempts,
         retry_delay_seconds=args.retry_delay,
         require_operator_auth=not args.no_require_operator_auth,
+        operator_auth_headers=operator_auth_headers,
     )
     if not args.no_write_report:
         output_path = Path(args.output)
@@ -24966,6 +25152,25 @@ def build_parser() -> argparse.ArgumentParser:
         ],
         default="read_only",
         help="Expected SpecSpace managed execution profile.",
+    )
+    product_smoke_parser.add_argument(
+        "--operator-auth-username",
+        default=os.environ.get(
+            "SPECSPACE_OPERATOR_AUTH_USERNAME",
+            DEFAULT_TIMEWEB_OPERATOR_AUTH_USERNAME,
+        ),
+        help=(
+            "Operator username for an authenticated readiness probe. Used only "
+            "when --operator-auth-password-file is provided."
+        ),
+    )
+    product_smoke_parser.add_argument(
+        "--operator-auth-password-file",
+        help=(
+            "Absolute non-symlink file containing the SpecSpace operator password. "
+            "Enables an authenticated, report-only readiness probe without reading "
+            "raw private-state endpoints."
+        ),
     )
     product_smoke_parser.add_argument(
         "--timeout",

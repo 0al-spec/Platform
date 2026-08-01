@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import subprocess
@@ -162,16 +163,83 @@ class _SpecSpaceSmokeHandler(BaseHTTPRequestHandler):
         )
 
 
+class _AuthenticatedSpecSpaceSmokeHandler(_SpecSpaceSmokeHandler):
+    operator_password = "operator-password-that-is-long-enough-1234"
+    hosted_workspace_payload = _specspace_smoke_workspace_payload(
+        readiness_status="hosted_managed_ready",
+        readiness_mode="hosted_managed",
+    )
+
+    def _operator_authenticated(self) -> bool:
+        encoded = base64.b64encode(
+            f"operator:{self.operator_password}".encode("utf-8")
+        ).decode("ascii")
+        return self.headers.get("Authorization") == f"Basic {encoded}"
+
+    def do_GET(self) -> None:  # noqa: N802
+        authenticated = self._operator_authenticated()
+        if self.path == "/api/v1/health":
+            payload = json.loads(json.dumps(self.health_payload))
+            payload["operator_access_control"]["operator_authenticated"] = authenticated
+            self._write_json(payload)
+            return
+        if self.path == "/api/v1/operator-session":
+            if not authenticated:
+                self._write_unauthorized()
+                return
+            self._write_json(
+                {
+                    "authenticated": True,
+                    "status": "operator_authenticated",
+                    "authentication_scheme": "Basic",
+                    "authority_boundary": {
+                        "authentication_is_execution_authority": False,
+                        "managed_operations_remain_allowlisted": True,
+                    },
+                }
+            )
+            return
+        if self.path.startswith("/api/v1/idea-to-spec-workspace?"):
+            self._write_json(
+                self.hosted_workspace_payload
+                if authenticated
+                else self.workspace_payload
+            )
+            return
+        super().do_GET()
+
+
+class _RedirectingAuthenticatedSpecSpaceSmokeHandler(
+    _AuthenticatedSpecSpaceSmokeHandler
+):
+    redirected_authorization_headers: list[str | None] = []
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/api/v1/operator-session":
+            self.send_response(302)
+            self.send_header("location", "/operator-session-redirect-target")
+            self.end_headers()
+            return
+        if self.path == "/operator-session-redirect-target":
+            self.redirected_authorization_headers.append(
+                self.headers.get("Authorization")
+            )
+            self._write_json({"authenticated": True})
+            return
+        super().do_GET()
+
+
 class _SmokeServer:
     def __init__(
         self,
         workspace_payload: dict[str, object],
         *,
         transient_failures: dict[str, int] | None = None,
+        handler_base: type[_SpecSpaceSmokeHandler] = _SpecSpaceSmokeHandler,
     ) -> None:
         handler = type(
             "SpecSpaceSmokeHandler",
-            (_SpecSpaceSmokeHandler,),
+            (handler_base,),
             {
                 "workspace_payload": workspace_payload,
                 "transient_failures": dict(transient_failures or {}),
@@ -445,6 +513,173 @@ class PlatformDeployTests(unittest.TestCase):
         checks = {item["id"]: item for item in payload["checks"]}
         self.assertEqual(checks["specspace_managed_mode_status"]["status"], "passed")
         self.assertEqual(checks["specspace_managed_mode_mode"]["status"], "passed")
+
+    def test_specspace_product_smoke_cli_records_authenticated_operator_probe(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            password_file = Path(root).resolve() / "operator-password"
+            password_file.write_text(
+                _AuthenticatedSpecSpaceSmokeHandler.operator_password + "\n",
+                encoding="utf-8",
+            )
+            password_file.chmod(0o600)
+            with _SmokeServer(
+                _specspace_smoke_workspace_payload(),
+                handler_base=_AuthenticatedSpecSpaceSmokeHandler,
+            ) as base_url:
+                result = self.run_cli(
+                    "specspace",
+                    "product-smoke",
+                    "--base-url",
+                    base_url,
+                    "--workspace",
+                    "team-decision-log",
+                    "--artifact-base-url",
+                    "https://specgraph.tech/workspaces/team-decision-log",
+                    "--expect-managed-mode",
+                    "hosted_managed_ready",
+                    "--operator-auth-username",
+                    "operator",
+                    "--operator-auth-password-file",
+                    str(password_file),
+                    "--format",
+                    "json",
+                    "--no-write-report",
+                )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertNotIn(
+            _AuthenticatedSpecSpaceSmokeHandler.operator_password,
+            result.stdout + result.stderr,
+        )
+        encoded_credentials = base64.b64encode(
+            (
+                "operator:"
+                + _AuthenticatedSpecSpaceSmokeHandler.operator_password
+            ).encode("utf-8")
+        ).decode("ascii")
+        self.assertNotIn(encoded_credentials, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["summary"]["authentication_profile"], "operator_basic")
+        self.assertTrue(payload["summary"]["operator_authenticated"])
+        self.assertEqual(payload["summary"]["attempts"]["operator_session"], 1)
+        self.assertEqual(payload["summary"]["attempts"]["private_state"], 0)
+        self.assertEqual(payload["summary"]["attempts"]["managed_execute"], 0)
+        self.assertNotIn("private_state", payload["source_refs"])
+        self.assertNotIn("managed_execute", payload["source_refs"])
+        self.assertIn("operator_session", payload["source_refs"])
+        checks = {item["id"]: item for item in payload["checks"]}
+        self.assertEqual(
+            checks["specspace_operator_health_authenticated"]["status"],
+            "passed",
+        )
+        self.assertEqual(
+            checks["specspace_operator_session_authenticated"]["status"],
+            "passed",
+        )
+        self.assertEqual(
+            checks["specspace_operator_session_authority_closed"]["status"],
+            "passed",
+        )
+
+    def test_specspace_product_smoke_cli_rejects_invalid_operator_credentials(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            password_file = Path(root).resolve() / "operator-password"
+            password_file.write_text("x" * 40, encoding="utf-8")
+            password_file.chmod(0o600)
+            with _SmokeServer(
+                _specspace_smoke_workspace_payload(),
+                handler_base=_AuthenticatedSpecSpaceSmokeHandler,
+            ) as base_url:
+                result = self.run_cli(
+                    "specspace",
+                    "product-smoke",
+                    "--base-url",
+                    base_url,
+                    "--workspace",
+                    "team-decision-log",
+                    "--artifact-base-url",
+                    "https://specgraph.tech/workspaces/team-decision-log",
+                    "--expect-managed-mode",
+                    "hosted_managed_ready",
+                    "--operator-auth-password-file",
+                    str(password_file),
+                    "--format",
+                    "json",
+                    "--no-write-report",
+                )
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        diagnostic_ids = {item["code"] for item in payload["diagnostics"]}
+        self.assertIn("specspace_operator_health_authenticated", diagnostic_ids)
+        self.assertIn("specspace_operator_session_authenticated", diagnostic_ids)
+        self.assertFalse(payload["summary"]["operator_authenticated"])
+
+    def test_specspace_product_smoke_cli_rejects_exposed_operator_password_file(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            password_file = Path(root).resolve() / "operator-password"
+            password_file.write_text("x" * 40, encoding="utf-8")
+            password_file.chmod(0o644)
+            result = self.run_cli(
+                "specspace",
+                "product-smoke",
+                "--base-url",
+                "https://specgraph.space",
+                "--operator-auth-password-file",
+                str(password_file),
+                "--no-write-report",
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not be group/world accessible", result.stderr)
+
+    def test_specspace_product_smoke_does_not_redirect_operator_credentials(
+        self,
+    ) -> None:
+        handler = _RedirectingAuthenticatedSpecSpaceSmokeHandler
+        handler.redirected_authorization_headers.clear()
+        with tempfile.TemporaryDirectory() as root:
+            password_file = Path(root).resolve() / "operator-password"
+            password_file.write_text(
+                handler.operator_password,
+                encoding="utf-8",
+            )
+            password_file.chmod(0o600)
+            with _SmokeServer(
+                _specspace_smoke_workspace_payload(),
+                handler_base=handler,
+            ) as base_url:
+                result = self.run_cli(
+                    "specspace",
+                    "product-smoke",
+                    "--base-url",
+                    base_url,
+                    "--workspace",
+                    "team-decision-log",
+                    "--artifact-base-url",
+                    "https://specgraph.tech/workspaces/team-decision-log",
+                    "--expect-managed-mode",
+                    "hosted_managed_ready",
+                    "--operator-auth-password-file",
+                    str(password_file),
+                    "--format",
+                    "json",
+                    "--no-write-report",
+                )
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        self.assertEqual(handler.redirected_authorization_headers, [])
+        payload = json.loads(result.stdout)
+        self.assertIn(
+            "specspace_operator_session_authenticated",
+            {item["code"] for item in payload["diagnostics"]},
+        )
 
     def test_specspace_product_smoke_cli_accepts_selected_workspace_id(self) -> None:
         workspace_payload = _specspace_smoke_workspace_payload()

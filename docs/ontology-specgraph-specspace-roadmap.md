@@ -409,12 +409,15 @@ Operational measurements inside item 4 do not expand production authority.
    Timeweb renderer requires an independent value-less operator password, and
    production smoke proves anonymous private GET and managed POST requests
    return `401`. The production rollout was verified with a `21/21` anonymous
-   smoke and a separate authenticated browser probe: the public projection is
+   smoke and a separate authenticated operator probe: the public projection is
    `read_only`, while the operator projection is `hosted_managed_ready` over the
-   hosted queue. Authentication remains an access boundary rather than
-   execution authority; deployment allowlists still control every managed
-   operation. Full user sessions, workspace ownership/roles, rate limiting, and
-   a durable security audit log remain a later multi-user production slice.
+   hosted queue. Future production sign-off now requires this authenticated
+   machine-readable smoke evidence in addition to the anonymous report; a
+   browser inspection is supplementary. Authentication remains an access
+   boundary rather than execution authority, and deployment allowlists still
+   control every managed operation. Full user sessions, workspace
+   ownership/roles, rate limiting, and a durable security audit log remain a
+   later multi-user production slice.
 5. **External SpecSpace mutable-state backend.** Producer and consumer
    contracts are implemented. Platform defines the narrow service contract in
    [External SpecSpace State Service](specspace-state-service.md): authenticated
