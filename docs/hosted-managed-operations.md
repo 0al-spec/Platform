@@ -853,6 +853,63 @@ answers, drafts, or intents. Remove the temporary password file after the
 report has been written and transfer only the public-safe report to the sign-off
 host when it was produced elsewhere.
 
+#### Experimental macOS Keychain source
+
+On macOS, the authenticated smoke may use the experimental generic-password
+Keychain source instead of a temporary password file. The interface is:
+
+```text
+--operator-auth-username USER
+--operator-auth-keychain-service SERVICE
+```
+
+The Keychain account defaults to the value of `--operator-auth-username`.
+`--operator-auth-keychain-service` and `--operator-auth-password-file` are
+mutually exclusive. This source is macOS-only; Linux and CI should continue to
+use an absolute mode-`0600` password file supplied by the existing secret
+manager workflow.
+
+Create a dedicated macOS Keychain generic-password entry with the service name
+used by the smoke and account `operator`. Keychain Access can be used for this
+without copying the secret into a shell, repository, or chat. If the `security`
+tool is preferred, it prompts for the value without putting it in the command
+line or printing it:
+
+```bash
+service='0AL SpecSpace production smoke'
+account='operator'
+security add-generic-password -a "$account" -s "$service" -w
+```
+
+The first read may show a macOS Keychain confirmation. `Allow` grants the
+current read, while `Always Allow` grants future reads to the same approved
+client; choose the narrower option unless this is a dedicated trusted local
+workflow. Do not paste the password into chat, Git, environment variables,
+issue descriptions, or command arguments. The CLI must send it only over the
+configured HTTPS smoke request, and the report must contain neither the
+secret nor an Authorization header.
+
+Example without exposing the password:
+
+```bash
+.venv/bin/python scripts/platform.py specspace product-smoke \
+  --base-url https://specgraph.space \
+  --workspace hosted-operation-canary \
+  --artifact-base-url \
+    https://specgraph.tech/workspaces/hosted-operation-canary \
+  --expect-managed-mode hosted_managed_ready \
+  --operator-auth-username operator \
+  --operator-auth-keychain-service '0AL SpecSpace production smoke' \
+  --output "$hosted_smoke_report" \
+  --format json
+```
+
+This integration is experimental and is intended for an authenticated smoke
+from a trusted macOS operator host. It does not change Platform execution
+authority, deployment allowlists, HTTPS requirements, redirect handling, or
+the anonymous production smoke. If Keychain access is unavailable, use the
+existing password-file path rather than weakening those checks.
+
 An authenticated browser inspection may be used as an additional UI check, but
 it does not replace `specspace-hosted-smoke.json` in the production sign-off
 contract.

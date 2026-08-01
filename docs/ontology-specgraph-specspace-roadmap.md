@@ -418,6 +418,14 @@ Operational measurements inside item 4 do not expand production authority.
    control every managed operation. Full user sessions, workspace
    ownership/roles, rate limiting, and a durable security audit log remain a
    later multi-user production slice.
+   An experimental macOS Keychain credential source is documented for this
+   authenticated smoke: `--operator-auth-keychain-service` reads a dedicated
+   generic-password entry, defaults its account to
+   `--operator-auth-username`, and is mutually exclusive with
+   `--operator-auth-password-file`. This is a local operator convenience only;
+   Linux and CI retain the mode-`0600` password-file contract, and the feature
+   must not be treated as a production secret-management replacement until its
+   implementation and security tests are reviewed.
 5. **External SpecSpace mutable-state backend.** Producer and consumer
    contracts are implemented. Platform defines the narrow service contract in
    [External SpecSpace State Service](specspace-state-service.md): authenticated
