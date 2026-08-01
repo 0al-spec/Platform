@@ -95,8 +95,12 @@ class HostedManagedPromotionReviewRolloutProposalTests(unittest.TestCase):
         for phrase in (
             "atomically transition it from `ready` to `consumed` with CAS",
             "The browser must not supply `operator_ref`",
+            "non-enqueueing prepare/reservation flow",
+            "must not create a queue job",
+            "reserved request id, reservation digest",
+            "consume the reservation and enqueue the exact reserved envelope",
             "`platform_hosted_promotion_review_rollout_authorization` v1 artifact",
-            "Without it, do not expose the operation, enqueue a request, or contact the provider",
+            "Without it, do not enqueue the request or contact the provider",
             "Proposal merge, implementation merge, and clean-VM success are not substitutes",
             "detached signature verified against a public key/fingerprint pinned in root-owned host configuration",
             "The private signing key must not be present in the worker",
@@ -106,6 +110,7 @@ class HostedManagedPromotionReviewRolloutProposalTests(unittest.TestCase):
     def test_proposal_defines_machine_checkable_acceptance_artifacts(self) -> None:
         for phrase in (
             "`platform_hosted_promotion_review_confirmation` v1",
+            "`platform_hosted_promotion_review_request_reservation` v1",
             "`platform_hosted_promotion_review_rollout_authorization` v1",
             "`platform_hosted_promotion_review_reconciliation_report` v1",
             "`platform_hosted_managed_worker_window_report`",

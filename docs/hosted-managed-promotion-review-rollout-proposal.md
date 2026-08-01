@@ -211,7 +211,7 @@ delete a branch, or close a PR automatically.
 The implementation PR must add a dedicated, versioned bounded-worker policy and
 Compose service scoped to exactly `promotion_review_execute`:
 
-- one server-issued expected request id;
+- one server-issued expected request id reserved before enqueue;
 - one operation processed;
 - maximum initial attempt `0`;
 - exclusive queue and strict recovery preflight;
@@ -227,26 +227,46 @@ allowlist. A later combined Product Workspace profile may add the operation to
 the accepted dry-run/review-status client maximum only after the isolated
 operation passes. That combined profile is a separate recorded decision.
 
+The hosted service must expose a non-enqueueing prepare/reservation flow before
+production authorization is issued. The authenticated caller submits the exact
+validated operation inputs and confirmation identity; the service resolves the
+current input digests, issues the authoritative request id, and persists a
+short-lived immutable reservation containing the complete request envelope and
+its digest. Preparing a reservation must not create a queue job, acquire an
+execution lease, start a worker, or contact Git/GitHub. Repeating the same
+prepare call may return the same active reservation, but must not replace or
+reactivate an expired, consumed, or drifted reservation.
+
 No production request may be enqueued until a separate, immutable
 `platform_hosted_promotion_review_rollout_authorization` v1 artifact records the
-approved workspace, request id, repository, candidate branch, expected base
-commit, confirmation digest, predecessor dry-run digests, image-lock digest,
-expiry, and single-window scope. The production host wrapper must require this
-artifact by absolute path, validate it before provider contact, and record its
-SHA-256 digest in host evidence. Proposal merge, implementation merge, and
-clean-VM success are not substitutes for this explicit production decision.
+approved workspace, reserved request id, reservation digest, repository,
+candidate branch, expected base commit, confirmation digest, predecessor
+dry-run digests, image-lock digest, expiry, and single-window scope. The
+production host wrapper must require this artifact by absolute path, validate it
+before provider contact, and record its SHA-256 digest in host evidence.
+Proposal merge, implementation merge, and clean-VM success are not substitutes
+for this explicit production decision.
 
 The authorization must be issuer-authenticated, not merely hashed. Its
 canonical payload must carry an issuer id and detached signature verified
 against a public key/fingerprint pinned in root-owned host configuration. The
 signature must bind the Platform operation contract, deployment profile,
 image-lock digest, provider repository, expected base commit, candidate branch,
-request id, confirmation digest, dry-run report digests, window id, issue time,
-and expiry. The authorization and signature files must be absolute regular
+reserved request id, reservation digest, confirmation digest, dry-run report
+digests, window id, issue time, and expiry. The authorization and signature
+files must be absolute regular
 non-symlink files, owned by the configured host administrator, not group/world
 writable, and outside the worker-writable artifact and SpecSpace state roots.
 The private signing key must not be present in the worker, service, repository,
 container image, or GitHub Actions environment.
+
+The enqueue call must identify both the reservation and authorization. In one
+transaction, the service must verify that the reservation is active, unexpired,
+unused, digest-identical to the signed authorization, and still matches freshly
+resolved input digests; it must then consume the reservation and enqueue the
+exact reserved envelope under the reserved request id. Missing authorization,
+changed inputs, a second enqueue, or an expired/consumed reservation must fail
+before a queue row or worker lease is created.
 
 ## Test Matrix
 
@@ -254,30 +274,33 @@ The implementation gate must include:
 
 1. confirmation kind, workspace, operation, truth value, expiry, one-time-use
    identity, authority, and digest validation;
-2. request-scoped dry-run selection and stale/cross-workspace report rejection;
-3. repository/remote/base-commit pinning and repository-plus-ref locks;
-4. exact request attempt `0 -> 1`, exclusive queue, lease fencing, and lock
+2. non-enqueueing request-id reservation, reservation digest binding, atomic
+   reservation consumption, expiry, drift, and duplicate-enqueue rejection;
+3. request-scoped dry-run selection and stale/cross-workspace report rejection;
+4. repository/remote/base-commit pinning and repository-plus-ref locks;
+5. exact request attempt `0 -> 1`, exclusive queue, lease fencing, and lock
    release;
-5. fixed command construction with no dry-run flags, hooks, or ambient Git
+6. fixed command construction with no dry-run flags, hooks, or ambient Git
    credentials;
-6. local Git repository execution with a fake GitHub CLI and no production
+7. local Git repository execution with a fake GitHub CLI and no production
    contact;
-7. successful worktree, exact staged diff, commit, push, PR URL/number, provider
+8. successful worktree, exact staged diff, commit, push, PR URL/number, provider
    state, and report digest checks;
-8. wrong branch, wrong remote, changed plan, symlink source, dirty index, missing
+9. wrong branch, wrong remote, changed plan, symlink source, dirty index, missing
    report, partial report, report overwrite, and authority-expansion rejection;
-9. timeout, expired lease, post-push/pre-PR failure, post-PR/pre-ack failure,
+10. timeout, expired lease, post-push/pre-PR failure, post-PR/pre-ack failure,
    reconciliation, and quarantine coverage;
-10. dedicated Compose profile, stopped-worker enforcement, deployment
+11. dedicated Compose profile, stopped-worker enforcement, deployment
     preflight, probe, backup, and rollback tests;
-11. PostgreSQL queue parity and a clean-VM bounded exercise.
+12. PostgreSQL reservation/queue parity and a clean-VM bounded exercise.
 
 ## Rollout Phases
 
 1. **Proposal:** merge this document without changing production authority.
-2. **Contract implementation:** add semantic confirmation, current dry-run
-   evidence, repository pinning, immutable reports, lease fencing, result
-   validation, reconciliation, and operation-specific policy.
+2. **Contract implementation:** add semantic confirmation, non-enqueueing
+   request reservation, current dry-run evidence, repository pinning, immutable
+   reports, lease fencing, result validation, reconciliation, and
+   operation-specific policy.
 3. **Local integration:** run HTTP -> PostgreSQL -> worker -> local Git service
    with a fake GitHub CLI.
 4. **Clean VM:** use immutable images, an isolated test repository, one fresh
@@ -285,9 +308,10 @@ The implementation gate must include:
 5. **SpecSpace staging exposure:** add an explicit non-production opt-in only
    after the isolated Platform gate passes; keep authentication and the
    deployment intersection fail-closed.
-6. **Production authorization:** review local and clean-VM evidence, then issue
-   the immutable bounded rollout authorization artifact. Without it, do not
-   expose the operation, enqueue a request, or contact the provider.
+6. **Production authorization:** review local and clean-VM evidence, prepare one
+   non-enqueueing request reservation, then issue the immutable bounded rollout
+   authorization artifact for that reservation. Without it, do not enqueue the
+   request or contact the provider.
 7. **Production preflight:** take a fresh backup and off-host encrypted export,
    prove queue drain, validate non-executing candidate/request artifacts, and
    keep the worker stopped.
@@ -327,6 +351,7 @@ The implementation PR must make acceptance machine-checkable. At minimum it
 must define and validate:
 
 - `platform_hosted_promotion_review_confirmation` v1;
+- `platform_hosted_promotion_review_request_reservation` v1;
 - `platform_hosted_promotion_review_rollout_authorization` v1;
 - request-scoped `platform_product_candidate_promotion_execution_report` and
   `platform_git_service_promotion_execution_report` artifacts;
@@ -335,11 +360,12 @@ must define and validate:
   `platform_hosted_managed_production_worker_window_report` with the new
   operation profile.
 
-The focused validation command must cover confirmation consumption, exact
-request construction, repository/ref locking, report schemas, provider-state
-reconciliation, timeout/quarantine, and host rollback. The full release gate
-remains `make python-quality`; clean-VM and production evidence are additional
-rollout gates rather than replacements for local tests.
+The focused validation command must cover confirmation consumption,
+non-enqueueing reservation and atomic enqueue, exact request construction,
+repository/ref locking, report schemas, provider-state reconciliation,
+timeout/quarantine, and host rollback. The full release gate remains
+`make python-quality`; clean-VM and production evidence are additional rollout
+gates rather than replacements for local tests.
 
 The proposal PR itself intentionally contains no implementation of those future
 gates. Its executable regression scope is narrower: it must prove that
