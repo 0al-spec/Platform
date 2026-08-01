@@ -667,6 +667,9 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertIs(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertIs(run.call_args.kwargs["stdout"], subprocess.PIPE)
         self.assertIs(run.call_args.kwargs["stderr"], subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["timeout"], 15)
+        self.assertFalse(run.call_args.kwargs["shell"])
+        self.assertFalse(run.call_args.kwargs["check"])
 
     def test_specspace_product_smoke_keychain_secret_is_not_reported(self) -> None:
         secret = _AuthenticatedSpecSpaceSmokeHandler.operator_password
@@ -726,10 +729,15 @@ class PlatformDeployTests(unittest.TestCase):
         self.assertIn("macOS", str(raised.exception))
         self.assertNotIn("0AL Platform Canary", str(raised.exception))
 
-    def test_specspace_product_smoke_keychain_rejects_empty_or_short_secret(
+    def test_specspace_product_smoke_keychain_rejects_invalid_secret(
         self,
     ) -> None:
-        for secret in ("", "x" * 31):
+        for secret in (
+            "",
+            "x" * 31,
+            ("x" * 32) + "\nvalue",
+            ("x" * 32) + "\x00",
+        ):
             with self.subTest(secret_length=len(secret)):
                 completed = subprocess.CompletedProcess(
                     args=["/usr/bin/security"],
@@ -775,6 +783,124 @@ class PlatformDeployTests(unittest.TestCase):
 
         self.assertNotIn(secret, str(raised.exception))
         self.assertNotIn("failed for", str(raised.exception))
+
+    def test_specspace_product_smoke_keychain_cancel_is_sanitized(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["/usr/bin/security"],
+            returncode=128,
+            stdout=b"",
+            stderr=None,
+        )
+        with (
+            mock.patch.object(platform_module.sys, "platform", "darwin"),
+            mock.patch.object(
+                platform_module.subprocess,
+                "run",
+                return_value=completed,
+            ) as run,
+        ):
+            with self.assertRaises(platform_module.PlatformError) as raised:
+                platform_module.specspace_product_smoke_operator_auth_headers(
+                    base_url="https://specgraph.space",
+                    username="operator",
+                    password_file=None,
+                    keychain_service="0AL Platform Canary",
+                )
+
+        run.assert_called_once()
+        self.assertEqual(
+            str(raised.exception),
+            "SpecSpace operator auth Keychain lookup failed; verify the generic "
+            "password item and authorize access",
+        )
+
+    def test_specspace_product_smoke_keychain_requires_https_before_lookup(
+        self,
+    ) -> None:
+        with (
+            mock.patch.object(platform_module.sys, "platform", "darwin"),
+            mock.patch.object(platform_module.subprocess, "run") as run,
+        ):
+            with self.assertRaises(platform_module.PlatformError) as raised:
+                platform_module.specspace_product_smoke_operator_auth_headers(
+                    base_url="http://specgraph.space",
+                    username="operator",
+                    password_file=None,
+                    keychain_service="0AL Platform Canary",
+                )
+
+        run.assert_not_called()
+        self.assertIn("requires HTTPS", str(raised.exception))
+
+    def test_specspace_product_smoke_keychain_timeout_is_not_retried(self) -> None:
+        with (
+            mock.patch.object(platform_module.sys, "platform", "darwin"),
+            mock.patch.object(
+                platform_module.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd=["/usr/bin/security"],
+                    timeout=15,
+                ),
+            ) as run,
+        ):
+            with self.assertRaises(platform_module.PlatformError) as raised:
+                platform_module.specspace_product_smoke_operator_auth_headers(
+                    base_url="https://specgraph.space",
+                    username="operator",
+                    password_file=None,
+                    keychain_service="0AL Platform Canary",
+                )
+
+        run.assert_called_once()
+        self.assertIn("Keychain lookup failed", str(raised.exception))
+        self.assertNotIn("/usr/bin/security", str(raised.exception))
+
+    def test_specspace_product_smoke_keychain_rejects_unsafe_service_names(
+        self,
+    ) -> None:
+        for service in ("", " leading", "-option", "line\nbreak", "control\x7f"):
+            with self.subTest(service=repr(service)):
+                with (
+                    mock.patch.object(platform_module.sys, "platform", "darwin"),
+                    mock.patch.object(platform_module.subprocess, "run") as run,
+                ):
+                    with self.assertRaises(platform_module.PlatformError):
+                        platform_module.specspace_product_smoke_operator_auth_headers(
+                            base_url="https://specgraph.space",
+                            username="operator",
+                            password_file=None,
+                            keychain_service=service,
+                        )
+                run.assert_not_called()
+
+    def test_specspace_product_smoke_keychain_rejects_oversized_secret(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["/usr/bin/security"],
+            returncode=0,
+            stdout=(b"x" * 4097) + b"\n",
+            stderr=None,
+        )
+        with (
+            mock.patch.object(platform_module.sys, "platform", "darwin"),
+            mock.patch.object(
+                platform_module.subprocess,
+                "run",
+                return_value=completed,
+            ),
+        ):
+            with self.assertRaises(platform_module.PlatformError) as raised:
+                platform_module.specspace_product_smoke_operator_auth_headers(
+                    base_url="https://specgraph.space",
+                    username="operator",
+                    password_file=None,
+                    keychain_service="0AL Platform Canary",
+                )
+
+        self.assertEqual(
+            str(raised.exception),
+            "SpecSpace operator auth Keychain password is invalid",
+        )
 
     def test_specspace_product_smoke_password_file_source_remains_compatible(
         self,

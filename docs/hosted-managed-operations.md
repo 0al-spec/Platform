@@ -872,22 +872,26 @@ manager workflow.
 Create a dedicated macOS Keychain generic-password entry with the service name
 used by the smoke and account `operator`. Keychain Access can be used for this
 without copying the secret into a shell, repository, or chat. If the `security`
-tool is preferred, it prompts for the value without putting it in the command
-line or printing it:
+tool is preferred, remove the creating tool from the initial trusted-application
+list and let it prompt for the value. This keeps the password out of the command
+line and makes the first read require an explicit decision:
 
 ```bash
 service='0AL SpecSpace production smoke'
 account='operator'
-security add-generic-password -a "$account" -s "$service" -w
+security add-generic-password -a "$account" -s "$service" -T "" -w
 ```
 
 The first read may show a macOS Keychain confirmation. `Allow` grants the
-current read, while `Always Allow` grants future reads to the same approved
-client; choose the narrower option unless this is a dedicated trusted local
-workflow. Do not paste the password into chat, Git, environment variables,
-issue descriptions, or command arguments. The CLI must send it only over the
-configured HTTPS smoke request, and the report must contain neither the
-secret nor an Authorization header.
+current read. In this experimental implementation, `Always Allow` grants future
+reads to `/usr/bin/security`, not to a separately signed Platform executable.
+Another process running as the same macOS user could invoke that tool for the
+same item, so choose `Always Allow` only on a trusted single-user operator Mac;
+it is convenience rather than isolation from same-user malware. Do not paste
+the password into chat, Git, environment variables, issue descriptions, or
+command arguments. The CLI must send it only over the configured HTTPS smoke
+request, and the report must contain neither the secret nor an Authorization
+header.
 
 Example without exposing the password:
 
@@ -909,6 +913,10 @@ from a trusted macOS operator host. It does not change Platform execution
 authority, deployment allowlists, HTTPS requirements, redirect handling, or
 the anonymous production smoke. If Keychain access is unavailable, use the
 existing password-file path rather than weakening those checks.
+The Keychain lookup has a bounded timeout and is never retried or silently
+replaced with another credential source. A separately signed helper with a
+dedicated Keychain access requirement remains the production-grade follow-up
+if stronger local process isolation becomes necessary.
 
 An authenticated browser inspection may be used as an additional UI check, but
 it does not replace `specspace-hosted-smoke.json` in the production sign-off
