@@ -323,10 +323,20 @@ def build_signoff(
     hosted_smoke = hosted_smoke if isinstance(hosted_smoke, dict) else {}
     if hosted_smoke.get("expected_managed_mode") != "hosted_managed_ready":
         diagnostics.append("hosted_specspace_mode_not_ready")
+    if (
+        hosted_smoke.get("authentication_profile") != "operator_basic"
+        or hosted_smoke.get("operator_authenticated") is not True
+    ):
+        diagnostics.append("hosted_specspace_operator_auth_not_verified")
     rollback_smoke = reports.get("rollback_specspace_smoke", {}).get("summary")
     rollback_smoke = rollback_smoke if isinstance(rollback_smoke, dict) else {}
     if rollback_smoke.get("expected_managed_mode") != "read_only":
         diagnostics.append("rollback_specspace_mode_not_read_only")
+    if (
+        rollback_smoke.get("authentication_profile") != "anonymous"
+        or rollback_smoke.get("operator_authenticated") is not False
+    ):
+        diagnostics.append("rollback_specspace_not_anonymous")
 
     diagnostics = sorted(set(diagnostics))
     canary_request = reports.get("canary", {}).get("request")
