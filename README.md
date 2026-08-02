@@ -75,11 +75,14 @@ Keychain-backed [Mac Product Workspace](docs/mac-product-workspace.md) profile:
 ```bash
 make mac-product-workspace-doctor
 make mac-product-workspace
+make mac-product-workspace-e2e
 ```
 
 The profile starts only loopback services, keeps SpecSpace-owned state outside
 the checkouts, enables allowlisted local Platform execution, and stops only the
-process groups recorded in its private runtime manifest.
+process groups recorded in its private runtime manifest. The E2E target proves
+UI-started workspace creation, intake, clarification, candidate/specification
+materialization, public-safety, and byte-identical continuity after restart.
 
 ## Product Workspaces
 
