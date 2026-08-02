@@ -62,6 +62,28 @@ class MacProductWorkspaceTests(unittest.TestCase):
         )
         self.assertNotIn("SPECSPACE_OPERATOR_AUTH_PASSWORD", env)
         self.assertNotIn("SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN", env)
+        self.assertNotIn("SPECSPACE_E2E_OPERATOR_USERNAME", env)
+        self.assertNotIn("SPECSPACE_E2E_OPERATOR_PASSWORD", env)
+
+    def test_ui_environment_does_not_inherit_e2e_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "DATABASE_PASSWORD": "database-secret",
+                    "GITHUB_TOKEN": "github-secret",
+                    "SPECSPACE_E2E_OPERATOR_USERNAME": "operator",
+                    "SPECSPACE_E2E_OPERATOR_PASSWORD": "secret",
+                },
+            ):
+                env = mac_product_workspace._ui_environment(config)
+
+        self.assertEqual(env["SPECSPACE_API_PORT"], "8001")
+        self.assertNotIn("SPECSPACE_E2E_OPERATOR_USERNAME", env)
+        self.assertNotIn("SPECSPACE_E2E_OPERATOR_PASSWORD", env)
+        self.assertNotIn("DATABASE_PASSWORD", env)
+        self.assertNotIn("GITHUB_TOKEN", env)
 
     @mock.patch.object(mac_product_workspace, "readiness_checks")
     @mock.patch.object(mac_product_workspace, "_already_running_payload", return_value=None)
@@ -166,6 +188,74 @@ class MacProductWorkspaceTests(unittest.TestCase):
         self.assertIn("ownership mismatch", errors[0])
         killpg.assert_not_called()
 
+    @mock.patch.object(mac_product_workspace.os, "killpg")
+    @mock.patch.object(mac_product_workspace, "_process_is_zombie", return_value=True)
+    @mock.patch.object(mac_product_workspace, "_process_is_owned", return_value=True)
+    @mock.patch.object(
+        mac_product_workspace,
+        "_running_command",
+        return_value="python viewer/server.py --port 8001",
+    )
+    @mock.patch.object(mac_product_workspace, "_load_process_manifest")
+    def test_stop_treats_signaled_zombie_as_stopped(
+        self,
+        load_manifest: mock.Mock,
+        _running_command: mock.Mock,
+        _process_is_owned: mock.Mock,
+        _process_is_zombie: mock.Mock,
+        killpg: mock.Mock,
+    ) -> None:
+        process = mac_product_workspace.OwnedProcess(
+            "backend",
+            999,
+            ("viewer/server.py", "8001"),
+            "/tmp/backend.log",
+        )
+        load_manifest.return_value = [process]
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            config.runtime_dir.mkdir(parents=True)
+            mac_product_workspace._write_process_manifest(config, [process])
+            ok, errors = mac_product_workspace._stop_owned_processes(config)
+            manifest_exists = mac_product_workspace._process_manifest_path(
+                config
+            ).exists()
+
+        self.assertTrue(ok)
+        self.assertEqual(errors, [])
+        killpg.assert_called_once_with(999, mac_product_workspace.signal.SIGTERM)
+        self.assertFalse(manifest_exists)
+
+    @mock.patch.object(mac_product_workspace, "_emit", return_value=0)
+    @mock.patch.object(
+        mac_product_workspace,
+        "_service_healthy",
+        side_effect=[True, True, False, False, False],
+    )
+    @mock.patch.object(
+        mac_product_workspace,
+        "_stop_owned_processes",
+        return_value=(True, []),
+    )
+    def test_stop_waits_for_profile_health_to_clear(
+        self,
+        stop_owned: mock.Mock,
+        service_healthy: mock.Mock,
+        emit: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            result = mac_product_workspace.control(
+                config,
+                command="stop",
+                output_format="json",
+            )
+
+        self.assertEqual(result, 0)
+        stop_owned.assert_called_once_with(config)
+        self.assertEqual(service_healthy.call_count, 5)
+        self.assertTrue(emit.call_args.args[0]["ok"])
+
     def test_configuration_defaults_to_sibling_checkouts_and_persistent_mac_state(self) -> None:
         args = argparse.Namespace(
             api_port=8001,
@@ -222,6 +312,131 @@ class MacProductWorkspaceTests(unittest.TestCase):
             ):
                 mac_product_workspace._ensure_local_workspace_catalog(config)
             self.assertEqual(target.read_text(encoding="utf-8"), "foreign\n")
+
+    @mock.patch.object(mac_product_workspace, "control", return_value=0)
+    @mock.patch.object(mac_product_workspace, "start", return_value=0)
+    @mock.patch.object(mac_product_workspace.subprocess, "run")
+    @mock.patch.object(
+        mac_product_workspace.platform_cli,
+        "specspace_product_smoke_password_from_keychain",
+        return_value="keychain-secret",
+    )
+    def test_restart_e2e_passes_keychain_password_only_to_playwright(
+        self,
+        password_from_keychain: mock.Mock,
+        run: mock.Mock,
+        start: mock.Mock,
+        control: mock.Mock,
+    ) -> None:
+        captured_child_env: dict[str, str] = {}
+
+        def capture_run(*_args: object, **kwargs: object) -> mock.Mock:
+            captured_child_env.update(dict(kwargs["env"]))
+            return mock.Mock(returncode=0)
+
+        run.side_effect = capture_run
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._config(root)
+            artifact_dir = root / "SpecSpace" / "graphspace" / "test-results" / "e2e"
+            with mock.patch.dict(
+                os.environ,
+                {"SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir)},
+                clear=True,
+            ):
+                result = mac_product_workspace.run_restart_e2e(
+                    config,
+                    output_format="json",
+                )
+
+        self.assertEqual(result, 0)
+        password_from_keychain.assert_called_once_with(
+            service=config.keychain_service,
+            account=config.operator_username,
+        )
+        e2e_config = start.call_args.args[0]
+        self.assertNotIn(
+            "SPECSPACE_E2E_OPERATOR_PASSWORD",
+            mac_product_workspace._runtime_environment(e2e_config),
+        )
+        self.assertEqual(
+            captured_child_env["SPECSPACE_E2E_OPERATOR_PASSWORD"],
+            "keychain-secret",
+        )
+        self.assertEqual(
+            captured_child_env["SPECSPACE_STATE_DIR"],
+            str(e2e_config.state_dir),
+        )
+        self.assertEqual(
+            captured_child_env["SPECSPACE_PRODUCT_WORKSPACE_ROOT_DIR"],
+            str(e2e_config.product_workspace_root_dir),
+        )
+        self.assertEqual(
+            captured_child_env["SPECSPACE_PRODUCT_WORKSPACE_CATALOG"],
+            str(e2e_config.product_workspace_catalog),
+        )
+        self.assertEqual(
+            run.call_args.kwargs["env"]["SPECSPACE_E2E_OPERATOR_PASSWORD"],
+            "",
+        )
+        self.assertNotIn("keychain-secret", repr(run.call_args.args[0]))
+        self.assertNotIn("keychain-secret", repr(run.call_args.kwargs["cwd"]))
+        control.assert_called_once_with(
+            e2e_config,
+            command="stop",
+            output_format="json",
+        )
+
+    @mock.patch.object(mac_product_workspace, "control", return_value=1)
+    @mock.patch.object(mac_product_workspace, "start", return_value=0)
+    @mock.patch.object(
+        mac_product_workspace.subprocess,
+        "run",
+        return_value=mock.Mock(returncode=0),
+    )
+    @mock.patch.object(
+        mac_product_workspace.platform_cli,
+        "specspace_product_smoke_password_from_keychain",
+        return_value="keychain-secret",
+    )
+    def test_restart_e2e_fails_when_profile_cleanup_fails(
+        self,
+        _password_from_keychain: mock.Mock,
+        _run: mock.Mock,
+        _start: mock.Mock,
+        _control: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._config(root)
+            artifact_dir = root / "SpecSpace" / "graphspace" / "test-results" / "e2e"
+            with mock.patch.dict(
+                os.environ,
+                {"SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir)},
+                clear=True,
+            ):
+                result = mac_product_workspace.run_restart_e2e(
+                    config,
+                    output_format="json",
+                )
+
+        self.assertEqual(result, 1)
+
+    def test_remove_e2e_tree_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            parent = root / "parent"
+            parent.mkdir()
+            foreign = root / "foreign"
+            foreign.mkdir()
+            target = parent / "workspace"
+            target.symlink_to(foreign, target_is_directory=True)
+
+            with self.assertRaisesRegex(
+                mac_product_workspace.platform_cli.PlatformError,
+                "symlinked E2E path",
+            ):
+                mac_product_workspace._remove_e2e_tree(target, parent=parent)
 
 
 if __name__ == "__main__":
