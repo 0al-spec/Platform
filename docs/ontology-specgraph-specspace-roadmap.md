@@ -429,6 +429,18 @@ Operational measurements inside item 4 do not expand production authority.
    The local Mac product-workspace profile also accepts `SPECGRAPH_RUNS_DIR` and
    reports the resolved path so restart E2E and parallel experiments can use a
    test-owned artifact root instead of the shared sibling `SpecGraph/runs`.
+   The Mac single-operator release-candidate path is now execution-backed across
+   the three repositories: a UI-created non-demo workspace proceeds through
+   controlled initialization, private raw-idea intake, generated clarification,
+   UI-authored answers, continuation, scoped active candidate, and reviewable
+   YAML specifications. The browser E2E restarts the complete profile and
+   verifies identical candidate/specification digests, no raw-idea publication,
+   no Team Decision Log fallback, bounded cleanup, and released process groups.
+   The operator runbook records durable data ownership, daily use, recovery,
+   consume-on-attempt retry rules, and the distinction between reviewable
+   candidate output and canonical/Git publication authority. Remaining Mac
+   release work is clean-main stack verification and operator acceptance rather
+   than another execution-boundary expansion.
    The next bounded hosted operation is selected in the
    [Hosted Promotion Review Production Rollout Proposal](hosted-managed-promotion-review-rollout-proposal.md).
    `promotion_review_execute` remains absent from every production deployment
