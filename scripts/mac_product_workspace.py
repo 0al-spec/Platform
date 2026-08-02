@@ -767,6 +767,7 @@ def control(config: MacProductConfig, *, command: str, output_format: str) -> in
             "specgraph_runs_dir": str(config.specgraph_runs_dir),
             "product_workspace_root_dir": str(config.product_workspace_root_dir),
             "product_workspace_catalog": str(config.product_workspace_catalog),
+            "runtime_dir": str(config.runtime_dir),
         },
         output_format=output_format,
     )
