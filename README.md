@@ -69,6 +69,18 @@ using the example configs. For example:
 export ORG_ROOT="$HOME/Development/GitHub/0AL"
 ```
 
+For a single-operator specification-writing environment on macOS, use the
+Keychain-backed [Mac Product Workspace](docs/mac-product-workspace.md) profile:
+
+```bash
+make mac-product-workspace-doctor
+make mac-product-workspace
+```
+
+The profile starts only loopback services, keeps SpecSpace-owned state outside
+the checkouts, enables allowlisted local Platform execution, and stops only the
+process groups recorded in its private runtime manifest.
+
 ## Product Workspaces
 
 A product workspace is a folder-document managed by SpecGraph:
