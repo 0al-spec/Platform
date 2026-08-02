@@ -992,6 +992,183 @@ def _remove_e2e_tree(path: Path, *, parent: Path) -> None:
         shutil.rmtree(path)
 
 
+def _registered_worktree_paths(repository: Path) -> set[Path]:
+    completed = subprocess.run(
+        ["git", "-C", str(repository), "worktree", "list", "--porcelain"],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise platform_cli.PlatformError(
+            "could not inspect SpecGraph worktrees for the Mac E2E profile"
+        )
+    return {
+        Path(line.removeprefix("worktree ")).resolve()
+        for line in completed.stdout.splitlines()
+        if line.startswith("worktree ")
+    }
+
+
+def _remove_e2e_specgraph_worktree(repository: Path, worktree: Path) -> None:
+    if worktree.resolve() not in _registered_worktree_paths(repository):
+        return
+    completed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "worktree",
+            "remove",
+            "--force",
+            str(worktree),
+        ],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise platform_cli.PlatformError(
+            "could not remove the isolated SpecGraph worktree for the Mac E2E profile"
+        )
+
+
+def _create_e2e_specgraph_worktree(repository: Path, worktree: Path) -> None:
+    if worktree.exists() or worktree.is_symlink():
+        raise platform_cli.PlatformError(
+            f"refusing to replace existing SpecGraph E2E worktree path: {worktree}"
+        )
+    status = subprocess.run(
+        ["git", "-C", str(repository), "status", "--porcelain", "--untracked-files=no"],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if status.returncode != 0 or status.stdout.strip():
+        raise platform_cli.PlatformError(
+            "SpecGraph must have a clean tracked worktree before the Mac E2E profile starts"
+        )
+    head = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "--verify", "HEAD"],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if head.returncode != 0 or not head.stdout.strip():
+        raise platform_cli.PlatformError("could not resolve the SpecGraph E2E commit")
+    expected_head = head.stdout.strip()
+    completed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "worktree",
+            "add",
+            "--detach",
+            str(worktree),
+            expected_head,
+        ],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise platform_cli.PlatformError(
+            "could not create the isolated SpecGraph worktree for the Mac E2E profile"
+        )
+    worktree_head = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "--verify", "HEAD"],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    detached = subprocess.run(
+        ["git", "-C", str(worktree), "symbolic-ref", "-q", "HEAD"],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if worktree_head.stdout.strip() != expected_head or detached.returncode == 0:
+        _remove_e2e_specgraph_worktree(repository, worktree)
+        raise platform_cli.PlatformError(
+            "isolated SpecGraph E2E worktree is not detached at the source commit"
+        )
+
+
+def _archive_e2e_specgraph_runs(worktree: Path, destination: Path) -> None:
+    source = worktree / "runs"
+    if not source.exists():
+        return
+    if source.is_symlink() or not source.is_dir():
+        raise platform_cli.PlatformError(
+            f"refusing unexpected SpecGraph E2E runs path: {source}"
+        )
+    if destination.exists() or destination.is_symlink():
+        _remove_e2e_tree(destination, parent=destination.parent)
+    source.replace(destination)
+
+
+def _recover_stale_e2e_worktree(
+    source_config: MacProductConfig,
+    e2e_config: MacProductConfig,
+    *,
+    output_format: str,
+) -> None:
+    if (
+        e2e_config.specgraph_dir.resolve()
+        not in _registered_worktree_paths(source_config.specgraph_dir)
+    ):
+        return
+    if control(e2e_config, command="stop", output_format=output_format) != 0:
+        raise platform_cli.PlatformError(
+            "previous Mac E2E runtime could not be stopped; preserving its SpecGraph worktree"
+        )
+    _remove_e2e_specgraph_worktree(
+        source_config.specgraph_dir,
+        e2e_config.specgraph_dir,
+    )
+
+
+def _write_e2e_recovery_marker(
+    artifact_dir: Path,
+    e2e_config: MacProductConfig,
+) -> None:
+    destination = artifact_dir / "profile" / "recovery-required.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(
+            {
+                "artifact_kind": "platform_mac_product_workspace_e2e_recovery",
+                "schema_version": 1,
+                "status": "runtime_stop_failed",
+                "specgraph_worktree": str(e2e_config.specgraph_dir),
+                "runtime_manifest": str(_process_manifest_path(e2e_config)),
+                "next_action": "stop the owned Mac product profile before retrying E2E",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    temporary.replace(destination)
+
+
 def _e2e_config(config: MacProductConfig) -> tuple[MacProductConfig, Path]:
     trusted_root = (config.specspace_dir / "graphspace" / "test-results").resolve()
     raw_override = os.environ.get("SPECSPACE_MAC_E2E_ARTIFACT_DIR", "").strip()
@@ -1011,10 +1188,12 @@ def _e2e_config(config: MacProductConfig) -> tuple[MacProductConfig, Path]:
             f"{trusted_root}"
         )
     profile_dir = artifact_dir / "profile"
+    specgraph_worktree = profile_dir / "specgraph-checkout"
     return (
         replace(
             config,
-            specgraph_runs_dir=profile_dir / "specgraph-runs",
+            specgraph_dir=specgraph_worktree,
+            specgraph_runs_dir=specgraph_worktree / "runs",
             state_dir=profile_dir / "state",
             product_workspace_root_dir=profile_dir / "workspaces",
             product_workspace_catalog=profile_dir / "workspaces.local.yaml",
@@ -1027,48 +1206,59 @@ def _e2e_config(config: MacProductConfig) -> tuple[MacProductConfig, Path]:
 def run_restart_e2e(config: MacProductConfig, *, output_format: str) -> int:
     e2e_config, artifact_dir = _e2e_config(config)
     graphspace_dir = e2e_config.specspace_dir / "graphspace"
-    run_dir = e2e_config.specgraph_runs_dir / MAC_RESTART_E2E_WORKSPACE_ID
+    archived_runs_dir = artifact_dir / "profile" / "specgraph-runs"
+    _recover_stale_e2e_worktree(
+        config,
+        e2e_config,
+        output_format=output_format,
+    )
     _remove_e2e_tree(artifact_dir, parent=artifact_dir.parent)
-    _remove_e2e_tree(run_dir, parent=e2e_config.specgraph_runs_dir)
     artifact_dir.mkdir(parents=True, exist_ok=True)
-
-    password = platform_cli.specspace_product_smoke_password_from_keychain(
-        service=e2e_config.keychain_service,
-        account=e2e_config.operator_username,
-    )
-    playwright_env = _runtime_environment(e2e_config)
-    playwright_env.update(
-        {
-            "API_PORT": str(e2e_config.api_port),
-            "UI_PORT": str(e2e_config.ui_port),
-            "PLATFORM_DIR": str(e2e_config.platform_dir),
-            "SPECGRAPH_DIR": str(e2e_config.specgraph_dir),
-            "SPECSPACE_DIR": str(e2e_config.specspace_dir),
-            "DIALOG_DIR": str(e2e_config.dialog_dir),
-            "SPECSPACE_MAC_PRODUCT_RUNTIME_DIR": str(e2e_config.runtime_dir),
-            "SPECSPACE_MAC_RESTART_E2E": "1",
-            "SPECSPACE_E2E_BASE_URL": e2e_config.ui_url,
-            "SPECSPACE_E2E_OPERATOR_USERNAME": e2e_config.operator_username,
-            "SPECSPACE_E2E_OPERATOR_PASSWORD": password,
-            "SPECSPACE_E2E_TRACE": "off",
-            "SPECSPACE_E2E_VIDEO": "off",
-            "SPECSPACE_E2E_OUTPUT_DIR": str(artifact_dir / "playwright"),
-            "SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir),
-            "SPECSPACE_E2E_PLATFORM_DIR": str(e2e_config.platform_dir),
-            "SPECSPACE_E2E_SPECGRAPH_DIR": str(e2e_config.specgraph_dir),
-            "SPECGRAPH_RUNS_DIR": str(e2e_config.specgraph_runs_dir),
-            "SPECSPACE_STATE_DIR": str(e2e_config.state_dir),
-            "SPECSPACE_PRODUCT_WORKSPACE_ROOT_DIR": str(
-                e2e_config.product_workspace_root_dir
-            ),
-            "SPECSPACE_PRODUCT_WORKSPACE_CATALOG": str(
-                e2e_config.product_workspace_catalog
-            ),
-        }
-    )
+    password = ""
+    playwright_env: dict[str, str] = {}
     result = 1
-    stop_result = 1
+    stop_result = 0
+    start_attempted = False
     try:
+        _create_e2e_specgraph_worktree(
+            config.specgraph_dir,
+            e2e_config.specgraph_dir,
+        )
+        password = platform_cli.specspace_product_smoke_password_from_keychain(
+            service=e2e_config.keychain_service,
+            account=e2e_config.operator_username,
+        )
+        playwright_env = _runtime_environment(e2e_config)
+        playwright_env.update(
+            {
+                "API_PORT": str(e2e_config.api_port),
+                "UI_PORT": str(e2e_config.ui_port),
+                "PLATFORM_DIR": str(e2e_config.platform_dir),
+                "SPECGRAPH_DIR": str(e2e_config.specgraph_dir),
+                "SPECSPACE_DIR": str(e2e_config.specspace_dir),
+                "DIALOG_DIR": str(e2e_config.dialog_dir),
+                "SPECSPACE_MAC_PRODUCT_RUNTIME_DIR": str(e2e_config.runtime_dir),
+                "SPECSPACE_MAC_RESTART_E2E": "1",
+                "SPECSPACE_E2E_BASE_URL": e2e_config.ui_url,
+                "SPECSPACE_E2E_OPERATOR_USERNAME": e2e_config.operator_username,
+                "SPECSPACE_E2E_OPERATOR_PASSWORD": password,
+                "SPECSPACE_E2E_TRACE": "off",
+                "SPECSPACE_E2E_VIDEO": "off",
+                "SPECSPACE_E2E_OUTPUT_DIR": str(artifact_dir / "playwright"),
+                "SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir),
+                "SPECSPACE_E2E_PLATFORM_DIR": str(e2e_config.platform_dir),
+                "SPECSPACE_E2E_SPECGRAPH_DIR": str(e2e_config.specgraph_dir),
+                "SPECGRAPH_RUNS_DIR": str(e2e_config.specgraph_runs_dir),
+                "SPECSPACE_STATE_DIR": str(e2e_config.state_dir),
+                "SPECSPACE_PRODUCT_WORKSPACE_ROOT_DIR": str(
+                    e2e_config.product_workspace_root_dir
+                ),
+                "SPECSPACE_PRODUCT_WORKSPACE_CATALOG": str(
+                    e2e_config.product_workspace_catalog
+                ),
+            }
+        )
+        start_attempted = True
         started = start(e2e_config, output_format=output_format)
         if started == 0:
             completed = subprocess.run(
@@ -1093,9 +1283,28 @@ def run_restart_e2e(config: MacProductConfig, *, output_format: str) -> int:
         else:
             result = started
     finally:
-        playwright_env["SPECSPACE_E2E_OPERATOR_PASSWORD"] = ""
+        if playwright_env:
+            playwright_env["SPECSPACE_E2E_OPERATOR_PASSWORD"] = ""
         password = ""
-        stop_result = control(e2e_config, command="stop", output_format=output_format)
+        if start_attempted:
+            stop_result = control(
+                e2e_config,
+                command="stop",
+                output_format=output_format,
+            )
+        if not start_attempted or stop_result == 0:
+            try:
+                _archive_e2e_specgraph_runs(
+                    e2e_config.specgraph_dir,
+                    archived_runs_dir,
+                )
+            finally:
+                _remove_e2e_specgraph_worktree(
+                    config.specgraph_dir,
+                    e2e_config.specgraph_dir,
+                )
+        else:
+            _write_e2e_recovery_marker(artifact_dir, e2e_config)
     return result if result != 0 else stop_result
 
 
