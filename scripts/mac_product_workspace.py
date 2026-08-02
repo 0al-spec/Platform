@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -27,6 +27,19 @@ except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo r
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_KEYCHAIN_SERVICE = "0AL SpecSpace production smoke"
 DEFAULT_OPERATOR_USERNAME = "operator"
+MAC_RESTART_E2E_WORKSPACE_ID = "mac-specification-marathon"
+CHILD_ENVIRONMENT_KEYS = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "PATH",
+    "SHELL",
+    "SSH_AUTH_SOCK",
+    "TMPDIR",
+    "USER",
+)
 
 
 @dataclass(frozen=True)
@@ -136,6 +149,7 @@ def config_from_environment(args: argparse.Namespace) -> MacProductConfig:
 def _port_available(port: int) -> bool:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind(("127.0.0.1", port))
     except OSError:
         return False
@@ -255,7 +269,11 @@ def doctor(config: MacProductConfig, *, output_format: str) -> int:
 
 
 def _runtime_environment(config: MacProductConfig) -> dict[str, str]:
-    env = os.environ.copy()
+    env = {
+        key: os.environ[key]
+        for key in CHILD_ENVIRONMENT_KEYS
+        if os.environ.get(key)
+    }
     env.update(
         {
             "SPECSPACE_STATE_DIR": str(config.state_dir),
@@ -271,8 +289,16 @@ def _runtime_environment(config: MacProductConfig) -> dict[str, str]:
             "SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED": "false",
         }
     )
-    env.pop("SPECSPACE_OPERATOR_AUTH_PASSWORD", None)
-    env.pop("SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN", None)
+    return env
+
+
+def _ui_environment(config: MacProductConfig) -> dict[str, str]:
+    env = {
+        key: os.environ[key]
+        for key in CHILD_ENVIRONMENT_KEYS
+        if os.environ.get(key)
+    }
+    env["SPECSPACE_API_PORT"] = str(config.api_port)
     return env
 
 
@@ -402,6 +428,19 @@ def _running_command(pid: int) -> str | None:
     return command if completed.returncode == 0 and command else None
 
 
+def _process_is_zombie(pid: int) -> bool:
+    completed = subprocess.run(
+        ["/bin/ps", "-p", str(pid), "-o", "stat="],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    state = completed.stdout.strip()
+    return completed.returncode == 0 and state.startswith("Z")
+
+
 def _process_is_owned(process: OwnedProcess) -> bool:
     command = _running_command(process.pid)
     if command is None:
@@ -436,10 +475,17 @@ def _stop_owned_processes(config: MacProductConfig) -> tuple[bool, list[str]]:
         os.killpg(process.pid, signal.SIGTERM)
     deadline = time.monotonic() + 5
     while owned and time.monotonic() < deadline:
-        owned = [process for process in owned if _running_command(process.pid) is not None]
+        owned = [
+            process
+            for process in owned
+            if _running_command(process.pid) is not None
+            and not _process_is_zombie(process.pid)
+        ]
         if owned:
             time.sleep(0.1)
     for process in owned:
+        if _process_is_zombie(process.pid):
+            continue
         if _process_is_owned(process):
             os.killpg(process.pid, signal.SIGKILL)
         else:
@@ -459,6 +505,24 @@ def _wait_for_profile(config: MacProductConfig, *, timeout_seconds: float = 30) 
         ):
             return True
         time.sleep(0.25)
+    return False
+
+
+def _wait_for_profile_stopped(
+    config: MacProductConfig,
+    *,
+    timeout_seconds: float = 10,
+) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        backend_healthy = _service_healthy(f"{config.backend_url}/api/v1/health")
+        ui_healthy = _service_healthy(config.ui_url)
+        ports_available = _port_available(config.api_port) and _port_available(
+            config.ui_port
+        )
+        if not backend_healthy and not ui_healthy and ports_available:
+            return True
+        time.sleep(0.1)
     return False
 
 
@@ -601,8 +665,7 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
         npm = shutil.which("npm")
         if npm is None:
             raise platform_cli.PlatformError("npm is unavailable after readiness preflight")
-        ui_environment = os.environ.copy()
-        ui_environment["SPECSPACE_API_PORT"] = str(config.api_port)
+        ui_environment = _ui_environment(config)
         ui_command = [
             npm,
             "run",
@@ -678,6 +741,9 @@ def control(config: MacProductConfig, *, command: str, output_format: str) -> in
     stopped = True
     if command == "stop":
         stopped, errors = _stop_owned_processes(config)
+        if stopped and not _wait_for_profile_stopped(config):
+            stopped = False
+            errors.append("profile services did not stop before the shutdown deadline")
     healthy = _service_healthy(f"{config.backend_url}/api/v1/health") and _service_healthy(
         config.ui_url
     )
@@ -703,12 +769,126 @@ def control(config: MacProductConfig, *, command: str, output_format: str) -> in
     )
 
 
+def _remove_e2e_tree(path: Path, *, parent: Path) -> None:
+    if path.is_symlink():
+        raise platform_cli.PlatformError(
+            f"refusing to clean symlinked E2E path: {path}"
+        )
+    resolved_parent = parent.resolve()
+    resolved_path = path.resolve()
+    if resolved_path.parent != resolved_parent:
+        raise platform_cli.PlatformError(
+            f"refusing to clean E2E path outside its expected parent: {resolved_path}"
+        )
+    if path.exists():
+        if not path.is_dir():
+            raise platform_cli.PlatformError(f"E2E path is not a directory: {path}")
+        shutil.rmtree(path)
+
+
+def _e2e_config(config: MacProductConfig) -> tuple[MacProductConfig, Path]:
+    artifact_dir = _path_from_env(
+        "SPECSPACE_MAC_E2E_ARTIFACT_DIR",
+        config.specspace_dir
+        / "graphspace"
+        / "test-results"
+        / "mac-product-workspace-restart",
+    )
+    profile_dir = artifact_dir / "profile"
+    return (
+        replace(
+            config,
+            specgraph_runs_dir=(config.specgraph_dir / "runs").resolve(),
+            state_dir=profile_dir / "state",
+            product_workspace_root_dir=profile_dir / "workspaces",
+            product_workspace_catalog=profile_dir / "workspaces.local.yaml",
+            runtime_dir=profile_dir / "runtime",
+        ),
+        artifact_dir,
+    )
+
+
+def run_restart_e2e(config: MacProductConfig, *, output_format: str) -> int:
+    e2e_config, artifact_dir = _e2e_config(config)
+    graphspace_dir = e2e_config.specspace_dir / "graphspace"
+    run_dir = e2e_config.specgraph_runs_dir / MAC_RESTART_E2E_WORKSPACE_ID
+    _remove_e2e_tree(artifact_dir, parent=artifact_dir.parent)
+    _remove_e2e_tree(run_dir, parent=e2e_config.specgraph_runs_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    password = platform_cli.specspace_product_smoke_password_from_keychain(
+        service=e2e_config.keychain_service,
+        account=e2e_config.operator_username,
+    )
+    playwright_env = _runtime_environment(e2e_config)
+    playwright_env.update(
+        {
+            "API_PORT": str(e2e_config.api_port),
+            "UI_PORT": str(e2e_config.ui_port),
+            "PLATFORM_DIR": str(e2e_config.platform_dir),
+            "SPECGRAPH_DIR": str(e2e_config.specgraph_dir),
+            "SPECSPACE_DIR": str(e2e_config.specspace_dir),
+            "DIALOG_DIR": str(e2e_config.dialog_dir),
+            "SPECSPACE_MAC_PRODUCT_RUNTIME_DIR": str(e2e_config.runtime_dir),
+            "SPECSPACE_MAC_RESTART_E2E": "1",
+            "SPECSPACE_E2E_BASE_URL": e2e_config.ui_url,
+            "SPECSPACE_E2E_OPERATOR_USERNAME": e2e_config.operator_username,
+            "SPECSPACE_E2E_OPERATOR_PASSWORD": password,
+            "SPECSPACE_E2E_TRACE": "off",
+            "SPECSPACE_E2E_VIDEO": "off",
+            "SPECSPACE_E2E_OUTPUT_DIR": str(artifact_dir / "playwright"),
+            "SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir),
+            "SPECSPACE_E2E_PLATFORM_DIR": str(e2e_config.platform_dir),
+            "SPECSPACE_E2E_SPECGRAPH_DIR": str(e2e_config.specgraph_dir),
+            "SPECGRAPH_RUNS_DIR": str(e2e_config.specgraph_runs_dir),
+            "SPECSPACE_STATE_DIR": str(e2e_config.state_dir),
+            "SPECSPACE_PRODUCT_WORKSPACE_ROOT_DIR": str(
+                e2e_config.product_workspace_root_dir
+            ),
+            "SPECSPACE_PRODUCT_WORKSPACE_CATALOG": str(
+                e2e_config.product_workspace_catalog
+            ),
+        }
+    )
+    result = 1
+    stop_result = 1
+    try:
+        started = start(e2e_config, output_format=output_format)
+        if started == 0:
+            completed = subprocess.run(
+                [
+                    "npm",
+                    "exec",
+                    "--",
+                    "playwright",
+                    "test",
+                    "e2e/mac-product-workspace-restart.spec.ts",
+                    "--config",
+                    "playwright.config.ts",
+                    "--workers=1",
+                ],
+                cwd=graphspace_dir,
+                env=playwright_env,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                text=True,
+            )
+            result = completed.returncode
+        else:
+            result = started
+    finally:
+        playwright_env["SPECSPACE_E2E_OPERATOR_PASSWORD"] = ""
+        password = ""
+        stop_result = control(e2e_config, command="stop", output_format=output_format)
+    return result if result != 0 else stop_result
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Operate the single-operator SpecSpace product profile on macOS.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("doctor", "start", "status", "stop"):
+    for command in ("doctor", "start", "status", "stop", "e2e"):
         command_parser = subparsers.add_parser(command)
         command_parser.add_argument(
             "--api-port",
@@ -749,6 +929,8 @@ def main() -> int:
         return doctor(config, output_format=args.format)
     if args.command == "start":
         return start(config, output_format=args.format)
+    if args.command == "e2e":
+        return run_restart_e2e(config, output_format=args.format)
     return control(config, command=args.command, output_format=args.format)
 
 
