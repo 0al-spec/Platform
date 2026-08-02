@@ -8635,6 +8635,8 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         "artifact_kind": REAL_IDEA_ANSWER_CONTINUATION_EXECUTION_REPORT_KIND,
         "generated_at": utc_now_iso(),
         "started_at": started_at,
+        "workspace_id": workspace_id,
+        "request_id": getattr(args, "request_id", None),
         "specgraph_dir": str(specgraph_dir),
         "run_dir": run_dir_ref,
         "continuation_mode": continuation_mode,
@@ -8860,6 +8862,12 @@ def real_idea_answer_continuation_execute_requested(args: argparse.Namespace) ->
             "schema_version": 1,
             "artifact_kind": REAL_IDEA_ANSWER_CONTINUATION_EXECUTION_REPORT_KIND,
             "generated_at": utc_now_iso(),
+            "workspace_id": selected_workspace_id,
+            "request_id": (
+                selected_request.get("request_id")
+                if isinstance(selected_request, dict)
+                else args.request_id
+            ),
             "specgraph_dir": str(specgraph_dir),
             "execution_request_ref": str(request_state_path),
             "workspace_initialization": workspace_binding,
@@ -8929,6 +8937,11 @@ def real_idea_answer_continuation_execute_requested(args: argparse.Namespace) ->
         output=args.output,
         no_write_report=args.no_write_report,
         format=args.format,
+        request_id=(
+            selected_request.get("request_id")
+            if isinstance(selected_request, dict)
+            else args.request_id
+        ),
         execution_request=str(request_state_path),
         intake_execution=str(intake_execution_path) if intake_execution_path is not None else None,
     )

@@ -6269,6 +6269,11 @@ workspaces:
                 ),
             )
             self.assertEqual(payload["run_dir"], "runs/pantry-rotation")
+            self.assertEqual(payload["workspace_id"], "pantry-rotation")
+            self.assertEqual(
+                payload["request_id"],
+                "real-idea-answer-continuation-execute.pantry-rotation.20260704.abcd12",
+            )
             self.assertEqual(
                 payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ANSWER_STATE"],
                 "runs/pantry-rotation/idea_to_spec_intake_clarification_answers.json",
