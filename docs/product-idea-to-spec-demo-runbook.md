@@ -891,6 +891,10 @@ The request points to the prior intake execution evidence, current answer
 template, and normally the SpecSpace-owned answer state. Platform validates the
 request-only authority boundary, workspace identity, workspace initialization,
 and successful non-dry-run intake execution before invoking SpecGraph.
+The resulting continuation execution report pins the selected `workspace_id`
+and `request_id` at top level. Consumers must reject a report whose identity
+does not match the consumed request, even when its run directory and artifact
+refs otherwise look valid.
 
 If the trusted template uses contract v0.2 and declares
 `clarification_not_required`, Platform does not require an answer-state file or

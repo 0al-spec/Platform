@@ -984,7 +984,9 @@ The next valuable implementation choices are:
    Platform can execute the fixed `product-real-idea-intake execute-requested`
    and `product-real-idea-continuation execute-requested` handoffs from
    SpecSpace-owned request artifacts without Git, Ontology, or canonical spec
-   mutation authority. Direct execute commands remain operator/debug surfaces
+   mutation authority. Continuation reports now pin the selected workspace and
+   request identities so SpecSpace can fail closed on foreign or replayed
+   execution evidence. Direct execute commands remain operator/debug surfaces
    beneath the request-first UI flow. Project-local ontology review and the
    candidate overview narrative panel are now also connected to Idea Maturity
    and Product Workspace surfaces. Remaining work is product UX polish through
