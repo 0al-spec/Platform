@@ -656,7 +656,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
             ), mock.patch.object(
                 mac_product_workspace, "_create_e2e_specgraph_worktree"
             ), mock.patch.object(
-                mac_product_workspace, "_archive_e2e_specgraph_runs"
+                mac_product_workspace, "_archive_e2e_specgraph_workspace"
             ), mock.patch.object(
                 mac_product_workspace, "_remove_e2e_specgraph_worktree"
             ), mock.patch.object(
@@ -735,7 +735,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
             ), mock.patch.object(
                 mac_product_workspace, "_create_e2e_specgraph_worktree"
             ), mock.patch.object(
-                mac_product_workspace, "_archive_e2e_specgraph_runs"
+                mac_product_workspace, "_archive_e2e_specgraph_workspace"
             ) as archive_runs, mock.patch.object(
                 mac_product_workspace, "_remove_e2e_specgraph_worktree"
             ) as remove_worktree, mock.patch.object(
@@ -766,7 +766,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
             ), mock.patch.object(
                 mac_product_workspace, "_create_e2e_specgraph_worktree"
             ) as create_worktree, mock.patch.object(
-                mac_product_workspace, "_archive_e2e_specgraph_runs"
+                mac_product_workspace, "_archive_e2e_specgraph_workspace"
             ) as archive_runs, mock.patch.object(
                 mac_product_workspace, "_remove_e2e_specgraph_worktree"
             ) as remove_worktree, mock.patch.object(
@@ -923,25 +923,35 @@ class MacProductWorkspaceTests(unittest.TestCase):
                     root / "artifacts" / "specgraph-checkout",
                 )
 
-    def test_archive_e2e_specgraph_runs_preserves_generated_artifacts(self) -> None:
+    def test_archive_e2e_specgraph_workspace_preserves_generated_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             worktree = root / "profile" / "specgraph-checkout"
-            source = worktree / "runs" / "workspace"
+            source = (
+                worktree
+                / "runs"
+                / mac_product_workspace.MAC_RESTART_E2E_WORKSPACE_ID
+            )
             source.mkdir(parents=True)
             (source / "candidate.json").write_text("{}\n", encoding="utf-8")
-            destination = root / "profile" / "specgraph-runs"
+            tracked_fixture = worktree / "runs" / "tracked-fixture.json"
+            tracked_fixture.write_text("{}\n", encoding="utf-8")
+            destination = (
+                root
+                / "profile"
+                / "specgraph-runs"
+                / mac_product_workspace.MAC_RESTART_E2E_WORKSPACE_ID
+            )
 
-            mac_product_workspace._archive_e2e_specgraph_runs(
+            mac_product_workspace._archive_e2e_specgraph_workspace(
                 worktree,
                 destination,
             )
 
-            self.assertFalse((worktree / "runs").exists())
+            self.assertFalse(source.exists())
+            self.assertTrue(tracked_fixture.is_file())
             self.assertEqual(
-                (destination / "workspace" / "candidate.json").read_text(
-                    encoding="utf-8"
-                ),
+                (destination / "candidate.json").read_text(encoding="utf-8"),
                 "{}\n",
             )
 
