@@ -63,6 +63,21 @@ is stored outside the checkout at:
 ~/Library/Application Support/0AL/SpecSpace/state
 ```
 
+SpecGraph artifacts default to the sibling checkout's `runs` directory. Tests
+and isolated operator profiles should override it rather than sharing demo or
+user artifacts:
+
+```bash
+SPECGRAPH_RUNS_DIR=/path/to/private/workspace-runs \
+make mac-product-workspace
+```
+
+The profile passes the same resolved path to SpecSpace as `--runs-dir`, reports
+it from `doctor`, `start`, and `status`, and creates it only after the parent
+directory passes the writable preflight. It also passes the selected API port
+to the GraphSpace dev server as `SPECSPACE_API_PORT`, allowing isolated test
+profiles to use non-default loopback ports when the consumer supports it.
+
 Runtime logs and the mode-`0600` process ownership manifest are stored under:
 
 ```text
@@ -79,5 +94,5 @@ backend startup. The file is removed after SpecSpace becomes ready; the password
 is not written to logs or tracked configuration.
 
 Machine-specific paths can be overridden through `ORG_ROOT`, `PLATFORM_DIR`,
-`SPECGRAPH_DIR`, `SPECSPACE_DIR`, `DIALOG_DIR`, `SPECSPACE_STATE_DIR`, and
-`SPECSPACE_MAC_PRODUCT_RUNTIME_DIR`.
+`SPECGRAPH_DIR`, `SPECGRAPH_RUNS_DIR`, `SPECSPACE_DIR`, `DIALOG_DIR`,
+`SPECSPACE_STATE_DIR`, and `SPECSPACE_MAC_PRODUCT_RUNTIME_DIR`.

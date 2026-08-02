@@ -29,6 +29,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
             org_root=root,
             platform_dir=platform_dir,
             specgraph_dir=specgraph_dir,
+            specgraph_runs_dir=specgraph_dir / "runs",
             specspace_dir=specspace_dir,
             dialog_dir=dialog_dir,
             state_dir=root / "persistent" / "state",
@@ -48,6 +49,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
         self.assertEqual(env["SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED"], "false")
         self.assertEqual(env["SPECSPACE_PLATFORM_DIR"], str(config.platform_dir))
         self.assertEqual(env["SPECSPACE_STATE_DIR"], str(config.state_dir))
+        self.assertEqual(env["SPECGRAPH_RUNS_DIR"], str(config.specgraph_runs_dir))
         self.assertNotIn("SPECSPACE_OPERATOR_AUTH_PASSWORD", env)
         self.assertNotIn("SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN", env)
 
@@ -102,6 +104,14 @@ class MacProductWorkspaceTests(unittest.TestCase):
             backend_command[backend_command.index("--operator-auth-password-file") + 1]
         )
         self.assertFalse(password_arg.exists())
+        self.assertEqual(
+            backend_command[backend_command.index("--runs-dir") + 1],
+            str(config.specgraph_runs_dir),
+        )
+        self.assertEqual(
+            start_process.call_args_list[1].kwargs["env"]["SPECSPACE_API_PORT"],
+            "8001",
+        )
         self.assertEqual(start_process.call_count, 2)
 
     @mock.patch.object(mac_product_workspace.os, "killpg")
@@ -141,8 +151,27 @@ class MacProductWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(config.platform_dir, mac_product_workspace.REPO_ROOT)
         self.assertEqual(config.specgraph_dir, mac_product_workspace.REPO_ROOT.parent / "SpecGraph")
+        self.assertEqual(config.specgraph_runs_dir, config.specgraph_dir / "runs")
         self.assertEqual(config.specspace_dir, mac_product_workspace.REPO_ROOT.parent / "SpecSpace")
         self.assertIn("Application Support/0AL/SpecSpace/state", str(config.state_dir))
+
+    def test_configuration_accepts_isolated_specgraph_runs_directory(self) -> None:
+        args = argparse.Namespace(
+            api_port=8001,
+            ui_port=5175,
+            operator_auth_username="operator",
+            operator_auth_keychain_service="0AL SpecSpace local operator",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            isolated_runs = Path(tmp) / "isolated" / "runs"
+            with mock.patch.dict(
+                os.environ,
+                {"SPECGRAPH_RUNS_DIR": str(isolated_runs)},
+                clear=True,
+            ):
+                config = mac_product_workspace.config_from_environment(args)
+
+        self.assertEqual(config.specgraph_runs_dir, isolated_runs.resolve())
 
 
 if __name__ == "__main__":

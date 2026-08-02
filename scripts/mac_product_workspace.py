@@ -34,6 +34,7 @@ class MacProductConfig:
     org_root: Path
     platform_dir: Path
     specgraph_dir: Path
+    specgraph_runs_dir: Path
     specspace_dir: Path
     dialog_dir: Path
     state_dir: Path
@@ -74,10 +75,14 @@ def _path_from_env(name: str, default: Path) -> Path:
 
 def config_from_environment(args: argparse.Namespace) -> MacProductConfig:
     org_root = _path_from_env("ORG_ROOT", REPO_ROOT.parent)
+    specgraph_dir = _path_from_env("SPECGRAPH_DIR", org_root / "SpecGraph")
     return MacProductConfig(
         org_root=org_root,
         platform_dir=_path_from_env("PLATFORM_DIR", REPO_ROOT),
-        specgraph_dir=_path_from_env("SPECGRAPH_DIR", org_root / "SpecGraph"),
+        specgraph_dir=specgraph_dir,
+        specgraph_runs_dir=_path_from_env(
+            "SPECGRAPH_RUNS_DIR", specgraph_dir / "runs"
+        ),
         specspace_dir=_path_from_env("SPECSPACE_DIR", org_root / "SpecSpace"),
         dialog_dir=_path_from_env(
             "DIALOG_DIR",
@@ -156,6 +161,14 @@ def readiness_checks(config: MacProductConfig) -> list[ReadinessCheck]:
             ancestor = ancestor.parent
         state_parent_ready = ancestor.is_dir() and os.access(ancestor, os.W_OK)
     add("state_parent_writable", state_parent_ready, str(state_parent))
+    runs_parent = config.specgraph_runs_dir.parent
+    runs_parent_ready = runs_parent.is_dir() and os.access(runs_parent, os.W_OK)
+    if not runs_parent.exists():
+        ancestor = runs_parent
+        while not ancestor.exists() and ancestor != ancestor.parent:
+            ancestor = ancestor.parent
+        runs_parent_ready = ancestor.is_dir() and os.access(ancestor, os.W_OK)
+    add("specgraph_runs_parent_writable", runs_parent_ready, str(runs_parent))
     return checks
 
 
@@ -174,6 +187,8 @@ def _emit(payload: dict[str, object], *, output_format: str) -> int:
             print(f"ui: {payload['ui_url']}")
         if payload.get("state_dir"):
             print(f"state: {payload['state_dir']}")
+        if payload.get("specgraph_runs_dir"):
+            print(f"runs: {payload['specgraph_runs_dir']}")
     return 0 if payload.get("ok") is True else 1
 
 
@@ -189,6 +204,7 @@ def doctor(config: MacProductConfig, *, output_format: str) -> int:
             "checks": [asdict(check) for check in checks],
             "ui_url": config.ui_url,
             "state_dir": str(config.state_dir),
+            "specgraph_runs_dir": str(config.specgraph_runs_dir),
             "authority_boundary": {
                 "browser_executes_shell": False,
                 "specspace_executes_allowlisted_platform_operations": True,
@@ -205,6 +221,7 @@ def _runtime_environment(config: MacProductConfig) -> dict[str, str]:
     env.update(
         {
             "SPECSPACE_STATE_DIR": str(config.state_dir),
+            "SPECGRAPH_RUNS_DIR": str(config.specgraph_runs_dir),
             "SPECSPACE_PLATFORM_DIR": str(config.platform_dir),
             "SPECSPACE_PLATFORM_EXECUTION_ENABLED": "true",
             "SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED": "false",
@@ -413,6 +430,7 @@ def _already_running_payload(config: MacProductConfig) -> dict[str, object] | No
         else ["profile ports are healthy but their processes are not owned by this runtime"],
         "ui_url": config.ui_url,
         "state_dir": str(config.state_dir),
+        "specgraph_runs_dir": str(config.specgraph_runs_dir),
     }
 
 
@@ -431,6 +449,7 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
                     "errors": errors,
                     "ui_url": config.ui_url,
                     "state_dir": str(config.state_dir),
+                    "specgraph_runs_dir": str(config.specgraph_runs_dir),
                 },
                 output_format=output_format,
             )
@@ -444,6 +463,7 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
         account=config.operator_username,
     )
     config.state_dir.mkdir(parents=True, exist_ok=True)
+    config.specgraph_runs_dir.mkdir(parents=True, exist_ok=True)
     config.runtime_dir.mkdir(parents=True, exist_ok=True)
     password_path: Path | None = None
     ready = False
@@ -472,7 +492,7 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
             "--specgraph-dir",
             str(config.specgraph_dir),
             "--runs-dir",
-            str(config.specgraph_dir / "runs"),
+            str(config.specgraph_runs_dir),
             "--specspace-state-dir",
             str(config.state_dir),
             "--platform-dir",
@@ -489,6 +509,8 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
         npm = shutil.which("npm")
         if npm is None:
             raise platform_cli.PlatformError("npm is unavailable after readiness preflight")
+        ui_environment = os.environ.copy()
+        ui_environment["SPECSPACE_API_PORT"] = str(config.api_port)
         ui_command = [
             npm,
             "run",
@@ -515,7 +537,7 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
                 process_id="ui",
                 command=ui_command,
                 cwd=config.specspace_dir / "graphspace",
-                env=os.environ.copy(),
+                env=ui_environment,
                 expected_command_tokens=("npm", "run", "dev", str(config.ui_port)),
                 log_path=config.runtime_dir / "logs" / "graphspace.log",
             )
@@ -539,6 +561,7 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
                 "errors": [f"inspect logs under {config.runtime_dir / 'logs'}"],
                 "ui_url": config.ui_url,
                 "state_dir": str(config.state_dir),
+                "specgraph_runs_dir": str(config.specgraph_runs_dir),
             },
             output_format=output_format,
         )
@@ -548,6 +571,7 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
             "status": "running",
             "ui_url": config.ui_url,
             "state_dir": str(config.state_dir),
+            "specgraph_runs_dir": str(config.specgraph_runs_dir),
         },
         output_format=output_format,
     )
@@ -575,6 +599,7 @@ def control(config: MacProductConfig, *, command: str, output_format: str) -> in
             "errors": errors,
             "ui_url": config.ui_url,
             "state_dir": str(config.state_dir),
+            "specgraph_runs_dir": str(config.specgraph_runs_dir),
         },
         output_format=output_format,
     )
