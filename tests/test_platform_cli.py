@@ -3087,8 +3087,10 @@ real-idea-intake-from-entry-request:
                     "authority_boundary": {
                         "executes_specgraph_make_target": True,
                         "executes_git_commands": False,
+                        "creates_git_commits": False,
                         "opens_pull_requests": False,
                         "merges_pull_requests": False,
+                        "publishes_read_models": False,
                         "writes_ontology_packages": authority_expanded,
                         "accepts_ontology_terms": False,
                         "mutates_canonical_specs": False,
@@ -6332,6 +6334,75 @@ workspaces:
             )
             self.assertFalse(payload["authority_boundary"]["executes_specgraph_make_target"])
 
+    def test_continuation_rejects_incomplete_or_expanded_intake_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            report_path = Path(tmp_dir) / "intake.json"
+            self.write_real_idea_entry_intake_execution_report(report_path)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            del report["authority_boundary"]["creates_git_commits"]
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+
+            _binding, missing_diagnostics = (
+                platform_module.real_idea_answer_continuation_intake_execution_binding(
+                    report_path=report_path,
+                    selected_workspace_id="pantry-rotation",
+                )
+            )
+            report["authority_boundary"]["creates_git_commits"] = False
+            report["authority_boundary"]["publishes_read_models"] = True
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            _binding, expanded_diagnostics = (
+                platform_module.real_idea_answer_continuation_intake_execution_binding(
+                    report_path=report_path,
+                    selected_workspace_id="pantry-rotation",
+                )
+            )
+
+        self.assertIn(
+            "intake_execution.authority_boundary.creates_git_commits",
+            {diagnostic.subject for diagnostic in missing_diagnostics},
+        )
+        self.assertIn(
+            "intake_execution.authority_boundary.publishes_read_models",
+            {diagnostic.subject for diagnostic in expanded_diagnostics},
+        )
+
+    def test_continuation_execute_requested_rejects_missing_request_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            specgraph_dir = root / "SpecGraph"
+            specgraph_dir.mkdir()
+            execution_request = (
+                root
+                / "specspace-state"
+                / "real_idea_answer_continuation_execution_requests.json"
+            )
+            self.write_real_idea_answer_continuation_execution_request_state(
+                execution_request
+            )
+            state = json.loads(execution_request.read_text(encoding="utf-8"))
+            state["requests"][0].pop("request_id")
+            execution_request.write_text(json.dumps(state), encoding="utf-8")
+
+            result = self.run_cli(
+                "product-real-idea-continuation",
+                "execute-requested",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--execution-request",
+                str(execution_request),
+                "--no-write-report",
+                "--format",
+                "json",
+            )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertIn(
+            "real_idea_answer_continuation_execution_request_id_invalid",
+            {diagnostic["code"] for diagnostic in payload["diagnostics"]},
+        )
+
     def test_product_real_idea_continuation_execute_requested_rejects_escaped_state_ref(
         self,
     ) -> None:
@@ -6909,6 +6980,8 @@ workspaces:
                 codes,
             )
             self.assertFalse(payload["authority_boundary"]["executes_specgraph_make_target"])
+            self.assertIs(payload["authority_boundary"]["creates_git_commits"], False)
+            self.assertIs(payload["authority_boundary"]["publishes_read_models"], False)
 
     def test_product_real_idea_intake_execute_requested_rejects_truthy_authority_value(
         self,

@@ -7394,6 +7394,19 @@ def real_idea_answer_continuation_execution_request_selection(
         return None, diagnostics
 
     request = candidates[0]
+    request_id = request.get("request_id")
+    if not isinstance(request_id, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,180}",
+        request_id,
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_answer_continuation_execution_request_id_invalid",
+                subject="execution_request.requests[].request_id",
+                message="execution request must include a safe request id",
+            )
+        )
     workspace_id = request.get("workspace_id")
     if not isinstance(workspace_id, str) or not PRODUCT_WORKSPACE_ID_RE.fullmatch(workspace_id):
         diagnostics.append(
@@ -7515,14 +7528,16 @@ def real_idea_answer_continuation_intake_execution_binding(
     boundary = nested_mapping(report, "authority_boundary")
     for key in (
         "executes_git_commands",
+        "creates_git_commits",
         "opens_pull_requests",
         "merges_pull_requests",
+        "publishes_read_models",
         "writes_ontology_packages",
         "accepts_ontology_terms",
         "mutates_canonical_specs",
         "publishes_private_artifacts",
     ):
-        if boundary.get(key) is True:
+        if boundary.get(key) is not False:
             diagnostics.append(
                 Diagnostic(
                     level="ERROR",
@@ -9307,8 +9322,10 @@ def real_idea_entry_intake_execute_requested(args: argparse.Namespace) -> int:
             "authority_boundary": {
                 "executes_specgraph_make_target": False,
                 "executes_git_commands": False,
+                "creates_git_commits": False,
                 "opens_pull_requests": False,
                 "merges_pull_requests": False,
+                "publishes_read_models": False,
                 "writes_ontology_packages": False,
                 "accepts_ontology_terms": False,
                 "mutates_canonical_specs": False,
