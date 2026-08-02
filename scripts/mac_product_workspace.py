@@ -541,6 +541,14 @@ def _all_manifest_processes_owned(config: MacProductConfig) -> bool:
     )
 
 
+def _manifest_process_ownership(config: MacProductConfig) -> tuple[dict[str, bool], bool]:
+    processes = _load_process_manifest(config)
+    ownership = {
+        process.process_id: _process_is_owned(process) for process in processes
+    }
+    return ownership, _manifest_configuration_matches(config)
+
+
 def _stop_owned_processes(config: MacProductConfig) -> tuple[bool, list[str]]:
     processes = _load_process_manifest(config)
     errors: list[str] = []
@@ -907,16 +915,33 @@ def control(config: MacProductConfig, *, command: str, output_format: str) -> in
     ui_healthy = _service_healthy(config.ui_url)
     healthy = backend_healthy and ui_healthy
     any_live = backend_healthy or ui_healthy
-    owned = _all_manifest_processes_owned(config)
+    process_ownership, configuration_matches = _manifest_process_ownership(config)
+    backend_owned = process_ownership.get("backend", False)
+    ui_owned = process_ownership.get("ui", False)
+    complete_owned_profile = (
+        set(process_ownership) == {"backend", "ui"}
+        and backend_owned
+        and ui_owned
+        and configuration_matches
+    )
+    foreign_listener = (
+        (backend_healthy and not backend_owned)
+        or (ui_healthy and not ui_owned)
+    )
     expected_healthy = command == "status"
-    ok = stopped and (healthy and owned if expected_healthy else not any_live)
-    status = "running" if healthy and owned else "stopped"
-    if any_live and not healthy and owned:
-        status = "partial_profile"
-        errors.append("only one profile service is reachable")
-    elif any_live and not owned:
+    ok = stopped and (
+        healthy and complete_owned_profile if expected_healthy else not any_live
+    )
+    status = "running" if healthy and complete_owned_profile else "stopped"
+    if process_ownership and not configuration_matches:
+        status = "profile_configuration_mismatch"
+        errors.append("runtime manifest does not match the requested profile configuration")
+    elif foreign_listener:
         status = "unowned_services_on_profile_ports"
         errors.append("healthy services are not owned by this runtime")
+    elif any_live and not healthy and (backend_owned or ui_owned):
+        status = "partial_profile"
+        errors.append("only one profile service is reachable")
     return _emit(
         {
             "ok": ok,
@@ -972,7 +997,7 @@ def _e2e_config(config: MacProductConfig) -> tuple[MacProductConfig, Path]:
     return (
         replace(
             config,
-            specgraph_runs_dir=config.specgraph_runs_dir,
+            specgraph_runs_dir=profile_dir / "specgraph-runs",
             state_dir=profile_dir / "state",
             product_workspace_root_dir=profile_dir / "workspaces",
             product_workspace_catalog=profile_dir / "workspaces.local.yaml",
