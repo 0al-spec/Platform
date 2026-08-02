@@ -1108,8 +1108,11 @@ def _create_e2e_specgraph_worktree(repository: Path, worktree: Path) -> None:
         )
 
 
-def _archive_e2e_specgraph_runs(worktree: Path, destination: Path) -> None:
-    source = worktree / "runs"
+def _archive_e2e_specgraph_workspace(
+    worktree: Path,
+    destination: Path,
+) -> None:
+    source = worktree / "runs" / MAC_RESTART_E2E_WORKSPACE_ID
     if not source.exists():
         return
     if source.is_symlink() or not source.is_dir():
@@ -1118,6 +1121,7 @@ def _archive_e2e_specgraph_runs(worktree: Path, destination: Path) -> None:
         )
     if destination.exists() or destination.is_symlink():
         _remove_e2e_tree(destination, parent=destination.parent)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     source.replace(destination)
 
 
@@ -1206,7 +1210,12 @@ def _e2e_config(config: MacProductConfig) -> tuple[MacProductConfig, Path]:
 def run_restart_e2e(config: MacProductConfig, *, output_format: str) -> int:
     e2e_config, artifact_dir = _e2e_config(config)
     graphspace_dir = e2e_config.specspace_dir / "graphspace"
-    archived_runs_dir = artifact_dir / "profile" / "specgraph-runs"
+    archived_workspace_dir = (
+        artifact_dir
+        / "profile"
+        / "specgraph-runs"
+        / MAC_RESTART_E2E_WORKSPACE_ID
+    )
     _recover_stale_e2e_worktree(
         config,
         e2e_config,
@@ -1294,9 +1303,9 @@ def run_restart_e2e(config: MacProductConfig, *, output_format: str) -> int:
             )
         if not start_attempted or stop_result == 0:
             try:
-                _archive_e2e_specgraph_runs(
+                _archive_e2e_specgraph_workspace(
                     e2e_config.specgraph_dir,
-                    archived_runs_dir,
+                    archived_workspace_dir,
                 )
             finally:
                 _remove_e2e_specgraph_worktree(
