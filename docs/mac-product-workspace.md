@@ -63,6 +63,19 @@ is stored outside the checkout at:
 ~/Library/Application Support/0AL/SpecSpace/state
 ```
 
+New product workspaces and their Platform catalog also live outside every Git
+checkout:
+
+```text
+~/Library/Application Support/0AL/SpecSpace/workspaces/
+~/Library/Application Support/0AL/SpecSpace/workspaces.local.yaml
+```
+
+The profile creates an empty local catalog on first start. SpecSpace uses these
+explicit roots when it converts a UI workspace-creation request into the
+report-only Platform initialization plan and request. Route slugs are never
+treated as filesystem roots.
+
 SpecGraph artifacts default to the sibling checkout's `runs` directory. Tests
 and isolated operator profiles should override it rather than sharing demo or
 user artifacts:
@@ -95,4 +108,6 @@ is not written to logs or tracked configuration.
 
 Machine-specific paths can be overridden through `ORG_ROOT`, `PLATFORM_DIR`,
 `SPECGRAPH_DIR`, `SPECGRAPH_RUNS_DIR`, `SPECSPACE_DIR`, `DIALOG_DIR`,
-`SPECSPACE_STATE_DIR`, and `SPECSPACE_MAC_PRODUCT_RUNTIME_DIR`.
+`SPECSPACE_STATE_DIR`, `SPECSPACE_PRODUCT_WORKSPACE_ROOT_DIR`,
+`SPECSPACE_PRODUCT_WORKSPACE_CATALOG`, and
+`SPECSPACE_MAC_PRODUCT_RUNTIME_DIR`.

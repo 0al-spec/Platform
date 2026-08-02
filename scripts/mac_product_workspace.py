@@ -38,6 +38,8 @@ class MacProductConfig:
     specspace_dir: Path
     dialog_dir: Path
     state_dir: Path
+    product_workspace_root_dir: Path
+    product_workspace_catalog: Path
     runtime_dir: Path
     api_port: int
     ui_port: int
@@ -96,6 +98,24 @@ def config_from_environment(args: argparse.Namespace) -> MacProductConfig:
             / "0AL"
             / "SpecSpace"
             / "state",
+        ),
+        product_workspace_root_dir=_path_from_env(
+            "SPECSPACE_PRODUCT_WORKSPACE_ROOT_DIR",
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "0AL"
+            / "SpecSpace"
+            / "workspaces",
+        ),
+        product_workspace_catalog=_path_from_env(
+            "SPECSPACE_PRODUCT_WORKSPACE_CATALOG",
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "0AL"
+            / "SpecSpace"
+            / "workspaces.local.yaml",
         ),
         runtime_dir=_path_from_env(
             "SPECSPACE_MAC_PRODUCT_RUNTIME_DIR",
@@ -169,6 +189,18 @@ def readiness_checks(config: MacProductConfig) -> list[ReadinessCheck]:
             ancestor = ancestor.parent
         runs_parent_ready = ancestor.is_dir() and os.access(ancestor, os.W_OK)
     add("specgraph_runs_parent_writable", runs_parent_ready, str(runs_parent))
+    for check_id, path in (
+        ("product_workspace_root_parent_writable", config.product_workspace_root_dir),
+        ("product_workspace_catalog_parent_writable", config.product_workspace_catalog),
+    ):
+        ancestor = path.parent
+        while not ancestor.exists() and ancestor != ancestor.parent:
+            ancestor = ancestor.parent
+        add(
+            check_id,
+            ancestor.is_dir() and os.access(ancestor, os.W_OK),
+            str(path.parent),
+        )
     return checks
 
 
@@ -189,6 +221,10 @@ def _emit(payload: dict[str, object], *, output_format: str) -> int:
             print(f"state: {payload['state_dir']}")
         if payload.get("specgraph_runs_dir"):
             print(f"runs: {payload['specgraph_runs_dir']}")
+        if payload.get("product_workspace_root_dir"):
+            print(f"workspaces: {payload['product_workspace_root_dir']}")
+        if payload.get("product_workspace_catalog"):
+            print(f"catalog: {payload['product_workspace_catalog']}")
     return 0 if payload.get("ok") is True else 1
 
 
@@ -205,6 +241,8 @@ def doctor(config: MacProductConfig, *, output_format: str) -> int:
             "ui_url": config.ui_url,
             "state_dir": str(config.state_dir),
             "specgraph_runs_dir": str(config.specgraph_runs_dir),
+            "product_workspace_root_dir": str(config.product_workspace_root_dir),
+            "product_workspace_catalog": str(config.product_workspace_catalog),
             "authority_boundary": {
                 "browser_executes_shell": False,
                 "specspace_executes_allowlisted_platform_operations": True,
@@ -222,6 +260,12 @@ def _runtime_environment(config: MacProductConfig) -> dict[str, str]:
         {
             "SPECSPACE_STATE_DIR": str(config.state_dir),
             "SPECGRAPH_RUNS_DIR": str(config.specgraph_runs_dir),
+            "SPECSPACE_PRODUCT_WORKSPACE_ROOT_DIR": str(
+                config.product_workspace_root_dir
+            ),
+            "SPECSPACE_PRODUCT_WORKSPACE_CATALOG": str(
+                config.product_workspace_catalog
+            ),
             "SPECSPACE_PLATFORM_DIR": str(config.platform_dir),
             "SPECSPACE_PLATFORM_EXECUTION_ENABLED": "true",
             "SPECSPACE_HOSTED_MANAGED_EXECUTION_ENABLED": "false",
@@ -230,6 +274,40 @@ def _runtime_environment(config: MacProductConfig) -> dict[str, str]:
     env.pop("SPECSPACE_OPERATOR_AUTH_PASSWORD", None)
     env.pop("SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN", None)
     return env
+
+
+def _ensure_local_workspace_catalog(config: MacProductConfig) -> None:
+    catalog = config.product_workspace_catalog
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    if catalog.exists():
+        if catalog.is_symlink() or not catalog.is_file():
+            raise platform_cli.PlatformError(
+                f"product workspace catalog is not a regular file: {catalog}"
+            )
+        return
+    content = (
+        "schema_version: 1\n"
+        "artifact_kind: platform_workspace_catalog\n"
+        f"organization_root: {json.dumps(str(config.product_workspace_root_dir))}\n"
+        "workspaces: []\n"
+        "registries: []\n"
+    )
+    try:
+        descriptor = os.open(
+            catalog,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+    except FileExistsError:
+        if catalog.is_symlink() or not catalog.is_file():
+            raise platform_cli.PlatformError(
+                f"product workspace catalog is not a regular file: {catalog}"
+            )
+        return
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def _service_healthy(url: str) -> bool:
@@ -431,6 +509,8 @@ def _already_running_payload(config: MacProductConfig) -> dict[str, object] | No
         "ui_url": config.ui_url,
         "state_dir": str(config.state_dir),
         "specgraph_runs_dir": str(config.specgraph_runs_dir),
+        "product_workspace_root_dir": str(config.product_workspace_root_dir),
+        "product_workspace_catalog": str(config.product_workspace_catalog),
     }
 
 
@@ -450,6 +530,12 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
                     "ui_url": config.ui_url,
                     "state_dir": str(config.state_dir),
                     "specgraph_runs_dir": str(config.specgraph_runs_dir),
+                    "product_workspace_root_dir": str(
+                        config.product_workspace_root_dir
+                    ),
+                    "product_workspace_catalog": str(
+                        config.product_workspace_catalog
+                    ),
                 },
                 output_format=output_format,
             )
@@ -464,6 +550,8 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
     )
     config.state_dir.mkdir(parents=True, exist_ok=True)
     config.specgraph_runs_dir.mkdir(parents=True, exist_ok=True)
+    config.product_workspace_root_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_local_workspace_catalog(config)
     config.runtime_dir.mkdir(parents=True, exist_ok=True)
     password_path: Path | None = None
     ready = False
@@ -497,6 +585,10 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
             str(config.state_dir),
             "--platform-dir",
             str(config.platform_dir),
+            "--product-workspace-root-dir",
+            str(config.product_workspace_root_dir),
+            "--product-workspace-catalog",
+            str(config.product_workspace_catalog),
             "--enable-platform-execution",
             "--enable-operator-auth",
             "--operator-auth-username",
@@ -562,6 +654,8 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
                 "ui_url": config.ui_url,
                 "state_dir": str(config.state_dir),
                 "specgraph_runs_dir": str(config.specgraph_runs_dir),
+                "product_workspace_root_dir": str(config.product_workspace_root_dir),
+                "product_workspace_catalog": str(config.product_workspace_catalog),
             },
             output_format=output_format,
         )
@@ -572,6 +666,8 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
             "ui_url": config.ui_url,
             "state_dir": str(config.state_dir),
             "specgraph_runs_dir": str(config.specgraph_runs_dir),
+            "product_workspace_root_dir": str(config.product_workspace_root_dir),
+            "product_workspace_catalog": str(config.product_workspace_catalog),
         },
         output_format=output_format,
     )
@@ -600,6 +696,8 @@ def control(config: MacProductConfig, *, command: str, output_format: str) -> in
             "ui_url": config.ui_url,
             "state_dir": str(config.state_dir),
             "specgraph_runs_dir": str(config.specgraph_runs_dir),
+            "product_workspace_root_dir": str(config.product_workspace_root_dir),
+            "product_workspace_catalog": str(config.product_workspace_catalog),
         },
         output_format=output_format,
     )
