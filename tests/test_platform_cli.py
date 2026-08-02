@@ -6691,8 +6691,22 @@ workspaces:
             self.assertTrue(payload["output_artifacts"]["entry_intake_report"]["ready"])
             self.assertTrue(payload["output_artifacts"]["raw_input"]["present"])
             self.assertTrue(payload["output_artifacts"]["raw_input"]["local_only"])
-            self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
-            self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+            for authority_flag in (
+                "executes_git_commands",
+                "creates_git_commits",
+                "opens_pull_requests",
+                "merges_pull_requests",
+                "publishes_read_models",
+                "writes_ontology_packages",
+                "accepts_ontology_terms",
+                "mutates_canonical_specs",
+                "publishes_private_artifacts",
+            ):
+                self.assertIs(
+                    payload["authority_boundary"][authority_flag],
+                    False,
+                    authority_flag,
+                )
 
     def test_product_real_idea_intake_binds_initialized_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
