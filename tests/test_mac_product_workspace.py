@@ -2,6 +2,7 @@ import argparse
 from dataclasses import replace
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -119,6 +120,71 @@ class MacProductWorkspaceTests(unittest.TestCase):
                         operator_password="secret",
                     )
                 )
+
+    @mock.patch.object(mac_product_workspace, "_service_healthy", return_value=True)
+    @mock.patch.object(mac_product_workspace, "_managed_profile_ready", return_value=False)
+    def test_already_running_requires_authenticated_managed_readiness(
+        self,
+        _managed_ready: mock.Mock,
+        _service_healthy: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = mac_product_workspace._already_running_payload(
+                self._config(Path(tmp)),
+                operator_password="secret",
+            )
+
+        self.assertIsNone(payload)
+
+    @mock.patch.object(mac_product_workspace, "_service_healthy", return_value=True)
+    @mock.patch.object(mac_product_workspace, "_managed_profile_ready", return_value=True)
+    @mock.patch.object(
+        mac_product_workspace,
+        "_load_process_manifest",
+        return_value=[
+            mac_product_workspace.OwnedProcess("backend", 1, (), "backend.log"),
+            mac_product_workspace.OwnedProcess("ui", 2, (), "ui.log"),
+        ],
+    )
+    @mock.patch.object(mac_product_workspace, "_process_is_owned", return_value=True)
+    @mock.patch.object(
+        mac_product_workspace,
+        "_manifest_configuration_matches",
+        return_value=False,
+    )
+    def test_already_running_reports_configuration_mismatch(
+        self,
+        _configuration_matches: mock.Mock,
+        _process_is_owned: mock.Mock,
+        _load_manifest: mock.Mock,
+        _managed_ready: mock.Mock,
+        _service_healthy: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = mac_product_workspace._already_running_payload(
+                self._config(Path(tmp)),
+                operator_password="secret",
+            )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["status"], "profile_configuration_mismatch")
+
+    @mock.patch.object(
+        mac_product_workspace.subprocess,
+        "run",
+        side_effect=subprocess.TimeoutExpired("workspace doctor", 10),
+    )
+    def test_workspace_catalog_validation_times_out_fail_closed(
+        self,
+        _run: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "workspaces.local.yaml"
+            catalog.write_text("workspaces: []\n", encoding="utf-8")
+
+            error = mac_product_workspace._workspace_catalog_contract_error(catalog)
+
+        self.assertEqual(error, "workspace catalog validation timed out after 10 seconds")
 
     @mock.patch.object(mac_product_workspace, "readiness_checks")
     @mock.patch.object(mac_product_workspace, "_already_running_payload", return_value=None)

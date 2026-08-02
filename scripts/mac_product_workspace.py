@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_KEYCHAIN_SERVICE = "0AL SpecSpace production smoke"
 DEFAULT_OPERATOR_USERNAME = "operator"
 MAC_RESTART_E2E_WORKSPACE_ID = "mac-specification-marathon"
+WORKSPACE_CATALOG_DOCTOR_TIMEOUT_SECONDS = 10
 CHILD_ENVIRONMENT_KEYS = (
     "HOME",
     "LANG",
@@ -359,23 +360,30 @@ def _ensure_local_workspace_catalog(config: MacProductConfig) -> None:
 def _workspace_catalog_contract_error(catalog: Path) -> str | None:
     if catalog.is_symlink() or not catalog.is_file():
         return f"product workspace catalog is not a regular file: {catalog}"
-    completed = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts" / "platform.py"),
-            "workspace",
-            "doctor",
-            "--catalog",
-            str(catalog),
-            "--format",
-            "json",
-        ],
-        check=False,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "platform.py"),
+                "workspace",
+                "doctor",
+                "--catalog",
+                str(catalog),
+                "--format",
+                "json",
+            ],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=WORKSPACE_CATALOG_DOCTOR_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            "workspace catalog validation timed out after "
+            f"{WORKSPACE_CATALOG_DOCTOR_TIMEOUT_SECONDS} seconds"
+        )
     if completed.returncode == 0:
         return None
     try:
@@ -713,9 +721,14 @@ def _start_process(
     )
 
 
-def _already_running_payload(config: MacProductConfig) -> dict[str, object] | None:
-    healthy = _service_healthy(f"{config.backend_url}/api/v1/health") and _service_healthy(
-        config.ui_url
+def _already_running_payload(
+    config: MacProductConfig,
+    *,
+    operator_password: str,
+) -> dict[str, object] | None:
+    healthy = _service_healthy(config.ui_url) and _managed_profile_ready(
+        config,
+        operator_password=operator_password,
     )
     if not healthy:
         return None
@@ -732,9 +745,12 @@ def _already_running_payload(config: MacProductConfig) -> dict[str, object] | No
         errors.append(
             "running profile launch configuration differs from requested state/runs/workspace paths"
         )
+    status = "already_running" if owned else "unowned_services_on_profile_ports"
+    if process_ownership_valid and not configuration_matches:
+        status = "profile_configuration_mismatch"
     return {
         "ok": owned,
-        "status": "already_running" if owned else "unowned_services_on_profile_ports",
+        "status": status,
         "errors": errors,
         "ui_url": config.ui_url,
         "state_dir": str(config.state_dir),
@@ -745,8 +761,13 @@ def _already_running_payload(config: MacProductConfig) -> dict[str, object] | No
 
 
 def start(config: MacProductConfig, *, output_format: str) -> int:
-    running = _already_running_payload(config)
+    password = platform_cli.specspace_product_smoke_password_from_keychain(
+        service=config.keychain_service,
+        account=config.operator_username,
+    )
+    running = _already_running_payload(config, operator_password=password)
     if running is not None:
+        password = ""
         return _emit(running, output_format=output_format)
 
     if _load_process_manifest(config):
@@ -774,10 +795,6 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
     if not all(check.ok for check in checks):
         return doctor(config, output_format=output_format)
 
-    password = platform_cli.specspace_product_smoke_password_from_keychain(
-        service=config.keychain_service,
-        account=config.operator_username,
-    )
     config.state_dir.mkdir(parents=True, exist_ok=True)
     config.specgraph_runs_dir.mkdir(parents=True, exist_ok=True)
     config.product_workspace_root_dir.mkdir(parents=True, exist_ok=True)
