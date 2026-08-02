@@ -92,10 +92,16 @@ directory passes the writable preflight. It also passes the selected API port
 to the GraphSpace dev server as `SPECSPACE_API_PORT`, allowing isolated test
 profiles to use non-default loopback ports when the consumer supports it.
 
-Runtime logs and the mode-`0600` process ownership manifest are stored under:
+Runtime logs are stored under:
 
 ```text
 ~/Library/Caches/0AL/SpecSpace/mac-product-workspace/logs
+```
+
+The mode-`0600` process ownership and active launch-configuration manifest is:
+
+```text
+~/Library/Caches/0AL/SpecSpace/mac-product-workspace/processes.json
 ```
 
 Platform starts the backend and UI in dedicated process groups and records their

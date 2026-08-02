@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import replace
 import os
 from pathlib import Path
 import tempfile
@@ -84,6 +85,40 @@ class MacProductWorkspaceTests(unittest.TestCase):
         self.assertNotIn("SPECSPACE_E2E_OPERATOR_PASSWORD", env)
         self.assertNotIn("DATABASE_PASSWORD", env)
         self.assertNotIn("GITHUB_TOKEN", env)
+
+    def test_managed_profile_readiness_requires_authenticated_ready_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            health = {
+                "operator_access_control": {
+                    "enabled": True,
+                    "operator_authenticated": True,
+                    "private_state_requires_operator": True,
+                    "managed_operations_require_operator": True,
+                }
+            }
+            with mock.patch.object(
+                mac_product_workspace,
+                "_authenticated_json",
+                side_effect=[health, {"managed_mode_readiness": {"status": "backend_managed_ready"}}],
+            ):
+                self.assertTrue(
+                    mac_product_workspace._managed_profile_ready(
+                        config,
+                        operator_password="secret",
+                    )
+                )
+            with mock.patch.object(
+                mac_product_workspace,
+                "_authenticated_json",
+                side_effect=[health, {"managed_mode_readiness": {"status": "backend_managed_misconfigured"}}],
+            ):
+                self.assertFalse(
+                    mac_product_workspace._managed_profile_ready(
+                        config,
+                        operator_password="secret",
+                    )
+                )
 
     @mock.patch.object(mac_product_workspace, "readiness_checks")
     @mock.patch.object(mac_product_workspace, "_already_running_payload", return_value=None)
@@ -189,6 +224,39 @@ class MacProductWorkspaceTests(unittest.TestCase):
         killpg.assert_not_called()
 
     @mock.patch.object(mac_product_workspace.os, "killpg")
+    @mock.patch.object(mac_product_workspace, "_process_is_owned")
+    @mock.patch.object(
+        mac_product_workspace,
+        "_running_command",
+        return_value="python owned-or-foreign",
+    )
+    @mock.patch.object(mac_product_workspace, "_load_process_manifest")
+    def test_stop_preflights_every_process_before_signaling(
+        self,
+        load_manifest: mock.Mock,
+        _running_command: mock.Mock,
+        process_is_owned: mock.Mock,
+        killpg: mock.Mock,
+    ) -> None:
+        load_manifest.return_value = [
+            mac_product_workspace.OwnedProcess(
+                "backend", 101, ("viewer/server.py",), "/tmp/backend.log"
+            ),
+            mac_product_workspace.OwnedProcess(
+                "ui", 102, ("npm", "run", "dev"), "/tmp/ui.log"
+            ),
+        ]
+        process_is_owned.side_effect = [True, False]
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, errors = mac_product_workspace._stop_owned_processes(
+                self._config(Path(tmp))
+            )
+
+        self.assertFalse(ok)
+        self.assertEqual(len(errors), 1)
+        killpg.assert_not_called()
+
+    @mock.patch.object(mac_product_workspace.os, "killpg")
     @mock.patch.object(mac_product_workspace, "_process_is_zombie", return_value=True)
     @mock.patch.object(mac_product_workspace, "_process_is_owned", return_value=True)
     @mock.patch.object(
@@ -230,7 +298,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
     @mock.patch.object(
         mac_product_workspace,
         "_service_healthy",
-        side_effect=[True, True, False, False, False],
+        side_effect=[True, True, False, False, False, False],
     )
     @mock.patch.object(
         mac_product_workspace,
@@ -253,7 +321,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         stop_owned.assert_called_once_with(config)
-        self.assertEqual(service_healthy.call_count, 5)
+        self.assertEqual(service_healthy.call_count, 6)
         self.assertTrue(emit.call_args.args[0]["ok"])
         self.assertEqual(
             emit.call_args.args[0]["runtime_dir"],
@@ -301,6 +369,94 @@ class MacProductWorkspaceTests(unittest.TestCase):
                 config = mac_product_workspace.config_from_environment(args)
 
         self.assertEqual(config.specgraph_runs_dir, isolated_runs.resolve())
+
+    def test_readiness_rejects_existing_non_directory_runs_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            config.specgraph_runs_dir.parent.mkdir(parents=True, exist_ok=True)
+            config.specgraph_runs_dir.write_text("not a directory", encoding="utf-8")
+            checks = {
+                check.check_id: check
+                for check in mac_product_workspace.readiness_checks(config)
+            }
+
+        self.assertFalse(checks["specgraph_runs_destination_writable"].ok)
+
+    def test_local_empty_workspace_catalog_is_schema_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            mac_product_workspace._ensure_local_workspace_catalog(config)
+
+            self.assertIsNone(
+                mac_product_workspace._workspace_catalog_contract_error(
+                    config.product_workspace_catalog
+                )
+            )
+
+    def test_readiness_rejects_malformed_existing_workspace_catalog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            config.product_workspace_catalog.parent.mkdir(parents=True)
+            config.product_workspace_catalog.write_text("workspaces: [", encoding="utf-8")
+            checks = {
+                check.check_id: check
+                for check in mac_product_workspace.readiness_checks(config)
+            }
+
+        self.assertFalse(checks["product_workspace_catalog_valid"].ok)
+
+    def test_manifest_binds_active_workspace_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            config.runtime_dir.mkdir(parents=True)
+            processes = [
+                mac_product_workspace.OwnedProcess(
+                    "backend", 101, ("viewer/server.py",), "/tmp/backend.log"
+                ),
+                mac_product_workspace.OwnedProcess(
+                    "ui", 102, ("npm",), "/tmp/ui.log"
+                ),
+            ]
+            mac_product_workspace._write_process_manifest(config, processes)
+            changed = replace(
+                config,
+                specgraph_runs_dir=config.specgraph_dir / "other-runs",
+            )
+
+            self.assertTrue(
+                mac_product_workspace._manifest_configuration_matches(config)
+            )
+            self.assertFalse(
+                mac_product_workspace._manifest_configuration_matches(changed)
+            )
+
+    @mock.patch.object(mac_product_workspace, "_emit", return_value=1)
+    @mock.patch.object(
+        mac_product_workspace,
+        "_service_healthy",
+        side_effect=[True, False],
+    )
+    @mock.patch.object(
+        mac_product_workspace,
+        "_all_manifest_processes_owned",
+        return_value=True,
+    )
+    def test_status_reports_partial_profile_as_not_stopped(
+        self,
+        _owned: mock.Mock,
+        _service_healthy: mock.Mock,
+        emit: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mac_product_workspace.control(
+                self._config(Path(tmp)),
+                command="status",
+                output_format="json",
+            )
+
+        payload = emit.call_args.args[0]
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "partial_profile")
 
     def test_workspace_catalog_refuses_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -425,6 +581,50 @@ class MacProductWorkspaceTests(unittest.TestCase):
                 )
 
         self.assertEqual(result, 1)
+
+    def test_e2e_config_preserves_configured_runs_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            isolated_runs = Path(tmp) / "isolated-runs"
+            config = replace(config, specgraph_runs_dir=isolated_runs)
+            e2e_config, _artifact_dir = mac_product_workspace._e2e_config(config)
+
+        self.assertEqual(e2e_config.specgraph_runs_dir, isolated_runs)
+
+    def test_e2e_config_rejects_broad_artifact_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            trusted_root = config.specspace_dir / "graphspace" / "test-results"
+            with mock.patch.dict(
+                os.environ,
+                {"SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(trusted_root)},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(
+                    mac_product_workspace.platform_cli.PlatformError,
+                    "one dedicated child",
+                ):
+                    mac_product_workspace._e2e_config(config)
+
+    def test_e2e_config_rejects_symlinked_artifact_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            trusted_root = config.specspace_dir / "graphspace" / "test-results"
+            trusted_root.mkdir(parents=True)
+            foreign = Path(tmp) / "foreign"
+            foreign.mkdir()
+            artifact_dir = trusted_root / "linked-run"
+            artifact_dir.symlink_to(foreign, target_is_directory=True)
+            with mock.patch.dict(
+                os.environ,
+                {"SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir)},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(
+                    mac_product_workspace.platform_cli.PlatformError,
+                    "symlinked E2E artifact directory",
+                ):
+                    mac_product_workspace._e2e_config(config)
 
     def test_remove_e2e_tree_rejects_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

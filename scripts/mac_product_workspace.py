@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from dataclasses import asdict, dataclass, replace
 import json
 import os
@@ -203,6 +204,14 @@ def readiness_checks(config: MacProductConfig) -> list[ReadinessCheck]:
             ancestor = ancestor.parent
         runs_parent_ready = ancestor.is_dir() and os.access(ancestor, os.W_OK)
     add("specgraph_runs_parent_writable", runs_parent_ready, str(runs_parent))
+    if config.specgraph_runs_dir.exists() or config.specgraph_runs_dir.is_symlink():
+        add(
+            "specgraph_runs_destination_writable",
+            not config.specgraph_runs_dir.is_symlink()
+            and config.specgraph_runs_dir.is_dir()
+            and os.access(config.specgraph_runs_dir, os.W_OK),
+            str(config.specgraph_runs_dir),
+        )
     for check_id, path in (
         ("product_workspace_root_parent_writable", config.product_workspace_root_dir),
         ("product_workspace_catalog_parent_writable", config.product_workspace_catalog),
@@ -214,6 +223,15 @@ def readiness_checks(config: MacProductConfig) -> list[ReadinessCheck]:
             check_id,
             ancestor.is_dir() and os.access(ancestor, os.W_OK),
             str(path.parent),
+        )
+    if config.product_workspace_catalog.exists() or config.product_workspace_catalog.is_symlink():
+        catalog_error = _workspace_catalog_contract_error(
+            config.product_workspace_catalog
+        )
+        add(
+            "product_workspace_catalog_valid",
+            catalog_error is None,
+            catalog_error or str(config.product_workspace_catalog),
         )
     return checks
 
@@ -338,6 +356,39 @@ def _ensure_local_workspace_catalog(config: MacProductConfig) -> None:
         os.fsync(handle.fileno())
 
 
+def _workspace_catalog_contract_error(catalog: Path) -> str | None:
+    if catalog.is_symlink() or not catalog.is_file():
+        return f"product workspace catalog is not a regular file: {catalog}"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "platform.py"),
+            "workspace",
+            "doctor",
+            "--catalog",
+            str(catalog),
+            "--format",
+            "json",
+        ],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode == 0:
+        return None
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return "workspace catalog validation failed"
+    diagnostics = payload.get("diagnostics") if isinstance(payload, dict) else None
+    first = diagnostics[0] if isinstance(diagnostics, list) and diagnostics else None
+    if isinstance(first, dict):
+        return f"{first.get('code')}: {first.get('subject')}: {first.get('message')}"
+    return "workspace catalog validation failed"
+
+
 def _service_healthy(url: str) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=1) as response:
@@ -357,6 +408,7 @@ def _write_process_manifest(
     payload = {
         "artifact_kind": "platform_mac_product_workspace_processes",
         "schema_version": 1,
+        "launch_configuration": _launch_configuration(config),
         "processes": [
             {
                 **asdict(process),
@@ -417,6 +469,31 @@ def _load_process_manifest(config: MacProductConfig) -> list[OwnedProcess]:
     return processes
 
 
+def _launch_configuration(config: MacProductConfig) -> dict[str, object]:
+    return {
+        "backend_url": config.backend_url,
+        "ui_url": config.ui_url,
+        "state_dir": str(config.state_dir),
+        "specgraph_runs_dir": str(config.specgraph_runs_dir),
+        "product_workspace_root_dir": str(config.product_workspace_root_dir),
+        "product_workspace_catalog": str(config.product_workspace_catalog),
+        "operator_username": config.operator_username,
+    }
+
+
+def _manifest_configuration_matches(config: MacProductConfig) -> bool:
+    try:
+        payload = json.loads(
+            _process_manifest_path(config).read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("launch_configuration") == _launch_configuration(config)
+    )
+
+
 def _running_command(pid: int) -> str | None:
     completed = subprocess.run(
         ["/bin/ps", "-p", str(pid), "-o", "command="],
@@ -457,7 +534,11 @@ def _process_is_owned(process: OwnedProcess) -> bool:
 
 def _all_manifest_processes_owned(config: MacProductConfig) -> bool:
     processes = _load_process_manifest(config)
-    return len(processes) == 2 and all(_process_is_owned(process) for process in processes)
+    return (
+        len(processes) == 2
+        and all(_process_is_owned(process) for process in processes)
+        and _manifest_configuration_matches(config)
+    )
 
 
 def _stop_owned_processes(config: MacProductConfig) -> tuple[bool, list[str]]:
@@ -474,6 +555,9 @@ def _stop_owned_processes(config: MacProductConfig) -> tuple[bool, list[str]]:
             )
             continue
         owned.append(process)
+    if errors:
+        return False, errors
+    for process in owned:
         os.killpg(process.pid, signal.SIGTERM)
     deadline = time.monotonic() + 5
     while owned and time.monotonic() < deadline:
@@ -499,11 +583,73 @@ def _stop_owned_processes(config: MacProductConfig) -> tuple[bool, list[str]]:
     return not errors, errors
 
 
-def _wait_for_profile(config: MacProductConfig, *, timeout_seconds: float = 30) -> bool:
+def _authenticated_json(
+    url: str,
+    *,
+    username: str,
+    password: str,
+) -> dict[str, object] | None:
+    credential = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode(
+        "ascii"
+    )
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Basic {credential}",
+            "Cache-Control": "no-store",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=1) as response:
+            if response.status != 200:
+                return None
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _managed_profile_ready(
+    config: MacProductConfig,
+    *,
+    operator_password: str,
+) -> bool:
+    health = _authenticated_json(
+        f"{config.backend_url}/api/v1/health",
+        username=config.operator_username,
+        password=operator_password,
+    )
+    workspace = _authenticated_json(
+        f"{config.backend_url}/api/v1/idea-to-spec-workspace",
+        username=config.operator_username,
+        password=operator_password,
+    )
+    if health is None or workspace is None:
+        return False
+    access = health.get("operator_access_control")
+    readiness = workspace.get("managed_mode_readiness")
+    return (
+        isinstance(access, dict)
+        and access.get("enabled") is True
+        and access.get("operator_authenticated") is True
+        and access.get("private_state_requires_operator") is True
+        and access.get("managed_operations_require_operator") is True
+        and isinstance(readiness, dict)
+        and readiness.get("status") == "backend_managed_ready"
+    )
+
+
+def _wait_for_profile(
+    config: MacProductConfig,
+    *,
+    operator_password: str,
+    timeout_seconds: float = 30,
+) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        if _service_healthy(f"{config.backend_url}/api/v1/health") and _service_healthy(
-            config.ui_url
+        if _service_healthy(config.ui_url) and _managed_profile_ready(
+            config,
+            operator_password=operator_password,
         ):
             return True
         time.sleep(0.25)
@@ -565,13 +711,23 @@ def _already_running_payload(config: MacProductConfig) -> dict[str, object] | No
     )
     if not healthy:
         return None
-    owned = _all_manifest_processes_owned(config)
+    processes = _load_process_manifest(config)
+    process_ownership_valid = len(processes) == 2 and all(
+        _process_is_owned(process) for process in processes
+    )
+    configuration_matches = _manifest_configuration_matches(config)
+    owned = process_ownership_valid and configuration_matches
+    errors: list[str] = []
+    if not process_ownership_valid:
+        errors.append("profile ports are healthy but their processes are not owned by this runtime")
+    elif not configuration_matches:
+        errors.append(
+            "running profile launch configuration differs from requested state/runs/workspace paths"
+        )
     return {
         "ok": owned,
         "status": "already_running" if owned else "unowned_services_on_profile_ports",
-        "errors": []
-        if owned
-        else ["profile ports are healthy but their processes are not owned by this runtime"],
+        "errors": errors,
         "ui_url": config.ui_url,
         "state_dir": str(config.state_dir),
         "specgraph_runs_dir": str(config.specgraph_runs_dir),
@@ -700,7 +856,7 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
             )
         )
         _write_process_manifest(config, processes)
-        ready = _wait_for_profile(config)
+        ready = _wait_for_profile(config, operator_password=password)
     except Exception:
         _stop_owned_processes(config)
         raise
@@ -747,14 +903,18 @@ def control(config: MacProductConfig, *, command: str, output_format: str) -> in
         if stopped and not _wait_for_profile_stopped(config):
             stopped = False
             errors.append("profile services did not stop before the shutdown deadline")
-    healthy = _service_healthy(f"{config.backend_url}/api/v1/health") and _service_healthy(
-        config.ui_url
-    )
+    backend_healthy = _service_healthy(f"{config.backend_url}/api/v1/health")
+    ui_healthy = _service_healthy(config.ui_url)
+    healthy = backend_healthy and ui_healthy
+    any_live = backend_healthy or ui_healthy
     owned = _all_manifest_processes_owned(config)
     expected_healthy = command == "status"
-    ok = stopped and (healthy and owned if expected_healthy else not healthy)
+    ok = stopped and (healthy and owned if expected_healthy else not any_live)
     status = "running" if healthy and owned else "stopped"
-    if healthy and not owned:
+    if any_live and not healthy and owned:
+        status = "partial_profile"
+        errors.append("only one profile service is reachable")
+    elif any_live and not owned:
         status = "unowned_services_on_profile_ports"
         errors.append("healthy services are not owned by this runtime")
     return _emit(
@@ -791,18 +951,28 @@ def _remove_e2e_tree(path: Path, *, parent: Path) -> None:
 
 
 def _e2e_config(config: MacProductConfig) -> tuple[MacProductConfig, Path]:
-    artifact_dir = _path_from_env(
-        "SPECSPACE_MAC_E2E_ARTIFACT_DIR",
-        config.specspace_dir
-        / "graphspace"
-        / "test-results"
-        / "mac-product-workspace-restart",
+    trusted_root = (config.specspace_dir / "graphspace" / "test-results").resolve()
+    raw_override = os.environ.get("SPECSPACE_MAC_E2E_ARTIFACT_DIR", "").strip()
+    raw_artifact_dir = (
+        Path(raw_override).expanduser()
+        if raw_override
+        else trusted_root / "mac-product-workspace-restart"
     )
+    if raw_artifact_dir.is_symlink():
+        raise platform_cli.PlatformError(
+            f"refusing symlinked E2E artifact directory: {raw_artifact_dir}"
+        )
+    artifact_dir = raw_artifact_dir.resolve()
+    if artifact_dir.parent != trusted_root:
+        raise platform_cli.PlatformError(
+            "SPECSPACE_MAC_E2E_ARTIFACT_DIR must be one dedicated child of "
+            f"{trusted_root}"
+        )
     profile_dir = artifact_dir / "profile"
     return (
         replace(
             config,
-            specgraph_runs_dir=(config.specgraph_dir / "runs").resolve(),
+            specgraph_runs_dir=config.specgraph_runs_dir,
             state_dir=profile_dir / "state",
             product_workspace_root_dir=profile_dir / "workspaces",
             product_workspace_catalog=profile_dir / "workspaces.local.yaml",
