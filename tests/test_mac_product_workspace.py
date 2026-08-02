@@ -438,8 +438,8 @@ class MacProductWorkspaceTests(unittest.TestCase):
     )
     @mock.patch.object(
         mac_product_workspace,
-        "_all_manifest_processes_owned",
-        return_value=True,
+        "_manifest_process_ownership",
+        return_value=({"backend": True, "ui": False}, True),
     )
     def test_status_reports_partial_profile_as_not_stopped(
         self,
@@ -457,6 +457,90 @@ class MacProductWorkspaceTests(unittest.TestCase):
         payload = emit.call_args.args[0]
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], "partial_profile")
+
+    @mock.patch.object(mac_product_workspace, "_emit", return_value=1)
+    @mock.patch.object(
+        mac_product_workspace,
+        "_service_healthy",
+        side_effect=[False, True],
+    )
+    @mock.patch.object(
+        mac_product_workspace,
+        "_manifest_process_ownership",
+        return_value=({"backend": False, "ui": True}, True),
+    )
+    def test_status_reports_ui_only_profile_as_partial(
+        self,
+        _ownership: mock.Mock,
+        _service_healthy: mock.Mock,
+        emit: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mac_product_workspace.control(
+                self._config(Path(tmp)),
+                command="status",
+                output_format="json",
+            )
+
+        payload = emit.call_args.args[0]
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "partial_profile")
+
+    @mock.patch.object(mac_product_workspace, "_emit", return_value=1)
+    @mock.patch.object(
+        mac_product_workspace,
+        "_service_healthy",
+        side_effect=[True, True],
+    )
+    @mock.patch.object(
+        mac_product_workspace,
+        "_manifest_process_ownership",
+        return_value=({"backend": True, "ui": True}, False),
+    )
+    def test_status_reports_profile_configuration_mismatch(
+        self,
+        _ownership: mock.Mock,
+        _service_healthy: mock.Mock,
+        emit: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mac_product_workspace.control(
+                self._config(Path(tmp)),
+                command="status",
+                output_format="json",
+            )
+
+        payload = emit.call_args.args[0]
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "profile_configuration_mismatch")
+
+    @mock.patch.object(mac_product_workspace, "_emit", return_value=1)
+    @mock.patch.object(
+        mac_product_workspace,
+        "_service_healthy",
+        side_effect=[True, False],
+    )
+    @mock.patch.object(
+        mac_product_workspace,
+        "_manifest_process_ownership",
+        return_value=({}, True),
+    )
+    def test_status_reports_foreign_listener_as_unowned(
+        self,
+        _ownership: mock.Mock,
+        _service_healthy: mock.Mock,
+        emit: mock.Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mac_product_workspace.control(
+                self._config(Path(tmp)),
+                command="status",
+                output_format="json",
+            )
+
+        payload = emit.call_args.args[0]
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "unowned_services_on_profile_ports")
 
     def test_workspace_catalog_refuses_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -582,14 +666,18 @@ class MacProductWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
 
-    def test_e2e_config_preserves_configured_runs_directory(self) -> None:
+    def test_e2e_config_isolates_configured_runs_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(Path(tmp))
-            isolated_runs = Path(tmp) / "isolated-runs"
-            config = replace(config, specgraph_runs_dir=isolated_runs)
-            e2e_config, _artifact_dir = mac_product_workspace._e2e_config(config)
+            persistent_runs = config.specgraph_dir / "runs"
+            config = replace(config, specgraph_runs_dir=persistent_runs)
+            e2e_config, artifact_dir = mac_product_workspace._e2e_config(config)
 
-        self.assertEqual(e2e_config.specgraph_runs_dir, isolated_runs)
+        self.assertEqual(
+            e2e_config.specgraph_runs_dir,
+            artifact_dir / "profile" / "specgraph-runs",
+        )
+        self.assertNotEqual(e2e_config.specgraph_runs_dir, persistent_runs)
 
     def test_e2e_config_rejects_broad_artifact_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
