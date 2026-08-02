@@ -33,6 +33,8 @@ class MacProductWorkspaceTests(unittest.TestCase):
             specspace_dir=specspace_dir,
             dialog_dir=dialog_dir,
             state_dir=root / "persistent" / "state",
+            product_workspace_root_dir=root / "persistent" / "workspaces",
+            product_workspace_catalog=root / "persistent" / "workspaces.local.yaml",
             runtime_dir=root / "runtime",
             api_port=8001,
             ui_port=5175,
@@ -50,6 +52,14 @@ class MacProductWorkspaceTests(unittest.TestCase):
         self.assertEqual(env["SPECSPACE_PLATFORM_DIR"], str(config.platform_dir))
         self.assertEqual(env["SPECSPACE_STATE_DIR"], str(config.state_dir))
         self.assertEqual(env["SPECGRAPH_RUNS_DIR"], str(config.specgraph_runs_dir))
+        self.assertEqual(
+            env["SPECSPACE_PRODUCT_WORKSPACE_ROOT_DIR"],
+            str(config.product_workspace_root_dir),
+        )
+        self.assertEqual(
+            env["SPECSPACE_PRODUCT_WORKSPACE_CATALOG"],
+            str(config.product_workspace_catalog),
+        )
         self.assertNotIn("SPECSPACE_OPERATOR_AUTH_PASSWORD", env)
         self.assertNotIn("SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN", env)
 
@@ -92,6 +102,8 @@ class MacProductWorkspaceTests(unittest.TestCase):
             with mock.patch.object(mac_product_workspace, "_emit", return_value=0):
                 result = mac_product_workspace.start(config, output_format="json")
             password_files = list(config.runtime_dir.glob("operator-auth-*"))
+            catalog_exists = config.product_workspace_catalog.is_file()
+            catalog_text = config.product_workspace_catalog.read_text(encoding="utf-8")
 
         self.assertEqual(result, 0)
         password_from_keychain.assert_called_once_with(
@@ -107,6 +119,21 @@ class MacProductWorkspaceTests(unittest.TestCase):
         self.assertEqual(
             backend_command[backend_command.index("--runs-dir") + 1],
             str(config.specgraph_runs_dir),
+        )
+        self.assertEqual(
+            backend_command[
+                backend_command.index("--product-workspace-root-dir") + 1
+            ],
+            str(config.product_workspace_root_dir),
+        )
+        self.assertEqual(
+            backend_command[backend_command.index("--product-workspace-catalog") + 1],
+            str(config.product_workspace_catalog),
+        )
+        self.assertTrue(catalog_exists)
+        self.assertIn(
+            "artifact_kind: platform_workspace_catalog",
+            catalog_text,
         )
         self.assertEqual(
             start_process.call_args_list[1].kwargs["env"]["SPECSPACE_API_PORT"],
@@ -154,6 +181,14 @@ class MacProductWorkspaceTests(unittest.TestCase):
         self.assertEqual(config.specgraph_runs_dir, config.specgraph_dir / "runs")
         self.assertEqual(config.specspace_dir, mac_product_workspace.REPO_ROOT.parent / "SpecSpace")
         self.assertIn("Application Support/0AL/SpecSpace/state", str(config.state_dir))
+        self.assertIn(
+            "Application Support/0AL/SpecSpace/workspaces",
+            str(config.product_workspace_root_dir),
+        )
+        self.assertIn(
+            "Application Support/0AL/SpecSpace/workspaces.local.yaml",
+            str(config.product_workspace_catalog),
+        )
 
     def test_configuration_accepts_isolated_specgraph_runs_directory(self) -> None:
         args = argparse.Namespace(
@@ -172,6 +207,21 @@ class MacProductWorkspaceTests(unittest.TestCase):
                 config = mac_product_workspace.config_from_environment(args)
 
         self.assertEqual(config.specgraph_runs_dir, isolated_runs.resolve())
+
+    def test_workspace_catalog_refuses_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            target = Path(tmp) / "foreign.yaml"
+            target.write_text("foreign\n", encoding="utf-8")
+            config.product_workspace_catalog.parent.mkdir(parents=True, exist_ok=True)
+            config.product_workspace_catalog.symlink_to(target)
+
+            with self.assertRaisesRegex(
+                mac_product_workspace.platform_cli.PlatformError,
+                "not a regular file",
+            ):
+                mac_product_workspace._ensure_local_workspace_catalog(config)
+            self.assertEqual(target.read_text(encoding="utf-8"), "foreign\n")
 
 
 if __name__ == "__main__":
