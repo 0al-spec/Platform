@@ -653,6 +653,14 @@ class MacProductWorkspaceTests(unittest.TestCase):
                 os.environ,
                 {"SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir)},
                 clear=True,
+            ), mock.patch.object(
+                mac_product_workspace, "_create_e2e_specgraph_worktree"
+            ), mock.patch.object(
+                mac_product_workspace, "_archive_e2e_specgraph_runs"
+            ), mock.patch.object(
+                mac_product_workspace, "_remove_e2e_specgraph_worktree"
+            ), mock.patch.object(
+                mac_product_workspace, "_recover_stale_e2e_worktree"
             ):
                 result = mac_product_workspace.run_restart_e2e(
                     config,
@@ -724,13 +732,65 @@ class MacProductWorkspaceTests(unittest.TestCase):
                 os.environ,
                 {"SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir)},
                 clear=True,
+            ), mock.patch.object(
+                mac_product_workspace, "_create_e2e_specgraph_worktree"
+            ), mock.patch.object(
+                mac_product_workspace, "_archive_e2e_specgraph_runs"
+            ) as archive_runs, mock.patch.object(
+                mac_product_workspace, "_remove_e2e_specgraph_worktree"
+            ) as remove_worktree, mock.patch.object(
+                mac_product_workspace, "_recover_stale_e2e_worktree"
             ):
                 result = mac_product_workspace.run_restart_e2e(
                     config,
                     output_format="json",
                 )
+            marker_exists = (
+                artifact_dir / "profile" / "recovery-required.json"
+            ).is_file()
 
         self.assertEqual(result, 1)
+        archive_runs.assert_not_called()
+        remove_worktree.assert_not_called()
+        self.assertTrue(marker_exists)
+
+    def test_restart_e2e_removes_worktree_when_keychain_lookup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._config(root)
+            artifact_dir = root / "SpecSpace" / "graphspace" / "test-results" / "e2e"
+            with mock.patch.dict(
+                os.environ,
+                {"SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir)},
+                clear=True,
+            ), mock.patch.object(
+                mac_product_workspace, "_create_e2e_specgraph_worktree"
+            ) as create_worktree, mock.patch.object(
+                mac_product_workspace, "_archive_e2e_specgraph_runs"
+            ) as archive_runs, mock.patch.object(
+                mac_product_workspace, "_remove_e2e_specgraph_worktree"
+            ) as remove_worktree, mock.patch.object(
+                mac_product_workspace, "_recover_stale_e2e_worktree"
+            ), mock.patch.object(
+                mac_product_workspace.platform_cli,
+                "specspace_product_smoke_password_from_keychain",
+                side_effect=mac_product_workspace.platform_cli.PlatformError(
+                    "keychain unavailable"
+                ),
+            ), mock.patch.object(mac_product_workspace, "control") as control:
+                with self.assertRaisesRegex(
+                    mac_product_workspace.platform_cli.PlatformError,
+                    "keychain unavailable",
+                ):
+                    mac_product_workspace.run_restart_e2e(
+                        config,
+                        output_format="json",
+                    )
+
+        create_worktree.assert_called_once()
+        archive_runs.assert_called_once()
+        remove_worktree.assert_called_once()
+        control.assert_not_called()
 
     def test_e2e_config_isolates_configured_runs_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -741,9 +801,149 @@ class MacProductWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(
             e2e_config.specgraph_runs_dir,
-            artifact_dir / "profile" / "specgraph-runs",
+            artifact_dir / "profile" / "specgraph-checkout" / "runs",
+        )
+        self.assertEqual(
+            e2e_config.specgraph_dir,
+            artifact_dir / "profile" / "specgraph-checkout",
         )
         self.assertNotEqual(e2e_config.specgraph_runs_dir, persistent_runs)
+
+    def test_stale_e2e_worktree_is_preserved_when_runtime_stop_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp))
+            e2e_config, _artifact_dir = mac_product_workspace._e2e_config(config)
+            with mock.patch.object(
+                mac_product_workspace,
+                "_registered_worktree_paths",
+                return_value={e2e_config.specgraph_dir.resolve()},
+            ), mock.patch.object(
+                mac_product_workspace,
+                "control",
+                return_value=1,
+            ), mock.patch.object(
+                mac_product_workspace,
+                "_remove_e2e_specgraph_worktree",
+            ) as remove_worktree:
+                with self.assertRaisesRegex(
+                    mac_product_workspace.platform_cli.PlatformError,
+                    "preserving its SpecGraph worktree",
+                ):
+                    mac_product_workspace._recover_stale_e2e_worktree(
+                        config,
+                        e2e_config,
+                        output_format="json",
+                    )
+
+        remove_worktree.assert_not_called()
+
+    def test_e2e_specgraph_worktree_is_detached_and_removable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repository = root / "SpecGraph"
+            repository.mkdir()
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            (repository / "Makefile").write_text("all:\n\t@true\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(repository), "add", "Makefile"],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "initial",
+                ],
+                check=True,
+            )
+            worktree = root / "artifacts" / "specgraph-checkout"
+
+            mac_product_workspace._create_e2e_specgraph_worktree(
+                repository,
+                worktree,
+            )
+            registered = mac_product_workspace._registered_worktree_paths(repository)
+            self.assertIn(worktree.resolve(), registered)
+            self.assertTrue((worktree / "Makefile").is_file())
+
+            mac_product_workspace._remove_e2e_specgraph_worktree(
+                repository,
+                worktree,
+            )
+            self.assertFalse(worktree.exists())
+            self.assertNotIn(
+                worktree.resolve(),
+                mac_product_workspace._registered_worktree_paths(repository),
+            )
+
+    def test_e2e_specgraph_worktree_rejects_tracked_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repository = root / "SpecGraph"
+            repository.mkdir()
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            source = repository / "Makefile"
+            source.write_text("all:\n\t@true\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(repository), "add", "Makefile"],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "initial",
+                ],
+                check=True,
+            )
+            source.write_text("all:\n\t@false\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                mac_product_workspace.platform_cli.PlatformError,
+                "clean tracked worktree",
+            ):
+                mac_product_workspace._create_e2e_specgraph_worktree(
+                    repository,
+                    root / "artifacts" / "specgraph-checkout",
+                )
+
+    def test_archive_e2e_specgraph_runs_preserves_generated_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            worktree = root / "profile" / "specgraph-checkout"
+            source = worktree / "runs" / "workspace"
+            source.mkdir(parents=True)
+            (source / "candidate.json").write_text("{}\n", encoding="utf-8")
+            destination = root / "profile" / "specgraph-runs"
+
+            mac_product_workspace._archive_e2e_specgraph_runs(
+                worktree,
+                destination,
+            )
+
+            self.assertFalse((worktree / "runs").exists())
+            self.assertEqual(
+                (destination / "workspace" / "candidate.json").read_text(
+                    encoding="utf-8"
+                ),
+                "{}\n",
+            )
 
     def test_e2e_config_rejects_broad_artifact_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
