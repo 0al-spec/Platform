@@ -1,12 +1,26 @@
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
-.PHONY: python-quality test hosted-managed-contract specspace-state-contract hosted-managed-compose-contract hosted-managed-runtime-compose-contract hosted-managed-production-compose-contract hosted-managed-production-contract hosted-managed-production-worker-window-contract hosted-managed-production-deploy-contract hosted-managed-specspace-state-env-contract hosted-managed-production-backup-cycle hosted-managed-backup-retention-contract hosted-managed-tls-contract hosted-managed-secrets-contract hosted-managed-checkout-contract hosted-managed-image-lock-contract hosted-managed-postgres-integration specspace-state-postgres-integration hosted-managed-compose-smoke hosted-managed-production-compose-smoke
+.PHONY: python-quality test mac-product-workspace mac-product-workspace-doctor mac-product-workspace-start mac-product-workspace-status mac-product-workspace-stop hosted-managed-contract specspace-state-contract hosted-managed-compose-contract hosted-managed-runtime-compose-contract hosted-managed-production-compose-contract hosted-managed-production-contract hosted-managed-production-worker-window-contract hosted-managed-production-deploy-contract hosted-managed-specspace-state-env-contract hosted-managed-production-backup-cycle hosted-managed-backup-retention-contract hosted-managed-tls-contract hosted-managed-secrets-contract hosted-managed-checkout-contract hosted-managed-image-lock-contract hosted-managed-postgres-integration specspace-state-postgres-integration hosted-managed-compose-smoke hosted-managed-production-compose-smoke
 
 python-quality:
 	$(PYTHON) -m unittest discover -s tests
 	$(PYTHON) -m compileall scripts/platform.py tests
 
 test: python-quality
+
+mac-product-workspace: mac-product-workspace-start
+
+mac-product-workspace-doctor:
+	$(PYTHON) scripts/mac_product_workspace.py doctor
+
+mac-product-workspace-start:
+	$(PYTHON) scripts/mac_product_workspace.py start
+
+mac-product-workspace-status:
+	$(PYTHON) scripts/mac_product_workspace.py status
+
+mac-product-workspace-stop:
+	$(PYTHON) scripts/mac_product_workspace.py stop
 
 hosted-managed-contract:
 	$(PYTHON) -m unittest \
