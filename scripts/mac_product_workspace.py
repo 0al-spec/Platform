@@ -239,6 +239,8 @@ def _emit(payload: dict[str, object], *, output_format: str) -> int:
             print(f"workspaces: {payload['product_workspace_root_dir']}")
         if payload.get("product_workspace_catalog"):
             print(f"catalog: {payload['product_workspace_catalog']}")
+        if payload.get("runtime_dir"):
+            print(f"runtime: {payload['runtime_dir']}")
     return 0 if payload.get("ok") is True else 1
 
 
@@ -731,6 +733,7 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
             "specgraph_runs_dir": str(config.specgraph_runs_dir),
             "product_workspace_root_dir": str(config.product_workspace_root_dir),
             "product_workspace_catalog": str(config.product_workspace_catalog),
+            "runtime_dir": str(config.runtime_dir),
         },
         output_format=output_format,
     )
