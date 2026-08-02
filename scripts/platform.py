@@ -8660,8 +8660,10 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         "authority_boundary": {
             "executes_specgraph_make_target": not args.dry_run and command_result is not None,
             "executes_git_commands": False,
+            "creates_git_commits": False,
             "opens_pull_requests": False,
             "merges_pull_requests": False,
+            "publishes_read_models": False,
             "writes_ontology_packages": False,
             "accepts_ontology_terms": False,
             "mutates_canonical_specs": False,
@@ -8879,8 +8881,10 @@ def real_idea_answer_continuation_execute_requested(args: argparse.Namespace) ->
             "authority_boundary": {
                 "executes_specgraph_make_target": False,
                 "executes_git_commands": False,
+                "creates_git_commits": False,
                 "opens_pull_requests": False,
                 "merges_pull_requests": False,
+                "publishes_read_models": False,
                 "writes_ontology_packages": False,
                 "accepts_ontology_terms": False,
                 "mutates_canonical_specs": False,

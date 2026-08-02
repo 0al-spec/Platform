@@ -5927,7 +5927,9 @@ workspaces:
                 payload["output_artifacts"]["continuation_report"]["ready"]
             )
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+            self.assertFalse(payload["authority_boundary"]["creates_git_commits"])
             self.assertFalse(payload["authority_boundary"]["opens_pull_requests"])
+            self.assertFalse(payload["authority_boundary"]["publishes_read_models"])
 
     def test_product_real_idea_continuation_executes_no_clarification_target(
         self,
@@ -6274,6 +6276,8 @@ workspaces:
                 payload["request_id"],
                 "real-idea-answer-continuation-execute.pantry-rotation.20260704.abcd12",
             )
+            self.assertFalse(payload["authority_boundary"]["creates_git_commits"])
+            self.assertFalse(payload["authority_boundary"]["publishes_read_models"])
             self.assertEqual(
                 payload["target_make"]["variables"]["SPECSPACE_REAL_IDEA_ANSWER_STATE"],
                 "runs/pantry-rotation/idea_to_spec_intake_clarification_answers.json",
