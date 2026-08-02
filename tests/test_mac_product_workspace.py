@@ -837,6 +837,66 @@ class MacProductWorkspaceTests(unittest.TestCase):
 
         remove_worktree.assert_not_called()
 
+    def test_e2e_run_lock_rejects_parallel_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp) / "test-results" / "e2e"
+            with mac_product_workspace._e2e_run_lock(artifact_dir):
+                with self.assertRaisesRegex(
+                    mac_product_workspace.platform_cli.PlatformError,
+                    "another Mac product-workspace E2E run",
+                ):
+                    with mac_product_workspace._e2e_run_lock(artifact_dir):
+                        self.fail("parallel E2E lock unexpectedly succeeded")
+
+    def test_restart_e2e_preserves_worktree_when_archive_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._config(root)
+            artifact_dir = root / "SpecSpace" / "graphspace" / "test-results" / "e2e"
+            with mock.patch.dict(
+                os.environ,
+                {"SPECSPACE_MAC_E2E_ARTIFACT_DIR": str(artifact_dir)},
+                clear=True,
+            ), mock.patch.object(
+                mac_product_workspace, "_recover_stale_e2e_worktree"
+            ), mock.patch.object(
+                mac_product_workspace, "_create_e2e_specgraph_worktree"
+            ), mock.patch.object(
+                mac_product_workspace.platform_cli,
+                "specspace_product_smoke_password_from_keychain",
+                return_value="keychain-secret",
+            ), mock.patch.object(
+                mac_product_workspace,
+                "start",
+                return_value=0,
+            ), mock.patch.object(
+                mac_product_workspace.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=0),
+            ), mock.patch.object(
+                mac_product_workspace,
+                "control",
+                return_value=0,
+            ), mock.patch.object(
+                mac_product_workspace,
+                "_archive_e2e_specgraph_workspace",
+                side_effect=OSError("archive failed"),
+            ), mock.patch.object(
+                mac_product_workspace,
+                "_remove_e2e_specgraph_worktree",
+            ) as remove_worktree:
+                with self.assertRaisesRegex(OSError, "archive failed"):
+                    mac_product_workspace.run_restart_e2e(
+                        config,
+                        output_format="json",
+                    )
+            marker = (
+                artifact_dir / "profile" / "recovery-required.json"
+            ).read_text(encoding="utf-8")
+
+        remove_worktree.assert_not_called()
+        self.assertIn('"status": "artifact_archive_failed"', marker)
+
     def test_e2e_specgraph_worktree_is_detached_and_removable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

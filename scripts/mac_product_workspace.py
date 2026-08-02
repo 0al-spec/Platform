@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -1149,6 +1151,9 @@ def _recover_stale_e2e_worktree(
 def _write_e2e_recovery_marker(
     artifact_dir: Path,
     e2e_config: MacProductConfig,
+    *,
+    status: str,
+    next_action: str,
 ) -> None:
     destination = artifact_dir / "profile" / "recovery-required.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1158,10 +1163,10 @@ def _write_e2e_recovery_marker(
             {
                 "artifact_kind": "platform_mac_product_workspace_e2e_recovery",
                 "schema_version": 1,
-                "status": "runtime_stop_failed",
+                "status": status,
                 "specgraph_worktree": str(e2e_config.specgraph_dir),
                 "runtime_manifest": str(_process_manifest_path(e2e_config)),
-                "next_action": "stop the owned Mac product profile before retrying E2E",
+                "next_action": next_action,
             },
             indent=2,
             sort_keys=True,
@@ -1171,6 +1176,36 @@ def _write_e2e_recovery_marker(
     )
     os.chmod(temporary, 0o600)
     temporary.replace(destination)
+
+
+@contextmanager
+def _e2e_run_lock(artifact_dir: Path):
+    artifact_dir.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = artifact_dir.parent / f".{artifact_dir.name}.lock"
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    handle = os.fdopen(descriptor, "r+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise platform_cli.PlatformError(
+                "another Mac product-workspace E2E run owns this artifact profile"
+            ) from exc
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"pid={os.getpid()}\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
 
 def _e2e_config(config: MacProductConfig) -> tuple[MacProductConfig, Path]:
@@ -1207,8 +1242,13 @@ def _e2e_config(config: MacProductConfig) -> tuple[MacProductConfig, Path]:
     )
 
 
-def run_restart_e2e(config: MacProductConfig, *, output_format: str) -> int:
-    e2e_config, artifact_dir = _e2e_config(config)
+def _run_restart_e2e_locked(
+    config: MacProductConfig,
+    e2e_config: MacProductConfig,
+    artifact_dir: Path,
+    *,
+    output_format: str,
+) -> int:
     graphspace_dir = e2e_config.specspace_dir / "graphspace"
     archived_workspace_dir = (
         artifact_dir
@@ -1307,14 +1347,40 @@ def run_restart_e2e(config: MacProductConfig, *, output_format: str) -> int:
                     e2e_config.specgraph_dir,
                     archived_workspace_dir,
                 )
-            finally:
-                _remove_e2e_specgraph_worktree(
-                    config.specgraph_dir,
-                    e2e_config.specgraph_dir,
+            except Exception:
+                _write_e2e_recovery_marker(
+                    artifact_dir,
+                    e2e_config,
+                    status="artifact_archive_failed",
+                    next_action=(
+                        "preserve the registered worktree and repair the E2E artifact "
+                        "destination before retrying"
+                    ),
                 )
+                raise
+            _remove_e2e_specgraph_worktree(
+                config.specgraph_dir,
+                e2e_config.specgraph_dir,
+            )
         else:
-            _write_e2e_recovery_marker(artifact_dir, e2e_config)
+            _write_e2e_recovery_marker(
+                artifact_dir,
+                e2e_config,
+                status="runtime_stop_failed",
+                next_action="stop the owned Mac product profile before retrying E2E",
+            )
     return result if result != 0 else stop_result
+
+
+def run_restart_e2e(config: MacProductConfig, *, output_format: str) -> int:
+    e2e_config, artifact_dir = _e2e_config(config)
+    with _e2e_run_lock(artifact_dir):
+        return _run_restart_e2e_locked(
+            config,
+            e2e_config,
+            artifact_dir,
+            output_format=output_format,
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
