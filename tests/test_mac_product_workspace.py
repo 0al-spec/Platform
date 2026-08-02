@@ -255,6 +255,10 @@ class MacProductWorkspaceTests(unittest.TestCase):
         stop_owned.assert_called_once_with(config)
         self.assertEqual(service_healthy.call_count, 5)
         self.assertTrue(emit.call_args.args[0]["ok"])
+        self.assertEqual(
+            emit.call_args.args[0]["runtime_dir"],
+            str(config.runtime_dir),
+        )
 
     def test_configuration_defaults_to_sibling_checkouts_and_persistent_mac_state(self) -> None:
         args = argparse.Namespace(
