@@ -2673,6 +2673,11 @@ publish-bundle:
 \t@test ! -f runs/repaired_idea_to_spec_promotion_gate.json || cp runs/repaired_idea_to_spec_promotion_gate.json dist/specgraph-public/runs/repaired_idea_to_spec_promotion_gate.json
 \t@test ! -f runs/idea_maturity_metrics_report.json || cp runs/idea_maturity_metrics_report.json dist/specgraph-public/runs/idea_maturity_metrics_report.json
 \t@test ! -f runs/idea_maturity_metrics_validation_report.json || cp runs/idea_maturity_metrics_validation_report.json dist/specgraph-public/runs/idea_maturity_metrics_validation_report.json
+
+publish-workspace-bundle:
+\t@mkdir -p "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)"
+\t@printf '%s\\n' '{"artifact_kind":"artifact_manifest"}' > "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/artifact_manifest.json"
+\t@for name in idea_to_spec_repair_session.json specspace_repair_draft_rerun_report.json idea_to_spec_rerun_preview.json idea_to_spec_rerun_materialization.json repaired_candidate_promotion_handoff_report.json repaired_active_idea_to_spec_candidate.json repaired_candidate_spec_graph.json repaired_pre_sib_coherence_report.json repaired_candidate_repair_loop_report.json repaired_candidate_spec_materialization_report.json repaired_idea_to_spec_repair_session.json repaired_idea_to_spec_promotion_gate.json idea_maturity_metrics_report.json idea_maturity_metrics_validation_report.json; do test ! -f "$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name" || cp "$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name" "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name"; done
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
 
@@ -8145,6 +8150,155 @@ workspaces:
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["summary"]["published_artifact_count"], 4)
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+
+    def test_product_repair_rerun_publish_uses_bound_workspace_provenance(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            self.write_idea_maturity_artifacts(specgraph_dir)
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            execution_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_execution.json"
+            )
+            publication_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_publication.json"
+            )
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+            execute_result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--output",
+                str(execution_report_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(execute_result.returncode, 0, execute_result.stderr)
+
+            workspace_id = "idea-bound"
+            run_dir = specgraph_dir / "runs" / workspace_id
+            run_dir.mkdir()
+            for source in (specgraph_dir / "runs").glob("*.json"):
+                shutil.copy2(source, run_dir / source.name)
+            scoped_metrics_path = run_dir / "idea_maturity_metrics_report.json"
+            scoped_metrics = json.loads(scoped_metrics_path.read_text(encoding="utf-8"))
+            scoped_metrics["candidate"]["candidate_id"] = workspace_id
+            scoped_metrics["derived_state"]["lifecycle_state"] = "approval_ready"
+            scoped_metrics_path.write_text(
+                json.dumps(scoped_metrics, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            root_metrics_path = specgraph_dir / "runs" / "idea_maturity_metrics_report.json"
+            root_metrics = json.loads(root_metrics_path.read_text(encoding="utf-8"))
+            root_metrics["candidate"]["candidate_id"] = "team-decision-log"
+            root_metrics["derived_state"]["lifecycle_state"] = (
+                "read_model_publication_complete"
+            )
+            root_metrics_path.write_text(
+                json.dumps(root_metrics, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            binding_context = {
+                "contract_ref": "platform.product-workspace.binding.v1",
+                "binding_id": f"product-workspace-binding://{workspace_id}",
+                "binding_revision_sha256": "1" * 64,
+                "status": "ready",
+                "source_ref": (
+                    f"runs/{workspace_id}/"
+                    "platform_product_workspace_initialization_execution_report.json"
+                ),
+                "source_sha256": "2" * 64,
+                "workspace_id": workspace_id,
+                "display_name": "Bound idea",
+                "route": f"/{workspace_id}",
+                "repository_role": "product_spec_workspace",
+                "specspace_state_namespace_ref": (
+                    f"specspace-state://workspace/{workspace_id}"
+                ),
+                "platform_default_run_dir_ref": f"runs/{workspace_id}",
+                "product_artifact_bundle_ref": f"workspaces/{workspace_id}",
+                "product_artifact_manifest_ref": (
+                    f"workspaces/{workspace_id}/artifact_manifest.json"
+                ),
+                "repository": {
+                    "workspace_identity": workspace_id,
+                    "worktree_identity": f"product-workspace/{workspace_id}",
+                    "creates_worktree": False,
+                },
+                "provenance": {
+                    "plan_sha256": "3" * 64,
+                    "specgraph_initialization_report_sha256": "4" * 64,
+                },
+                "authority_boundary": {
+                    "report_only": True,
+                    "may_execute_platform": False,
+                    "may_execute_specgraph": False,
+                    "may_create_git_commit": False,
+                    "may_open_pull_request": False,
+                    "may_publish_read_model": False,
+                },
+            }
+            execution_report = json.loads(
+                execution_report_path.read_text(encoding="utf-8")
+            )
+            execution_report["workspace_binding"] = binding_context
+            execution_report_path.write_text(
+                json.dumps(execution_report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "publish",
+                "--execution-report",
+                str(execution_report_path),
+                "--output",
+                str(publication_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["workspace_id"], workspace_id)
+            self.assertEqual(payload["command"][1], "publish-workspace-bundle")
+            self.assertEqual(
+                payload["publication_scope"],
+                {
+                    "run_dir_ref": f"runs/{workspace_id}",
+                    "bundle_ref": f"workspaces/{workspace_id}",
+                    "manifest_ref": (
+                        f"workspaces/{workspace_id}/artifact_manifest.json"
+                    ),
+                },
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["lifecycle_state"],
+                "approval_ready",
+            )
+            self.assertTrue(
+                all(
+                    path.startswith(f"runs/{workspace_id}/")
+                    for path in payload["published_artifacts"]
+                )
+            )
+            self.assertNotIn("team-decision-log", json.dumps(payload))
 
     def test_product_repair_rerun_publish_surfaces_idea_maturity(
         self,

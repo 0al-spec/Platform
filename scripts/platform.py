@@ -3123,10 +3123,11 @@ def idea_maturity_public_artifact_status(
     specgraph_dir: Path,
     *,
     public_root: Path | None,
+    expected_refs: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
     if public_root is None:
         public_root = specgraph_dir / "dist" / "specgraph-public"
-    expected = list(IDEA_MATURITY_DEFAULT_REFS.values())
+    expected = list(expected_refs or IDEA_MATURITY_DEFAULT_REFS.values())
     published = [rel_path for rel_path in expected if (public_root / rel_path).is_file()]
     missing = [rel_path for rel_path in expected if rel_path not in published]
     return {
@@ -3246,9 +3247,12 @@ def idea_maturity_summary(
     specgraph_dir: Path,
     *,
     public_root: Path | None = None,
+    run_dir_ref: str = "runs",
 ) -> dict[str, Any]:
-    metrics_ref = IDEA_MATURITY_DEFAULT_REFS["metrics_report"]
-    validation_ref = IDEA_MATURITY_DEFAULT_REFS["validation_report"]
+    metrics_ref = f"{run_dir_ref}/{Path(IDEA_MATURITY_DEFAULT_REFS['metrics_report']).name}"
+    validation_ref = (
+        f"{run_dir_ref}/{Path(IDEA_MATURITY_DEFAULT_REFS['validation_report']).name}"
+    )
     metrics_path = specgraph_dir / metrics_ref
     validation_path = specgraph_dir / validation_ref
     metrics_report, metrics_status, diagnostics = load_optional_json_mapping(
@@ -3583,7 +3587,10 @@ def idea_maturity_summary(
         "dry_run_count": numeric_metric(
             workflow_friction.get("dry_run_count", metrics.get("dry_run_count"))
         ),
-        "source_refs": IDEA_MATURITY_DEFAULT_REFS,
+        "source_refs": {
+            "metrics_report": metrics_ref,
+            "validation_report": validation_ref,
+        },
         "upstream_source_artifact_count": len(
             (metrics_report or {}).get("source_artifacts", [])
             if isinstance((metrics_report or {}).get("source_artifacts"), list)
@@ -3596,6 +3603,7 @@ def idea_maturity_summary(
         "public_artifacts": idea_maturity_public_artifact_status(
             specgraph_dir,
             public_root=public_root,
+            expected_refs=(metrics_ref, validation_ref),
         ),
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
     }
@@ -9523,7 +9531,63 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         / "runs"
         / "platform_product_repair_rerun_publication_report.json"
     )
-    command = ["make", "publish-bundle"]
+    binding_context = nested_mapping(execution_report, "workspace_binding")
+    workspace_id = binding_context.get("workspace_id")
+    run_dir_ref = "runs"
+    bundle_ref = ""
+    manifest_ref = "artifact_manifest.json"
+    if binding_context:
+        diagnostics.extend(
+            managed_product_workspace_binding_context_diagnostics(
+                binding_context,
+                expected_workspace_id=(
+                    workspace_id if isinstance(workspace_id, str) else None
+                ),
+                subject_prefix="execution_report.workspace_binding",
+            )
+        )
+        expected_run_dir_ref = (
+            f"runs/{workspace_id}" if isinstance(workspace_id, str) else None
+        )
+        expected_bundle_ref = (
+            f"workspaces/{workspace_id}" if isinstance(workspace_id, str) else None
+        )
+        expected_manifest_ref = (
+            f"{expected_bundle_ref}/artifact_manifest.json"
+            if expected_bundle_ref
+            else None
+        )
+        for field, expected in (
+            ("platform_default_run_dir_ref", expected_run_dir_ref),
+            ("product_artifact_bundle_ref", expected_bundle_ref),
+            ("product_artifact_manifest_ref", expected_manifest_ref),
+        ):
+            if binding_context.get(field) != expected:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_publication_binding_routing_mismatch",
+                        subject=f"execution_report.workspace_binding.{field}",
+                        message=f"workspace binding must route publication through {expected}",
+                    )
+                )
+        if expected_run_dir_ref and expected_bundle_ref and expected_manifest_ref:
+            run_dir_ref = expected_run_dir_ref
+            bundle_ref = expected_bundle_ref
+            manifest_ref = expected_manifest_ref
+
+    if binding_context:
+        command = [
+            "make",
+            "publish-workspace-bundle",
+            f"PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR={run_dir_ref}",
+            (
+                "PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR="
+                f"dist/specgraph-public/{bundle_ref}"
+            ),
+        ]
+    else:
+        command = ["make", "publish-bundle"]
     if args.python:
         command.append(f"PYTHON={args.python}")
     command_result: dict[str, Any] | None = None
@@ -9562,7 +9626,10 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
             "dry_run": True,
         }
 
-    manifest_path = specgraph_dir / "dist" / "specgraph-public" / "artifact_manifest.json"
+    public_root = specgraph_dir / "dist" / "specgraph-public"
+    if bundle_ref:
+        public_root = public_root / bundle_ref
+    manifest_path = specgraph_dir / "dist" / "specgraph-public" / manifest_ref
     manifest_present = manifest_path.is_file()
     if not args.dry_run and not manifest_present:
         diagnostics.append(
@@ -9579,13 +9646,19 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         is True
         or "repaired_handoff" in execution_outputs
     )
-    public_paths = list(PRODUCT_REPAIR_RERUN_PUBLIC_PATHS)
+    public_paths = [
+        f"{run_dir_ref}/{Path(path).name}"
+        for path in PRODUCT_REPAIR_RERUN_PUBLIC_PATHS
+    ]
     if repaired_handoff_requested:
-        public_paths.extend(PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS)
+        public_paths.extend(
+            f"{run_dir_ref}/{Path(path).name}"
+            for path in PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS
+        )
     present_public_paths = []
     missing_public_paths = []
     for rel_path in public_paths:
-        if (specgraph_dir / "dist" / "specgraph-public" / rel_path).is_file():
+        if (public_root / rel_path).is_file():
             present_public_paths.append(rel_path)
         else:
             missing_public_paths.append(rel_path)
@@ -9603,7 +9676,8 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         )
     maturity_summary = idea_maturity_summary(
         specgraph_dir,
-        public_root=specgraph_dir / "dist" / "specgraph-public",
+        public_root=public_root,
+        run_dir_ref=run_dir_ref,
     )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0
@@ -9613,6 +9687,13 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         "generated_at": utc_now_iso(),
         "execution_report_ref": str(execution_report_path),
         "specgraph_dir": str(specgraph_dir),
+        "workspace_id": workspace_id if isinstance(workspace_id, str) else None,
+        "workspace_binding": binding_context or None,
+        "publication_scope": {
+            "run_dir_ref": run_dir_ref,
+            "bundle_ref": bundle_ref or ".",
+            "manifest_ref": manifest_ref,
+        },
         "ok": ok,
         "dry_run": args.dry_run,
         "canonical_mutations_allowed": False,
