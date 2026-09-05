@@ -268,7 +268,7 @@ contract are:
 | `workspace_initialization_execute` | `workspace execute-requested-initialization` | `runs/platform_product_workspace_initialization_execution_report.json` |
 | `real_idea_intake_execute` | `product-real-idea-intake execute-requested` | `runs/platform_real_idea_entry_intake_execution_report.json` |
 | `real_idea_answer_continuation_execute` | `product-real-idea-continuation execute-requested` | `runs/platform_real_idea_answer_continuation_execution_report.json` |
-| `repair_rerun_request_gate_execute` | `product-repair-rerun request-gate` | `runs/platform_product_repair_rerun_request_gate_execution_report.json` |
+| `repair_rerun_request_gate_execute` | `product-repair-rerun import-preview`, then `product-repair-rerun request-gate` | `runs/platform_product_repair_draft_import_preview_execution_report.json`, `runs/specspace_repair_draft_import_preview.json`, `runs/platform_product_repair_rerun_request_gate_execution_report.json`, `runs/specspace_repair_rerun_request_gate.json` |
 | `repair_rerun_execute` | `product-repair-rerun plan` then `product-repair-rerun execute` | `runs/platform_product_repair_rerun_execution_report.json` |
 | `repair_rerun_publish` | `product-repair-rerun publish` | `runs/platform_product_repair_rerun_publication_report.json` |
 | `candidate_approval_execute` | `product-candidate-approval approve` | `runs/platform_candidate_approval_execution_report.json` |
@@ -1197,3 +1197,32 @@ The authority split remains unchanged. SpecSpace never writes to Git, mutates
 canonical specs, writes Ontology packages, or accepts ontology terms. Platform
 owns the Git Service operations, and read-model publication is allowed only after
 the review status confirms a merged review.
+
+## Mac Operator Repair Continuation Smoke
+
+The single-operator Mac flow was verified with workspace
+`idea-4cfafedbf9` and its bound run directory. The managed repair gate now runs
+the fixed import-preview and request-gate wrappers before rerun execution. All
+relative outputs resolve beneath the SpecGraph checkout and the rerun receives
+the workspace-scoped `--run-dir`; shared `runs/*` artifacts are not used as a
+fallback.
+
+The request gate is replay-safe and leaves the active request available for the
+actual rerun. Rerun execution consumes the request on attempt and reads an
+immutable request snapshot, preventing a consume-before-read failure. A
+successful partial rerun is reported as `follow_up_required` only when both
+SpecGraph operations succeeded and every remaining diagnostic is a readiness
+diagnostic. Identity, kind, runtime, or authority diagnostics remain failures.
+
+Observed result:
+
+```text
+saved repair drafts: 18
+accepted drafts: 18
+removed gaps: 17
+remaining gap: ontology-gap.add-own-id
+next safe action: answer the remaining ontology decision, then request rerun
+```
+
+This smoke does not choose an ontology action for the operator and does not
+claim approval readiness while the final decision remains open.

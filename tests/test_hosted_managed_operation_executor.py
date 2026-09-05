@@ -421,6 +421,18 @@ class HostedManagedOperationExecutorTests(unittest.TestCase):
             "product_candidate_promotion_execution_report.json",
         )
         self.assertEqual(len(command_families["repair_rerun_execute"]), 2)
+        repair_gate_commands = command_families["repair_rerun_request_gate_execute"]
+        self.assertEqual(len(repair_gate_commands), 2)
+        self.assertEqual(
+            repair_gate_commands[0][2:4],
+            ["product-repair-rerun", "import-preview"],
+        )
+        self.assertEqual(
+            repair_gate_commands[1][2:4],
+            ["product-repair-rerun", "request-gate"],
+        )
+        self.assertIn("--draft-state", repair_gate_commands[0])
+        self.assertIn("--clarification-requests", repair_gate_commands[0])
 
     def test_worker_executes_fixed_wrapper_and_pins_output_reports(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

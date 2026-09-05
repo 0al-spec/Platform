@@ -342,6 +342,7 @@ REAL_IDEA_ANSWER_CONTINUATION_OUTPUTS = {
     "clarified_session": "clarified_user_idea_intake_session.json",
     "candidate_source_report": "intake_session_candidate_source_report.json",
     "active_candidate": "active_idea_to_spec_candidate.json",
+    "repair_session": "idea_to_spec_repair_session.json",
 }
 REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS = {
     "import_preview": "specspace_real_idea_answer_import_preview",
@@ -351,14 +352,17 @@ REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS = {
     "clarified_session": "user_idea_intake_session",
     "candidate_source_report": "intake_session_candidate_source_report",
     "active_candidate": "active_idea_to_spec_candidate",
+    "repair_session": "idea_to_spec_repair_session_journal",
 }
 REAL_IDEA_NO_CLARIFICATION_CONTINUATION_OUTPUTS = {
     "candidate_source_report": "intake_session_candidate_source_report.json",
     "active_candidate": "active_idea_to_spec_candidate.json",
+    "repair_session": "idea_to_spec_repair_session.json",
 }
 REAL_IDEA_NO_CLARIFICATION_CONTINUATION_EXPECTED_KINDS = {
     "candidate_source_report": "intake_session_candidate_source_report",
     "active_candidate": "active_idea_to_spec_candidate",
+    "repair_session": "idea_to_spec_repair_session_journal",
 }
 REAL_IDEA_ENTRY_INTAKE_EXECUTION_REPORT_KIND = (
     "platform_real_idea_entry_intake_execution_report"
@@ -5865,17 +5869,17 @@ def product_repair_draft_import_preview(args: argparse.Namespace) -> int:
         args.clarification_requests,
         base_dir=specgraph_dir,
     )
-    output_path = path_arg_or_default(
+    output_path = input_path_arg_or_default(
         args.output_preview,
         base_dir=specgraph_dir,
         default_rel=f"{run_dir_ref}/specspace_repair_draft_import_preview.json",
     )
-    report_path = (
-        Path(args.output)
-        if args.output
-        else specgraph_dir
-        / "runs"
-        / "platform_product_repair_draft_import_preview_execution_report.json"
+    report_path = input_path_arg_or_default(
+        args.output,
+        base_dir=specgraph_dir,
+        default_rel=(
+            "runs/platform_product_repair_draft_import_preview_execution_report.json"
+        ),
     )
 
     if not args.dry_run and not draft_source.is_file():
@@ -7817,6 +7821,9 @@ def real_idea_entry_intake_output_records(
 
 def real_idea_answer_continuation_output_diagnostics(
     output_records: dict[str, dict[str, Any]],
+    *,
+    run_dir: Path,
+    run_dir_ref: str,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for key, expected_kind in REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS.items():
@@ -7871,11 +7878,20 @@ def real_idea_answer_continuation_output_diagnostics(
                         ),
                     )
                 )
+    diagnostics.extend(
+        real_idea_initial_repair_session_diagnostics(
+            run_dir=run_dir,
+            run_dir_ref=run_dir_ref,
+        )
+    )
     return diagnostics
 
 
 def real_idea_no_clarification_continuation_output_diagnostics(
     output_records: dict[str, dict[str, Any]],
+    *,
+    run_dir: Path,
+    run_dir_ref: str,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for key, expected_kind in REAL_IDEA_NO_CLARIFICATION_CONTINUATION_EXPECTED_KINDS.items():
@@ -7931,6 +7947,50 @@ def real_idea_no_clarification_continuation_output_diagnostics(
                         message=f"SpecGraph no-clarification output {key} must not expand authority",
                     )
                 )
+    diagnostics.extend(
+        real_idea_initial_repair_session_diagnostics(
+            run_dir=run_dir,
+            run_dir_ref=run_dir_ref,
+        )
+    )
+    return diagnostics
+
+
+def real_idea_initial_repair_session_diagnostics(
+    *,
+    run_dir: Path,
+    run_dir_ref: str,
+) -> list[Diagnostic]:
+    path = run_dir / "idea_to_spec_repair_session.json"
+    if not path.is_file():
+        return []
+    try:
+        repair_session = load_json_mapping(path, label="initial repair session")
+    except ValueError as error:
+        return [
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_continuation_repair_session_invalid",
+                subject="outputs.repair_session",
+                message=str(error),
+            )
+        ]
+    diagnostics = graph_repository_repair_session_diagnostics(
+        repair_session,
+        expected_source_refs=repair_session_expected_source_refs_for_run_dir(
+            run_dir_ref
+        ),
+        subject="outputs.repair_session",
+    )
+    if nested_mapping(repair_session, "readiness").get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_continuation_repair_session_not_ready",
+                subject="outputs.repair_session.readiness.ready",
+                message="initial repair session must be structurally ready",
+            )
+        )
     return diagnostics
 
 
@@ -8620,9 +8680,17 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         )
     if not diagnostics and not args.dry_run:
         diagnostics.extend(
-            real_idea_no_clarification_continuation_output_diagnostics(output_records)
+            real_idea_no_clarification_continuation_output_diagnostics(
+                output_records,
+                run_dir=run_dir,
+                run_dir_ref=run_dir_ref,
+            )
             if continuation_mode == "clarification_not_required"
-            else real_idea_answer_continuation_output_diagnostics(output_records)
+            else real_idea_answer_continuation_output_diagnostics(
+                output_records,
+                run_dir=run_dir,
+                run_dir_ref=run_dir_ref,
+            )
         )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0 and (args.dry_run or command_result is not None)

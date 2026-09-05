@@ -2688,11 +2688,13 @@ real-idea-intake-continue-from-specspace-answers:
 \t@printf '%s\\n' '{"artifact_kind":"user_idea_intake_session","readiness":{"ready":true,"review_state":"ready_for_event_storming_intake"},"summary":{"status":"ready_for_event_storming_intake"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/clarified_user_idea_intake_session.json
 \t@printf '%s\\n' '{"artifact_kind":"intake_session_candidate_source_report","readiness":{"ready":true,"review_state":"candidate_source_ready"},"summary":{"status":"candidate_source_ready"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/intake_session_candidate_source_report.json
 \t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","readiness":{"ready":false,"review_state":"active_candidate_review_required"},"summary":{"status":"active_candidate_review_required","candidate_id":"idea-alpha"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":false,"ready_for_platform_promotion":false},"readiness_impact":{"intermediate_artifacts_ready":false,"ready_for_candidate_approval":false,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_promotion_gate.json"}}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_repair_session.json
 
 real-idea-intake-continue-without-answers:
 \t@mkdir -p $(REAL_IDEA_SMOKE_RUN_DIR)
 \t@printf '%s\\n' '{"artifact_kind":"intake_session_candidate_source_report","readiness":{"ready":true,"review_state":"candidate_source_ready"},"summary":{"status":"candidate_source_ready"},"authority_boundary":{"may_mutate_canonical_specs":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/intake_session_candidate_source_report.json
 \t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","readiness":{"ready":false,"review_state":"active_candidate_review_required"},"summary":{"status":"active_candidate_review_required","candidate_id":"idea-alpha"},"authority_boundary":{"may_mutate_canonical_specs":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":false,"ready_for_platform_promotion":false},"readiness_impact":{"intermediate_artifacts_ready":false,"ready_for_candidate_approval":false,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_promotion_gate.json"}}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_repair_session.json
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
 
@@ -5662,7 +5664,7 @@ workspaces:
                 "--workspace-id",
                 "idea-alpha-workspace",
                 "--output",
-                str(report_path),
+                "runs/platform_product_repair_draft_import_preview_execution_report.json",
                 "--format",
                 "json",
             )
@@ -7656,6 +7658,64 @@ workspaces:
                     / "repaired_candidate_promotion_handoff_report.json"
                 ).is_file()
             )
+
+    def test_blocked_repaired_outputs_preserve_candidate_identity(self) -> None:
+        output_records = {
+            "repaired_handoff": {
+                "present": True,
+                "artifact_kind": (
+                    platform_module.PRODUCT_CANDIDATE_APPROVAL_REPAIRED_HANDOFF_KIND
+                ),
+                "ready": False,
+                "output_artifact_candidate_ids": {
+                    "repaired_active_candidate": "idea-alpha",
+                    "repaired_repair_session": "idea-alpha",
+                    "repaired_promotion_gate": "idea-alpha",
+                },
+            },
+            "repaired_active_candidate": {
+                "present": True,
+                "artifact_kind": "active_idea_to_spec_candidate",
+                "ready": False,
+                "summary": {"candidate_id": "idea-alpha"},
+            },
+            "repaired_repair_session": {
+                "present": True,
+                "artifact_kind": "idea_to_spec_repair_session_journal",
+                "ready": False,
+                "summary": {"candidate_id": "idea-alpha"},
+            },
+            "repaired_promotion_gate": {
+                "present": True,
+                "artifact_kind": "idea_to_spec_promotion_gate",
+                "ready": False,
+                "summary": {"candidate_id": "idea-alpha"},
+            },
+        }
+
+        diagnostics = platform_module.product_repair_repaired_output_diagnostics(
+            output_records,
+            expected_candidate_id="idea-alpha",
+        )
+        codes = {item.code for item in diagnostics}
+        self.assertIn("product_repair_rerun_repaired_handoff_not_ready", codes)
+        self.assertIn("product_repair_rerun_repaired_output_not_ready", codes)
+        self.assertNotIn(
+            "product_repair_rerun_repaired_handoff_candidate_mismatch",
+            codes,
+        )
+
+        output_records["repaired_handoff"]["output_artifact_candidate_ids"][
+            "repaired_promotion_gate"
+        ] = "foreign-candidate"
+        diagnostics = platform_module.product_repair_repaired_output_diagnostics(
+            output_records,
+            expected_candidate_id="idea-alpha",
+        )
+        self.assertIn(
+            "product_repair_rerun_repaired_handoff_candidate_mismatch",
+            {item.code for item in diagnostics},
+        )
 
     def test_product_repair_rerun_execute_rejects_foreign_repaired_candidate(
         self,
