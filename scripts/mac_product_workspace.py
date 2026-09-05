@@ -32,6 +32,7 @@ DEFAULT_KEYCHAIN_SERVICE = "0AL SpecSpace production smoke"
 DEFAULT_OPERATOR_USERNAME = "operator"
 MAC_RESTART_E2E_WORKSPACE_ID = "mac-specification-marathon"
 WORKSPACE_CATALOG_DOCTOR_TIMEOUT_SECONDS = 10
+MAC_PRODUCT_PLATFORM_EXECUTION_TIMEOUT_SECONDS = 600
 CHILD_ENVIRONMENT_KEYS = (
     "HOME",
     "LANG",
@@ -846,6 +847,8 @@ def start(config: MacProductConfig, *, output_format: str) -> int:
             str(password_path),
             "--operator-auth-allowed-origin",
             config.ui_url,
+            "--platform-execution-timeout-seconds",
+            str(MAC_PRODUCT_PLATFORM_EXECUTION_TIMEOUT_SECONDS),
         ]
         npm = shutil.which("npm")
         if npm is None:

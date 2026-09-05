@@ -253,6 +253,12 @@ class MacProductWorkspaceTests(unittest.TestCase):
             backend_command[backend_command.index("--product-workspace-catalog") + 1],
             str(config.product_workspace_catalog),
         )
+        self.assertEqual(
+            backend_command[
+                backend_command.index("--platform-execution-timeout-seconds") + 1
+            ],
+            "600",
+        )
         self.assertTrue(catalog_exists)
         self.assertIn(
             "artifact_kind: platform_workspace_catalog",
