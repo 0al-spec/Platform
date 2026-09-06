@@ -433,6 +433,23 @@ class HostedManagedOperationExecutorTests(unittest.TestCase):
         )
         self.assertIn("--draft-state", repair_gate_commands[0])
         self.assertIn("--clarification-requests", repair_gate_commands[0])
+        self.assertEqual(
+            Path(repair_gate_commands[0][repair_gate_commands[0].index("--run-dir") + 1]),
+            (fixture.specgraph_dir / "runs" / WORKSPACE_ID).resolve(),
+        )
+        self.assertEqual(
+            Path(
+                repair_gate_commands[0][
+                    repair_gate_commands[0].index("--output-preview") + 1
+                ]
+            ),
+            (
+                fixture.artifact_root
+                / "runs"
+                / WORKSPACE_ID
+                / "specspace_repair_draft_import_preview.json"
+            ).resolve(),
+        )
 
     def test_worker_executes_fixed_wrapper_and_pins_output_reports(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

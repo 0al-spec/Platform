@@ -73,6 +73,21 @@ class PlatformCliTests(unittest.TestCase):
             stderr=subprocess.PIPE,
         )
 
+    def test_real_idea_continuation_rejects_cross_candidate_repair_session(
+        self,
+    ) -> None:
+        diagnostics = platform_module.real_idea_continuation_candidate_identity_diagnostics(
+            {
+                "active_candidate": {"summary": {"candidate_id": "candidate-a"}},
+                "repair_session": {"summary": {"candidate_id": "candidate-b"}},
+            }
+        )
+
+        self.assertIn(
+            "real_idea_continuation_candidate_mismatch",
+            {item.code for item in diagnostics},
+        )
+
     def test_strict_recovery_preflight_does_not_requeue_policy_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -2675,9 +2690,9 @@ publish-bundle:
 \t@test ! -f runs/idea_maturity_metrics_validation_report.json || cp runs/idea_maturity_metrics_validation_report.json dist/specgraph-public/runs/idea_maturity_metrics_validation_report.json
 
 publish-workspace-bundle:
-\t@mkdir -p "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)"
+\t@mkdir -p "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/runs"
 \t@printf '%s\\n' '{"artifact_kind":"artifact_manifest"}' > "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/artifact_manifest.json"
-\t@for name in idea_to_spec_repair_session.json specspace_repair_draft_rerun_report.json idea_to_spec_rerun_preview.json idea_to_spec_rerun_materialization.json repaired_candidate_promotion_handoff_report.json repaired_active_idea_to_spec_candidate.json repaired_candidate_spec_graph.json repaired_pre_sib_coherence_report.json repaired_candidate_repair_loop_report.json repaired_candidate_spec_materialization_report.json repaired_idea_to_spec_repair_session.json repaired_idea_to_spec_promotion_gate.json idea_maturity_metrics_report.json idea_maturity_metrics_validation_report.json; do test ! -f "$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name" || cp "$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name" "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name"; done
+\t@for name in idea_to_spec_repair_session.json specspace_repair_draft_rerun_report.json idea_to_spec_rerun_preview.json idea_to_spec_rerun_materialization.json repaired_candidate_promotion_handoff_report.json repaired_active_idea_to_spec_candidate.json repaired_candidate_spec_graph.json repaired_pre_sib_coherence_report.json repaired_candidate_repair_loop_report.json repaired_candidate_spec_materialization_report.json repaired_idea_to_spec_repair_session.json repaired_idea_to_spec_promotion_gate.json idea_maturity_metrics_report.json idea_maturity_metrics_validation_report.json; do test ! -f "$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name" || cp "$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name" "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/runs/$$name"; done
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
 
@@ -8191,14 +8206,14 @@ workspaces:
             )
             self.assertEqual(execute_result.returncode, 0, execute_result.stderr)
 
-            workspace_id = "idea-bound"
+            workspace_id = "idea-alpha-workspace"
             run_dir = specgraph_dir / "runs" / workspace_id
             run_dir.mkdir()
             for source in (specgraph_dir / "runs").glob("*.json"):
                 shutil.copy2(source, run_dir / source.name)
             scoped_metrics_path = run_dir / "idea_maturity_metrics_report.json"
             scoped_metrics = json.loads(scoped_metrics_path.read_text(encoding="utf-8"))
-            scoped_metrics["candidate"]["candidate_id"] = workspace_id
+            scoped_metrics["candidate"]["candidate_id"] = "idea-alpha"
             scoped_metrics["derived_state"]["lifecycle_state"] = "approval_ready"
             scoped_metrics_path.write_text(
                 json.dumps(scoped_metrics, indent=2, sort_keys=True) + "\n",

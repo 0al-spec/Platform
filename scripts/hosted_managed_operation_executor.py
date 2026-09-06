@@ -475,7 +475,7 @@ class PlatformManagedOperationExecutor:
                     "--specgraph-dir",
                     str(specgraph_dir),
                     "--run-dir",
-                    str(import_preview.parent),
+                    str(specgraph_dir / "runs" / workspace_id),
                     "--draft-state",
                     str(
                         self._input(
