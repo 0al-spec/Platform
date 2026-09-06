@@ -461,29 +461,80 @@ class PlatformManagedOperationExecutor:
                 command.extend(["--answer-state", str(answer_state)])
             return [command]
         if operation_id == "repair_rerun_request_gate_execute":
-            return [[
-                *base,
-                "product-repair-rerun",
-                "request-gate",
-                "--specgraph-dir",
-                str(specgraph_dir),
-                "--rerun-request",
-                str(self._input(resolved, "specspace-state://idea_to_spec_repair_rerun_requests.json")),
-                "--import-preview",
-                str(self._input(resolved, "runs/specspace_repair_draft_import_preview.json")),
-                "--repair-session",
-                str(self._input(resolved, "runs/idea_to_spec_repair_session.json")),
-                "--workspace-id",
-                workspace_id,
-                "--workspace-initialization",
-                str(binding_source),
-                "--output-gate",
-                str(self._output(resolved, "runs/specspace_repair_rerun_request_gate.json")),
-                "--output",
-                str(self._output(resolved, "runs/platform_product_repair_rerun_request_gate_execution_report.json")),
-                "--format",
-                "json",
-            ]]
+            repair_session = self._input(
+                resolved, "runs/idea_to_spec_repair_session.json"
+            )
+            import_preview = self._output(
+                resolved, "runs/specspace_repair_draft_import_preview.json"
+            )
+            return [
+                [
+                    *base,
+                    "product-repair-rerun",
+                    "import-preview",
+                    "--specgraph-dir",
+                    str(specgraph_dir),
+                    "--run-dir",
+                    str(specgraph_dir / "runs" / workspace_id),
+                    "--draft-state",
+                    str(
+                        self._input(
+                            resolved,
+                            "specspace-state://idea_to_spec_repair_drafts.json",
+                        )
+                    ),
+                    "--repair-session",
+                    str(repair_session),
+                    "--clarification-requests",
+                    str(
+                        self._input(
+                            resolved,
+                            "runs/idea_to_spec_clarification_requests.json",
+                        )
+                    ),
+                    "--workspace-id",
+                    workspace_id,
+                    "--output-preview",
+                    str(import_preview),
+                    "--output",
+                    str(
+                        self._output(
+                            resolved,
+                            "runs/platform_product_repair_draft_import_preview_execution_report.json",
+                        )
+                    ),
+                    "--format",
+                    "json",
+                ],
+                [
+                    *base,
+                    "product-repair-rerun",
+                    "request-gate",
+                    "--specgraph-dir",
+                    str(specgraph_dir),
+                    "--rerun-request",
+                    str(
+                        self._input(
+                            resolved,
+                            "specspace-state://idea_to_spec_repair_rerun_requests.json",
+                        )
+                    ),
+                    "--import-preview",
+                    str(import_preview),
+                    "--repair-session",
+                    str(repair_session),
+                    "--workspace-id",
+                    workspace_id,
+                    "--workspace-initialization",
+                    str(binding_source),
+                    "--output-gate",
+                    str(self._output(resolved, "runs/specspace_repair_rerun_request_gate.json")),
+                    "--output",
+                    str(self._output(resolved, "runs/platform_product_repair_rerun_request_gate_execution_report.json")),
+                    "--format",
+                    "json",
+                ],
+            ]
         if operation_id == "repair_rerun_execute":
             plan_ref = "runs/managed_repair_rerun_plans/<request-id>.platform_product_repair_rerun_execution_plan.json"
             plan_path = self._output(resolved, plan_ref)

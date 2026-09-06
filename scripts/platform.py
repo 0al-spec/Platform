@@ -342,6 +342,7 @@ REAL_IDEA_ANSWER_CONTINUATION_OUTPUTS = {
     "clarified_session": "clarified_user_idea_intake_session.json",
     "candidate_source_report": "intake_session_candidate_source_report.json",
     "active_candidate": "active_idea_to_spec_candidate.json",
+    "repair_session": "idea_to_spec_repair_session.json",
 }
 REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS = {
     "import_preview": "specspace_real_idea_answer_import_preview",
@@ -351,14 +352,17 @@ REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS = {
     "clarified_session": "user_idea_intake_session",
     "candidate_source_report": "intake_session_candidate_source_report",
     "active_candidate": "active_idea_to_spec_candidate",
+    "repair_session": "idea_to_spec_repair_session_journal",
 }
 REAL_IDEA_NO_CLARIFICATION_CONTINUATION_OUTPUTS = {
     "candidate_source_report": "intake_session_candidate_source_report.json",
     "active_candidate": "active_idea_to_spec_candidate.json",
+    "repair_session": "idea_to_spec_repair_session.json",
 }
 REAL_IDEA_NO_CLARIFICATION_CONTINUATION_EXPECTED_KINDS = {
     "candidate_source_report": "intake_session_candidate_source_report",
     "active_candidate": "active_idea_to_spec_candidate",
+    "repair_session": "idea_to_spec_repair_session_journal",
 }
 REAL_IDEA_ENTRY_INTAKE_EXECUTION_REPORT_KIND = (
     "platform_real_idea_entry_intake_execution_report"
@@ -3119,10 +3123,11 @@ def idea_maturity_public_artifact_status(
     specgraph_dir: Path,
     *,
     public_root: Path | None,
+    expected_refs: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
     if public_root is None:
         public_root = specgraph_dir / "dist" / "specgraph-public"
-    expected = list(IDEA_MATURITY_DEFAULT_REFS.values())
+    expected = list(expected_refs or IDEA_MATURITY_DEFAULT_REFS.values())
     published = [rel_path for rel_path in expected if (public_root / rel_path).is_file()]
     missing = [rel_path for rel_path in expected if rel_path not in published]
     return {
@@ -3242,9 +3247,13 @@ def idea_maturity_summary(
     specgraph_dir: Path,
     *,
     public_root: Path | None = None,
+    run_dir_ref: str = "runs",
+    expected_candidate_id: str | None = None,
 ) -> dict[str, Any]:
-    metrics_ref = IDEA_MATURITY_DEFAULT_REFS["metrics_report"]
-    validation_ref = IDEA_MATURITY_DEFAULT_REFS["validation_report"]
+    metrics_ref = f"{run_dir_ref}/{Path(IDEA_MATURITY_DEFAULT_REFS['metrics_report']).name}"
+    validation_ref = (
+        f"{run_dir_ref}/{Path(IDEA_MATURITY_DEFAULT_REFS['validation_report']).name}"
+    )
     metrics_path = specgraph_dir / metrics_ref
     validation_path = specgraph_dir / validation_ref
     metrics_report, metrics_status, diagnostics = load_optional_json_mapping(
@@ -3287,6 +3296,25 @@ def idea_maturity_summary(
                 subject="idea_maturity_metrics_report",
             )
         )
+        metrics_candidate_id = nested_mapping(metrics_report, "candidate").get(
+            "candidate_id"
+        )
+        if (
+            expected_candidate_id is not None
+            and metrics_candidate_id != expected_candidate_id
+        ):
+            metrics_valid = False
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="idea_maturity_candidate_id_mismatch",
+                    subject="idea_maturity_metrics_report.candidate.candidate_id",
+                    message=(
+                        "idea maturity candidate must match the repair execution plan: "
+                        f"expected {expected_candidate_id}"
+                    ),
+                )
+            )
     if validation_report is not None:
         if (
             validation_report.get("artifact_kind")
@@ -3579,7 +3607,10 @@ def idea_maturity_summary(
         "dry_run_count": numeric_metric(
             workflow_friction.get("dry_run_count", metrics.get("dry_run_count"))
         ),
-        "source_refs": IDEA_MATURITY_DEFAULT_REFS,
+        "source_refs": {
+            "metrics_report": metrics_ref,
+            "validation_report": validation_ref,
+        },
         "upstream_source_artifact_count": len(
             (metrics_report or {}).get("source_artifacts", [])
             if isinstance((metrics_report or {}).get("source_artifacts"), list)
@@ -3592,6 +3623,7 @@ def idea_maturity_summary(
         "public_artifacts": idea_maturity_public_artifact_status(
             specgraph_dir,
             public_root=public_root,
+            expected_refs=(metrics_ref, validation_ref),
         ),
         "diagnostics": [asdict(diagnostic) for diagnostic in diagnostics],
     }
@@ -5865,17 +5897,17 @@ def product_repair_draft_import_preview(args: argparse.Namespace) -> int:
         args.clarification_requests,
         base_dir=specgraph_dir,
     )
-    output_path = path_arg_or_default(
+    output_path = input_path_arg_or_default(
         args.output_preview,
         base_dir=specgraph_dir,
         default_rel=f"{run_dir_ref}/specspace_repair_draft_import_preview.json",
     )
-    report_path = (
-        Path(args.output)
-        if args.output
-        else specgraph_dir
-        / "runs"
-        / "platform_product_repair_draft_import_preview_execution_report.json"
+    report_path = input_path_arg_or_default(
+        args.output,
+        base_dir=specgraph_dir,
+        default_rel=(
+            "runs/platform_product_repair_draft_import_preview_execution_report.json"
+        ),
     )
 
     if not args.dry_run and not draft_source.is_file():
@@ -7763,6 +7795,52 @@ def real_idea_answer_continuation_output_records(
     }
 
 
+def real_idea_continuation_candidate_identity_diagnostics(
+    output_records: dict[str, dict[str, Any]],
+) -> list[Diagnostic]:
+    active_candidate_id = nested_mapping(
+        output_records.get("active_candidate", {}), "summary"
+    ).get("candidate_id")
+    repair_session_id = nested_mapping(
+        output_records.get("repair_session", {}), "summary"
+    ).get("candidate_id")
+    diagnostics: list[Diagnostic] = []
+    if not isinstance(active_candidate_id, str) or not active_candidate_id:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_continuation_active_candidate_id_missing",
+                subject="outputs.active_candidate.summary.candidate_id",
+                message="continuation active candidate must declare candidate_id",
+            )
+        )
+    if not isinstance(repair_session_id, str) or not repair_session_id:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_continuation_repair_session_id_missing",
+                subject="outputs.repair_session.summary.candidate_id",
+                message="continuation repair session must declare candidate_id",
+            )
+        )
+    if (
+        isinstance(active_candidate_id, str)
+        and active_candidate_id
+        and isinstance(repair_session_id, str)
+        and repair_session_id
+        and active_candidate_id != repair_session_id
+    ):
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_continuation_candidate_mismatch",
+                subject="outputs.repair_session.summary.candidate_id",
+                message="continuation active candidate and repair session must match",
+            )
+        )
+    return diagnostics
+
+
 def real_idea_no_clarification_continuation_output_records(
     *,
     run_dir: Path,
@@ -7817,6 +7895,9 @@ def real_idea_entry_intake_output_records(
 
 def real_idea_answer_continuation_output_diagnostics(
     output_records: dict[str, dict[str, Any]],
+    *,
+    run_dir: Path,
+    run_dir_ref: str,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for key, expected_kind in REAL_IDEA_ANSWER_CONTINUATION_EXPECTED_KINDS.items():
@@ -7871,11 +7952,23 @@ def real_idea_answer_continuation_output_diagnostics(
                         ),
                     )
                 )
+    diagnostics.extend(
+        real_idea_initial_repair_session_diagnostics(
+            run_dir=run_dir,
+            run_dir_ref=run_dir_ref,
+        )
+    )
+    diagnostics.extend(
+        real_idea_continuation_candidate_identity_diagnostics(output_records)
+    )
     return diagnostics
 
 
 def real_idea_no_clarification_continuation_output_diagnostics(
     output_records: dict[str, dict[str, Any]],
+    *,
+    run_dir: Path,
+    run_dir_ref: str,
 ) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for key, expected_kind in REAL_IDEA_NO_CLARIFICATION_CONTINUATION_EXPECTED_KINDS.items():
@@ -7931,6 +8024,53 @@ def real_idea_no_clarification_continuation_output_diagnostics(
                         message=f"SpecGraph no-clarification output {key} must not expand authority",
                     )
                 )
+    diagnostics.extend(
+        real_idea_initial_repair_session_diagnostics(
+            run_dir=run_dir,
+            run_dir_ref=run_dir_ref,
+        )
+    )
+    diagnostics.extend(
+        real_idea_continuation_candidate_identity_diagnostics(output_records)
+    )
+    return diagnostics
+
+
+def real_idea_initial_repair_session_diagnostics(
+    *,
+    run_dir: Path,
+    run_dir_ref: str,
+) -> list[Diagnostic]:
+    path = run_dir / "idea_to_spec_repair_session.json"
+    if not path.is_file():
+        return []
+    try:
+        repair_session = load_json_mapping(path, label="initial repair session")
+    except ValueError as error:
+        return [
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_continuation_repair_session_invalid",
+                subject="outputs.repair_session",
+                message=str(error),
+            )
+        ]
+    diagnostics = graph_repository_repair_session_diagnostics(
+        repair_session,
+        expected_source_refs=repair_session_expected_source_refs_for_run_dir(
+            run_dir_ref
+        ),
+        subject="outputs.repair_session",
+    )
+    if nested_mapping(repair_session, "readiness").get("ready") is not True:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="real_idea_continuation_repair_session_not_ready",
+                subject="outputs.repair_session.readiness.ready",
+                message="initial repair session must be structurally ready",
+            )
+        )
     return diagnostics
 
 
@@ -8385,6 +8525,7 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
         "generated_at": utc_now_iso(),
         "started_at": execution_started_at,
         "plan_ref": str(plan_path),
+        "plan_sha256": file_sha256(plan_path),
         "specgraph_dir": str(specgraph_dir),
         "workspace_binding": plan.get("workspace_binding"),
         "ok": ok,
@@ -8413,6 +8554,8 @@ def product_repair_rerun_execute(args: argparse.Namespace) -> int:
         "summary": {
             "status": "completed" if ok and not args.dry_run else "dry_run" if args.dry_run else "failed",
             "error_count": error_count,
+            "workspace_id": nested_mapping(plan, "summary").get("workspace_id"),
+            "candidate_id": nested_mapping(plan, "summary").get("candidate_id"),
             "output_artifact_count": len(output_records),
             "repaired_handoff_requested": args.build_repaired_handoff,
             "repaired_handoff_built": (
@@ -8620,9 +8763,17 @@ def real_idea_answer_continuation_execute(args: argparse.Namespace) -> int:
         )
     if not diagnostics and not args.dry_run:
         diagnostics.extend(
-            real_idea_no_clarification_continuation_output_diagnostics(output_records)
+            real_idea_no_clarification_continuation_output_diagnostics(
+                output_records,
+                run_dir=run_dir,
+                run_dir_ref=run_dir_ref,
+            )
             if continuation_mode == "clarification_not_required"
-            else real_idea_answer_continuation_output_diagnostics(output_records)
+            else real_idea_answer_continuation_output_diagnostics(
+                output_records,
+                run_dir=run_dir,
+                run_dir_ref=run_dir_ref,
+            )
         )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0 and (args.dry_run or command_result is not None)
@@ -9448,6 +9599,61 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
             subject="specgraph_dir",
         )
     )
+    plan_ref = execution_report.get("plan_ref")
+    plan: dict[str, Any] = {}
+    if isinstance(plan_ref, str) and plan_ref:
+        plan_path = input_path_arg_or_existing(plan_ref, base_dir=specgraph_dir)
+        try:
+            plan = load_json_mapping(
+                plan_path,
+                label="product repair rerun execution plan",
+            )
+        except ValueError as error:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code="product_repair_rerun_publication_plan_invalid",
+                    subject="execution_report.plan_ref",
+                    message=str(error),
+                )
+            )
+        else:
+            diagnostics.extend(product_repair_plan_diagnostics(plan))
+            if execution_report.get("plan_sha256") != file_sha256(plan_path):
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_publication_plan_digest_mismatch",
+                        subject="execution_report.plan_sha256",
+                        message="execution report must pin the current repair plan digest",
+                    )
+                )
+    else:
+        diagnostics.append(
+            Diagnostic(
+                level="ERROR",
+                code="product_repair_rerun_publication_plan_ref_missing",
+                subject="execution_report.plan_ref",
+                message="execution report must reference its repair plan",
+            )
+        )
+    plan_summary = nested_mapping(plan, "summary")
+    expected_workspace_id = plan_summary.get("workspace_id")
+    expected_candidate_id = plan_summary.get("candidate_id")
+    execution_summary = nested_mapping(execution_report, "summary")
+    for field, expected in (
+        ("workspace_id", expected_workspace_id),
+        ("candidate_id", expected_candidate_id),
+    ):
+        if isinstance(expected, str) and execution_summary.get(field) != expected:
+            diagnostics.append(
+                Diagnostic(
+                    level="ERROR",
+                    code=f"product_repair_rerun_publication_{field}_mismatch",
+                    subject=f"execution_report.summary.{field}",
+                    message=f"execution report must match repair plan {field}",
+                )
+            )
     output_path = (
         Path(args.output)
         if args.output
@@ -9455,7 +9661,65 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         / "runs"
         / "platform_product_repair_rerun_publication_report.json"
     )
-    command = ["make", "publish-bundle"]
+    binding_context = nested_mapping(execution_report, "workspace_binding")
+    workspace_id = binding_context.get("workspace_id")
+    run_dir_ref = "runs"
+    bundle_ref = ""
+    manifest_ref = "artifact_manifest.json"
+    if binding_context:
+        diagnostics.extend(
+            managed_product_workspace_binding_context_diagnostics(
+                binding_context,
+                expected_workspace_id=(
+                    expected_workspace_id
+                    if isinstance(expected_workspace_id, str)
+                    else None
+                ),
+                subject_prefix="execution_report.workspace_binding",
+            )
+        )
+        expected_run_dir_ref = (
+            f"runs/{workspace_id}" if isinstance(workspace_id, str) else None
+        )
+        expected_bundle_ref = (
+            f"workspaces/{workspace_id}" if isinstance(workspace_id, str) else None
+        )
+        expected_manifest_ref = (
+            f"{expected_bundle_ref}/artifact_manifest.json"
+            if expected_bundle_ref
+            else None
+        )
+        for field, expected in (
+            ("platform_default_run_dir_ref", expected_run_dir_ref),
+            ("product_artifact_bundle_ref", expected_bundle_ref),
+            ("product_artifact_manifest_ref", expected_manifest_ref),
+        ):
+            if binding_context.get(field) != expected:
+                diagnostics.append(
+                    Diagnostic(
+                        level="ERROR",
+                        code="product_repair_rerun_publication_binding_routing_mismatch",
+                        subject=f"execution_report.workspace_binding.{field}",
+                        message=f"workspace binding must route publication through {expected}",
+                    )
+                )
+        if expected_run_dir_ref and expected_bundle_ref and expected_manifest_ref:
+            run_dir_ref = expected_run_dir_ref
+            bundle_ref = expected_bundle_ref
+            manifest_ref = expected_manifest_ref
+
+    if binding_context:
+        command = [
+            "make",
+            "publish-workspace-bundle",
+            f"PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR={run_dir_ref}",
+            (
+                "PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR="
+                f"dist/specgraph-public/{bundle_ref}"
+            ),
+        ]
+    else:
+        command = ["make", "publish-bundle"]
     if args.python:
         command.append(f"PYTHON={args.python}")
     command_result: dict[str, Any] | None = None
@@ -9494,7 +9758,10 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
             "dry_run": True,
         }
 
-    manifest_path = specgraph_dir / "dist" / "specgraph-public" / "artifact_manifest.json"
+    public_root = specgraph_dir / "dist" / "specgraph-public"
+    if bundle_ref:
+        public_root = public_root / bundle_ref
+    manifest_path = specgraph_dir / "dist" / "specgraph-public" / manifest_ref
     manifest_present = manifest_path.is_file()
     if not args.dry_run and not manifest_present:
         diagnostics.append(
@@ -9511,16 +9778,35 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         is True
         or "repaired_handoff" in execution_outputs
     )
-    public_paths = list(PRODUCT_REPAIR_RERUN_PUBLIC_PATHS)
+    public_paths = [
+        f"{run_dir_ref}/{Path(path).name}"
+        for path in PRODUCT_REPAIR_RERUN_PUBLIC_PATHS
+    ]
+    bundle_public_paths = [
+        f"runs/{Path(path).name}" if bundle_ref else path
+        for path in public_paths
+    ]
     if repaired_handoff_requested:
-        public_paths.extend(PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS)
+        repaired_public_paths = [
+            f"{run_dir_ref}/{Path(path).name}"
+            for path in PRODUCT_REPAIR_RERUN_REPAIRED_PUBLIC_PATHS
+        ]
+        public_paths.extend(repaired_public_paths)
+        bundle_public_paths.extend(
+            f"runs/{Path(path).name}" if bundle_ref else path
+            for path in repaired_public_paths
+        )
     present_public_paths = []
     missing_public_paths = []
-    for rel_path in public_paths:
-        if (specgraph_dir / "dist" / "specgraph-public" / rel_path).is_file():
-            present_public_paths.append(rel_path)
+    for source_ref, bundle_path in zip(
+        public_paths,
+        bundle_public_paths,
+        strict=True,
+    ):
+        if (public_root / bundle_path).is_file():
+            present_public_paths.append(source_ref)
         else:
-            missing_public_paths.append(rel_path)
+            missing_public_paths.append(source_ref)
     if not args.dry_run and missing_public_paths:
         diagnostics.append(
             Diagnostic(
@@ -9535,7 +9821,11 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         )
     maturity_summary = idea_maturity_summary(
         specgraph_dir,
-        public_root=specgraph_dir / "dist" / "specgraph-public",
+        public_root=public_root,
+        run_dir_ref=run_dir_ref,
+        expected_candidate_id=(
+            expected_candidate_id if isinstance(expected_candidate_id, str) else None
+        ),
     )
     error_count = sum(1 for diagnostic in diagnostics if diagnostic.level == "ERROR")
     ok = error_count == 0
@@ -9545,6 +9835,13 @@ def product_repair_rerun_publish(args: argparse.Namespace) -> int:
         "generated_at": utc_now_iso(),
         "execution_report_ref": str(execution_report_path),
         "specgraph_dir": str(specgraph_dir),
+        "workspace_id": workspace_id if isinstance(workspace_id, str) else None,
+        "workspace_binding": binding_context or None,
+        "publication_scope": {
+            "run_dir_ref": run_dir_ref,
+            "bundle_ref": bundle_ref or ".",
+            "manifest_ref": manifest_ref,
+        },
         "ok": ok,
         "dry_run": args.dry_run,
         "canonical_mutations_allowed": False,

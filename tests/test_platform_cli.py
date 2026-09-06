@@ -73,6 +73,21 @@ class PlatformCliTests(unittest.TestCase):
             stderr=subprocess.PIPE,
         )
 
+    def test_real_idea_continuation_rejects_cross_candidate_repair_session(
+        self,
+    ) -> None:
+        diagnostics = platform_module.real_idea_continuation_candidate_identity_diagnostics(
+            {
+                "active_candidate": {"summary": {"candidate_id": "candidate-a"}},
+                "repair_session": {"summary": {"candidate_id": "candidate-b"}},
+            }
+        )
+
+        self.assertIn(
+            "real_idea_continuation_candidate_mismatch",
+            {item.code for item in diagnostics},
+        )
+
     def test_strict_recovery_preflight_does_not_requeue_policy_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -2673,6 +2688,11 @@ publish-bundle:
 \t@test ! -f runs/repaired_idea_to_spec_promotion_gate.json || cp runs/repaired_idea_to_spec_promotion_gate.json dist/specgraph-public/runs/repaired_idea_to_spec_promotion_gate.json
 \t@test ! -f runs/idea_maturity_metrics_report.json || cp runs/idea_maturity_metrics_report.json dist/specgraph-public/runs/idea_maturity_metrics_report.json
 \t@test ! -f runs/idea_maturity_metrics_validation_report.json || cp runs/idea_maturity_metrics_validation_report.json dist/specgraph-public/runs/idea_maturity_metrics_validation_report.json
+
+publish-workspace-bundle:
+\t@mkdir -p "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/runs"
+\t@printf '%s\\n' '{"artifact_kind":"artifact_manifest"}' > "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/artifact_manifest.json"
+\t@for name in idea_to_spec_repair_session.json specspace_repair_draft_rerun_report.json idea_to_spec_rerun_preview.json idea_to_spec_rerun_materialization.json repaired_candidate_promotion_handoff_report.json repaired_active_idea_to_spec_candidate.json repaired_candidate_spec_graph.json repaired_pre_sib_coherence_report.json repaired_candidate_repair_loop_report.json repaired_candidate_spec_materialization_report.json repaired_idea_to_spec_repair_session.json repaired_idea_to_spec_promotion_gate.json idea_maturity_metrics_report.json idea_maturity_metrics_validation_report.json; do test ! -f "$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name" || cp "$(PRODUCT_WORKSPACE_PUBLICATION_RUN_DIR)/$$name" "$(PRODUCT_WORKSPACE_PUBLICATION_OUTPUT_DIR)/runs/$$name"; done
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
 
@@ -2688,11 +2708,13 @@ real-idea-intake-continue-from-specspace-answers:
 \t@printf '%s\\n' '{"artifact_kind":"user_idea_intake_session","readiness":{"ready":true,"review_state":"ready_for_event_storming_intake"},"summary":{"status":"ready_for_event_storming_intake"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/clarified_user_idea_intake_session.json
 \t@printf '%s\\n' '{"artifact_kind":"intake_session_candidate_source_report","readiness":{"ready":true,"review_state":"candidate_source_ready"},"summary":{"status":"candidate_source_ready"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/intake_session_candidate_source_report.json
 \t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","readiness":{"ready":false,"review_state":"active_candidate_review_required"},"summary":{"status":"active_candidate_review_required","candidate_id":"idea-alpha"}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":false,"ready_for_platform_promotion":false},"readiness_impact":{"intermediate_artifacts_ready":false,"ready_for_candidate_approval":false,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_promotion_gate.json"}}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_repair_session.json
 
 real-idea-intake-continue-without-answers:
 \t@mkdir -p $(REAL_IDEA_SMOKE_RUN_DIR)
 \t@printf '%s\\n' '{"artifact_kind":"intake_session_candidate_source_report","readiness":{"ready":true,"review_state":"candidate_source_ready"},"summary":{"status":"candidate_source_ready"},"authority_boundary":{"may_mutate_canonical_specs":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/intake_session_candidate_source_report.json
 \t@printf '%s\\n' '{"artifact_kind":"active_idea_to_spec_candidate","readiness":{"ready":false,"review_state":"active_candidate_review_required"},"summary":{"status":"active_candidate_review_required","candidate_id":"idea-alpha"},"authority_boundary":{"may_mutate_canonical_specs":false}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json
+\t@printf '%s\\n' '{"artifact_kind":"idea_to_spec_repair_session_journal","contract_ref":"specgraph.idea-to-spec.repair-session-journal.v0.1","readiness":{"ready":true,"review_state":"repair_session_journal_ready","blocked_by":[]},"summary":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","ready_for_candidate_approval":false,"ready_for_platform_promotion":false},"readiness_impact":{"intermediate_artifacts_ready":false,"ready_for_candidate_approval":false,"ready_for_platform_promotion":false},"authority_boundary":{"may_accept_ontology_terms":false,"may_apply_answers_to_source_artifacts":false,"may_apply_decisions_to_source_artifacts":false,"may_create_branch_or_commit":false,"may_execute_prompt_agent":false,"may_mark_candidate_graph_accepted":false,"may_mutate_candidate_source_artifacts":false,"may_mutate_canonical_specs":false,"may_open_pull_request":false,"may_publish_read_model":false,"may_write_ontology_lockfile":false,"may_write_ontology_package":false},"privacy_boundary":{"raw_idea_text_published":false,"raw_model_output_published":false,"raw_operator_note_published":false,"raw_prompt_published":false,"static_flags_are_asserted_invariants":true},"session":{"candidate_id":"idea-alpha","workflow_lane":"product_idea_to_spec","target_repository_role":"product_spec_workspace"},"source_artifacts":{"active_candidate":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/active_idea_to_spec_candidate.json"},"clarification_requests":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_clarification_requests.json"},"clarification_answers":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_clarification_answers.json"},"ontology_decisions":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/product_ontology_gap_review_decisions.json"},"rerun_input":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_answer_rerun_input.json"},"rerun_preview":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_rerun_preview.json"},"rerun_materialization":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_rerun_materialization.json"},"promotion_gate":{"source_ref":"$(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_promotion_gate.json"}}}' > $(REAL_IDEA_SMOKE_RUN_DIR)/idea_to_spec_repair_session.json
 """
         (specgraph_dir / "Makefile").write_text(makefile, encoding="utf-8")
 
@@ -5662,7 +5684,7 @@ workspaces:
                 "--workspace-id",
                 "idea-alpha-workspace",
                 "--output",
-                str(report_path),
+                "runs/platform_product_repair_draft_import_preview_execution_report.json",
                 "--format",
                 "json",
             )
@@ -7657,6 +7679,64 @@ workspaces:
                 ).is_file()
             )
 
+    def test_blocked_repaired_outputs_preserve_candidate_identity(self) -> None:
+        output_records = {
+            "repaired_handoff": {
+                "present": True,
+                "artifact_kind": (
+                    platform_module.PRODUCT_CANDIDATE_APPROVAL_REPAIRED_HANDOFF_KIND
+                ),
+                "ready": False,
+                "output_artifact_candidate_ids": {
+                    "repaired_active_candidate": "idea-alpha",
+                    "repaired_repair_session": "idea-alpha",
+                    "repaired_promotion_gate": "idea-alpha",
+                },
+            },
+            "repaired_active_candidate": {
+                "present": True,
+                "artifact_kind": "active_idea_to_spec_candidate",
+                "ready": False,
+                "summary": {"candidate_id": "idea-alpha"},
+            },
+            "repaired_repair_session": {
+                "present": True,
+                "artifact_kind": "idea_to_spec_repair_session_journal",
+                "ready": False,
+                "summary": {"candidate_id": "idea-alpha"},
+            },
+            "repaired_promotion_gate": {
+                "present": True,
+                "artifact_kind": "idea_to_spec_promotion_gate",
+                "ready": False,
+                "summary": {"candidate_id": "idea-alpha"},
+            },
+        }
+
+        diagnostics = platform_module.product_repair_repaired_output_diagnostics(
+            output_records,
+            expected_candidate_id="idea-alpha",
+        )
+        codes = {item.code for item in diagnostics}
+        self.assertIn("product_repair_rerun_repaired_handoff_not_ready", codes)
+        self.assertIn("product_repair_rerun_repaired_output_not_ready", codes)
+        self.assertNotIn(
+            "product_repair_rerun_repaired_handoff_candidate_mismatch",
+            codes,
+        )
+
+        output_records["repaired_handoff"]["output_artifact_candidate_ids"][
+            "repaired_promotion_gate"
+        ] = "foreign-candidate"
+        diagnostics = platform_module.product_repair_repaired_output_diagnostics(
+            output_records,
+            expected_candidate_id="idea-alpha",
+        )
+        self.assertIn(
+            "product_repair_rerun_repaired_handoff_candidate_mismatch",
+            {item.code for item in diagnostics},
+        )
+
     def test_product_repair_rerun_execute_rejects_foreign_repaired_candidate(
         self,
     ) -> None:
@@ -8085,6 +8165,155 @@ workspaces:
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["summary"]["published_artifact_count"], 4)
             self.assertFalse(payload["authority_boundary"]["executes_git_commands"])
+
+    def test_product_repair_rerun_publish_uses_bound_workspace_provenance(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specgraph_dir = Path(tmp_dir) / "SpecGraph"
+            specgraph_dir.mkdir()
+            self.write_product_repair_makefile(specgraph_dir)
+            self.write_product_repair_rerun_artifacts(specgraph_dir)
+            self.write_idea_maturity_artifacts(specgraph_dir)
+            plan_path = specgraph_dir / "runs" / "product_repair_rerun_plan.json"
+            execution_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_execution.json"
+            )
+            publication_report_path = (
+                specgraph_dir / "runs" / "product_repair_rerun_publication.json"
+            )
+            plan_result = self.run_cli(
+                "product-repair-rerun",
+                "plan",
+                "--specgraph-dir",
+                str(specgraph_dir),
+                "--output",
+                str(plan_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+            execute_result = self.run_cli(
+                "product-repair-rerun",
+                "execute",
+                "--plan",
+                str(plan_path),
+                "--build-repaired-handoff",
+                "--output",
+                str(execution_report_path),
+                "--format",
+                "json",
+            )
+            self.assertEqual(execute_result.returncode, 0, execute_result.stderr)
+
+            workspace_id = "idea-alpha-workspace"
+            run_dir = specgraph_dir / "runs" / workspace_id
+            run_dir.mkdir()
+            for source in (specgraph_dir / "runs").glob("*.json"):
+                shutil.copy2(source, run_dir / source.name)
+            scoped_metrics_path = run_dir / "idea_maturity_metrics_report.json"
+            scoped_metrics = json.loads(scoped_metrics_path.read_text(encoding="utf-8"))
+            scoped_metrics["candidate"]["candidate_id"] = "idea-alpha"
+            scoped_metrics["derived_state"]["lifecycle_state"] = "approval_ready"
+            scoped_metrics_path.write_text(
+                json.dumps(scoped_metrics, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            root_metrics_path = specgraph_dir / "runs" / "idea_maturity_metrics_report.json"
+            root_metrics = json.loads(root_metrics_path.read_text(encoding="utf-8"))
+            root_metrics["candidate"]["candidate_id"] = "team-decision-log"
+            root_metrics["derived_state"]["lifecycle_state"] = (
+                "read_model_publication_complete"
+            )
+            root_metrics_path.write_text(
+                json.dumps(root_metrics, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            binding_context = {
+                "contract_ref": "platform.product-workspace.binding.v1",
+                "binding_id": f"product-workspace-binding://{workspace_id}",
+                "binding_revision_sha256": "1" * 64,
+                "status": "ready",
+                "source_ref": (
+                    f"runs/{workspace_id}/"
+                    "platform_product_workspace_initialization_execution_report.json"
+                ),
+                "source_sha256": "2" * 64,
+                "workspace_id": workspace_id,
+                "display_name": "Bound idea",
+                "route": f"/{workspace_id}",
+                "repository_role": "product_spec_workspace",
+                "specspace_state_namespace_ref": (
+                    f"specspace-state://workspace/{workspace_id}"
+                ),
+                "platform_default_run_dir_ref": f"runs/{workspace_id}",
+                "product_artifact_bundle_ref": f"workspaces/{workspace_id}",
+                "product_artifact_manifest_ref": (
+                    f"workspaces/{workspace_id}/artifact_manifest.json"
+                ),
+                "repository": {
+                    "workspace_identity": workspace_id,
+                    "worktree_identity": f"product-workspace/{workspace_id}",
+                    "creates_worktree": False,
+                },
+                "provenance": {
+                    "plan_sha256": "3" * 64,
+                    "specgraph_initialization_report_sha256": "4" * 64,
+                },
+                "authority_boundary": {
+                    "report_only": True,
+                    "may_execute_platform": False,
+                    "may_execute_specgraph": False,
+                    "may_create_git_commit": False,
+                    "may_open_pull_request": False,
+                    "may_publish_read_model": False,
+                },
+            }
+            execution_report = json.loads(
+                execution_report_path.read_text(encoding="utf-8")
+            )
+            execution_report["workspace_binding"] = binding_context
+            execution_report_path.write_text(
+                json.dumps(execution_report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "product-repair-rerun",
+                "publish",
+                "--execution-report",
+                str(execution_report_path),
+                "--output",
+                str(publication_report_path),
+                "--format",
+                "json",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["workspace_id"], workspace_id)
+            self.assertEqual(payload["command"][1], "publish-workspace-bundle")
+            self.assertEqual(
+                payload["publication_scope"],
+                {
+                    "run_dir_ref": f"runs/{workspace_id}",
+                    "bundle_ref": f"workspaces/{workspace_id}",
+                    "manifest_ref": (
+                        f"workspaces/{workspace_id}/artifact_manifest.json"
+                    ),
+                },
+            )
+            self.assertEqual(
+                payload["idea_maturity"]["lifecycle_state"],
+                "approval_ready",
+            )
+            self.assertTrue(
+                all(
+                    path.startswith(f"runs/{workspace_id}/")
+                    for path in payload["published_artifacts"]
+                )
+            )
+            self.assertNotIn("team-decision-log", json.dumps(payload))
 
     def test_product_repair_rerun_publish_surfaces_idea_maturity(
         self,

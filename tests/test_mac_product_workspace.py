@@ -253,6 +253,12 @@ class MacProductWorkspaceTests(unittest.TestCase):
             backend_command[backend_command.index("--product-workspace-catalog") + 1],
             str(config.product_workspace_catalog),
         )
+        self.assertEqual(
+            backend_command[
+                backend_command.index("--platform-execution-timeout-seconds") + 1
+            ],
+            "600",
+        )
         self.assertTrue(catalog_exists)
         self.assertIn(
             "artifact_kind: platform_workspace_catalog",
@@ -361,6 +367,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
         self.assertFalse(manifest_exists)
 
     @mock.patch.object(mac_product_workspace, "_emit", return_value=0)
+    @mock.patch.object(mac_product_workspace, "_port_available", return_value=True)
     @mock.patch.object(
         mac_product_workspace,
         "_service_healthy",
@@ -375,6 +382,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
         self,
         stop_owned: mock.Mock,
         service_healthy: mock.Mock,
+        port_available: mock.Mock,
         emit: mock.Mock,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -388,6 +396,7 @@ class MacProductWorkspaceTests(unittest.TestCase):
         self.assertEqual(result, 0)
         stop_owned.assert_called_once_with(config)
         self.assertEqual(service_healthy.call_count, 6)
+        self.assertEqual(port_available.call_count, 4)
         self.assertTrue(emit.call_args.args[0]["ok"])
         self.assertEqual(
             emit.call_args.args[0]["runtime_dir"],

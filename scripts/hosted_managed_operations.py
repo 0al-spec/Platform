@@ -127,10 +127,13 @@ MANAGED_OPERATIONS: tuple[ManagedOperationDefinition, ...] = (
         platform_command=("product-repair-rerun", "request-gate"),
         input_refs=(
             "specspace-state://idea_to_spec_repair_rerun_requests.json",
-            "runs/specspace_repair_draft_import_preview.json",
+            "specspace-state://idea_to_spec_repair_drafts.json",
             "runs/idea_to_spec_repair_session.json",
+            "runs/idea_to_spec_clarification_requests.json",
         ),
         output_reports=(
+            "runs/platform_product_repair_draft_import_preview_execution_report.json",
+            "runs/specspace_repair_draft_import_preview.json",
             "runs/platform_product_repair_rerun_request_gate_execution_report.json",
             "runs/specspace_repair_rerun_request_gate.json",
         ),
