@@ -29,6 +29,7 @@ except ModuleNotFoundError:  # Direct execution adds scripts/ rather than repo r
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = REPO_ROOT / "docker-compose.hosted-managed-production.example.yml"
+NORMLAB_COMPOSE_FILE = REPO_ROOT / "docker-compose.normlab-staging.example.yml"
 INGRESS_DOCKERFILE = REPO_ROOT / "Dockerfile.hosted-managed-ingress"
 WORKER_WINDOW_POLICY = (
     REPO_ROOT / "deploy" / "hosted-managed" / "worker-window-policy.json"
@@ -419,6 +420,11 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
         or "reverse_proxy specspace-state-service:8092" not in caddyfile
     ):
         raise RuntimeError("TLS ingress omitted the SpecSpace state route")
+    if (
+        "handle_path /normlab/*" not in caddyfile
+        or "reverse_proxy normlab:4317" not in caddyfile
+    ):
+        raise RuntimeError("TLS ingress omitted the private NormLab route")
     ingress_command = ingress.get("command")
     if ingress_command != [
         "run",
@@ -488,10 +494,18 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
     networks = payload.get("networks")
     if not isinstance(networks, dict):
         raise RuntimeError("production Compose omitted networks")
-    backend_names = [name for name, value in networks.items() if value.get("internal")]
-    if len(backend_names) != 1:
-        raise RuntimeError("production Compose must have one internal backend network")
-    backend_name = backend_names[0]
+    normlab_private = networks.get("normlab-private")
+    if (
+        not isinstance(normlab_private, dict)
+        or normlab_private.get("internal") is not True
+        or normlab_private.get("name") != "platform-managed-normlab"
+        or "normlab-private" not in ingress.get("networks", {})
+    ):
+        raise RuntimeError("Caddy must connect to the private NormLab network")
+    backend_network = networks.get("managed-backend")
+    if not isinstance(backend_network, dict) or backend_network.get("internal") is not True:
+        raise RuntimeError("production Compose must keep an internal backend network")
+    backend_name = "managed-backend"
     for service_name in (
         "managed-operation-postgres",
         "managed-operation-service",
@@ -502,10 +516,90 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
     if backend_name not in worker_networks or len(worker_networks) != 2:
         raise RuntimeError("worker must have internal queue access and one egress network")
     ingress_networks = set(ingress.get("networks", {}))
-    if backend_name not in ingress_networks or len(ingress_networks) != 2:
-        raise RuntimeError("TLS ingress must have internal service access and one ingress network")
+    if backend_name not in ingress_networks or len(ingress_networks) != 3:
+        raise RuntimeError(
+            "TLS ingress must have managed, public-ingress, and NormLab-private networks"
+        )
     if worker_networks == ingress_networks:
         raise RuntimeError("worker egress and public ingress networks must remain separate")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        secret_path = Path(temp_dir) / "normlab-operator-password"
+        secret_path.write_text("staging-contract-placeholder", encoding="utf-8")
+        normlab_compose_env = dict(os.environ)
+        normlab_compose_env.update(
+            {
+                "PLATFORM_MANAGED_NORMLAB_NETWORK_NAME": (
+                    "platform-managed-normlab"
+                ),
+                "PLATFORM_NORMLAB_IMAGE": (
+                    f"ghcr.io/soundblaster/normlab@sha256:{SHA256}"
+                ),
+                "PLATFORM_NORMLAB_OPERATOR_PASSWORD_FILE": str(secret_path),
+            }
+        )
+        normlab_render = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "--project-name",
+                "normlab-staging",
+                "--file",
+                str(NORMLAB_COMPOSE_FILE),
+                "config",
+                "--format",
+                "json",
+            ],
+            cwd=REPO_ROOT,
+            env=normlab_compose_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if normlab_render.returncode != 0:
+            raise RuntimeError(
+                "NormLab staging Compose did not render: "
+                f"{normlab_render.stderr.strip()}"
+            )
+        normlab_payload = json.loads(normlab_render.stdout)
+    normlab_services = normlab_payload.get("services")
+    if not isinstance(normlab_services, dict) or set(normlab_services) != {"normlab"}:
+        raise RuntimeError("NormLab staging must contain only its application service")
+    normlab_service = normlab_services["normlab"]
+    if (
+        normlab_service.get("image")
+        != f"ghcr.io/soundblaster/normlab@sha256:{SHA256}"
+        or normlab_service.get("ports")
+        or normlab_service.get("user") != "1000:1000"
+        or normlab_service.get("read_only") is not True
+        or normlab_service.get("cap_drop") != ["ALL"]
+        or "no-new-privileges:true" not in normlab_service.get("security_opt", [])
+    ):
+        raise RuntimeError("NormLab staging service is not digest-pinned and hardened")
+    normlab_service_env = normlab_service.get("environment")
+    if not isinstance(normlab_service_env, dict) or (
+        normlab_service_env.get("NORMLAB_OPERATOR_AUTH_ENABLED") != "true"
+        or normlab_service_env.get("NORMLAB_OPERATOR_AUTH_PASSWORD_FILE")
+        != "/run/secrets/normlab_operator_password"
+        or normlab_service_env.get("NORMLAB_PUBLIC_ORIGIN")
+        != "https://managed.specgraph.tech"
+    ):
+        raise RuntimeError("NormLab staging must require its private operator auth boundary")
+    if set(normlab_service.get("networks", {})) != {"normlab-private"}:
+        raise RuntimeError("NormLab must not have outbound access or host networking")
+    staging_network = normlab_payload.get("networks", {}).get("normlab-private", {})
+    if (
+        staging_network.get("external") is not True
+        or staging_network.get("name") != "platform-managed-normlab"
+    ):
+        raise RuntimeError("NormLab staging must attach only to Platform's internal network")
+    mounts = normlab_service.get("volumes", [])
+    if not any(
+        mount.get("target") == "/var/lib/normlab"
+        and mount.get("type") == "volume"
+        for mount in mounts
+    ):
+        raise RuntimeError("NormLab database and signing identity require a persistent volume")
     if set(window_worker.get("networks", {})) != worker_networks:
         raise RuntimeError("bounded worker must use the worker network boundary")
     if dry_run_worker.get("profiles") != [dry_run_profile.compose_profile]:
@@ -579,6 +673,9 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
             "promotion_dry_run_policy_validated": True,
             "promotion_dry_run_continuous_worker_forbidden": True,
             "bounded_product_service_allowlist_validated": True,
+            "normlab_operator_route_private": True,
+            "normlab_staging_volume_persistent": True,
+            "normlab_provider_egress_disabled": True,
         },
     }
 

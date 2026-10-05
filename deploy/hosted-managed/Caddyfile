@@ -10,6 +10,12 @@
 	handle_path /specspace-state/* {
 		reverse_proxy specspace-state-service:8092
 	}
+	handle /normlab {
+		redir /normlab/ 308
+	}
+	handle_path /normlab/* {
+		reverse_proxy normlab:4317
+	}
 	handle {
 		reverse_proxy managed-operation-service:8091
 	}

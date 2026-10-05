@@ -325,6 +325,7 @@ services:
     networks:
       - managed-backend
       - managed-ingress
+      - normlab-private
     depends_on:
       managed-operation-service:
         condition: service_healthy
@@ -379,6 +380,9 @@ networks:
     internal: true
   managed-egress: {}
   managed-ingress: {}
+  normlab-private:
+    name: "${PLATFORM_MANAGED_NORMLAB_NETWORK_NAME:-platform-managed-normlab}"
+    internal: true
 
 secrets:
   managed_operation_token:

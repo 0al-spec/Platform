@@ -1,0 +1,56 @@
+services:
+  normlab:
+    image: "${PLATFORM_NORMLAB_IMAGE:?set a digest-pinned private NormLab image}"
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    cpus: "1.0"
+    pids_limit: 128
+    stop_grace_period: 30s
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4317"
+      NORMLAB_DATA_DIR: /var/lib/normlab
+      NORMLAB_LEAN_MEMORY_MB: "1024"
+      NORMLAB_OPERATOR_AUTH_ENABLED: "true"
+      NORMLAB_OPERATOR_AUTH_USERNAME: "${PLATFORM_NORMLAB_OPERATOR_USERNAME:-operator}"
+      NORMLAB_OPERATOR_AUTH_PASSWORD_FILE: /run/secrets/normlab_operator_password
+      NORMLAB_PUBLIC_ORIGIN: https://managed.specgraph.tech
+    expose:
+      - "4317"
+    volumes:
+      - normlab-data:/var/lib/normlab
+    secrets:
+      - normlab_operator_password
+    networks:
+      - normlab-private
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4317/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+
+volumes:
+  normlab-data:
+
+networks:
+  normlab-private:
+    external: true
+    name: "${PLATFORM_MANAGED_NORMLAB_NETWORK_NAME:-platform-managed-normlab}"
+
+secrets:
+  normlab_operator_password:
+    file: "${PLATFORM_NORMLAB_OPERATOR_PASSWORD_FILE:?set the operator password file path}"
