@@ -529,6 +529,9 @@ def validate_hosted_managed_production_compose() -> dict[str, Any]:
         normlab_compose_env = dict(os.environ)
         normlab_compose_env.update(
             {
+                "PLATFORM_MANAGED_NORMLAB_NETWORK_NAME": (
+                    "platform-managed-normlab"
+                ),
                 "PLATFORM_NORMLAB_IMAGE": (
                     f"ghcr.io/soundblaster/normlab@sha256:{SHA256}"
                 ),

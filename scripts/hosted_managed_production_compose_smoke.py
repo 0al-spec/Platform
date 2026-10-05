@@ -223,6 +223,9 @@ def _fixture(
             "PLATFORM_MANAGED_OPERATION_BACKUP_ROOT": str(backup_root),
             "PLATFORM_MANAGED_OPERATION_INGRESS_BIND_IP": "127.0.0.1",
             "PLATFORM_MANAGED_OPERATION_INGRESS_PORT": str(ingress_port),
+            "PLATFORM_MANAGED_NORMLAB_NETWORK_NAME": (
+                f"platform-production-smoke-normlab-{os.getpid()}"
+            ),
             "PLATFORM_MANAGED_OPERATION_TOKEN_FILE": str(secrets / "service-token"),
             "PLATFORM_MANAGED_OPERATION_DB_PASSWORD_FILE": str(
                 secrets / "database-password"

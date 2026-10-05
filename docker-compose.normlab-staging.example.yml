@@ -49,7 +49,7 @@ volumes:
 networks:
   normlab-private:
     external: true
-    name: platform-managed-normlab
+    name: "${PLATFORM_MANAGED_NORMLAB_NETWORK_NAME:-platform-managed-normlab}"
 
 secrets:
   normlab_operator_password:

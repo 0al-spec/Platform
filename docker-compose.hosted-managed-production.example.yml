@@ -381,7 +381,7 @@ networks:
   managed-egress: {}
   managed-ingress: {}
   normlab-private:
-    name: platform-managed-normlab
+    name: "${PLATFORM_MANAGED_NORMLAB_NETWORK_NAME:-platform-managed-normlab}"
     internal: true
 
 secrets:
