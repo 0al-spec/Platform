@@ -676,6 +676,11 @@ while still preserving the internal bootstrap profile for maintainers.
 
 ## Production Notes
 
+The optional private NormLab staging service and its persistent data volume are
+documented in the [NormLab staging runbook](normlab-staging-runbook.md). It is
+served through the managed TLS ingress and does not change the public Timeweb
+SpecGraph.space application.
+
 Do not run the SpecSpace web frontend in production through a Vite development
 server. The production profile should build static assets and serve them through
 the reverse proxy or a small static server.
