@@ -14,6 +14,11 @@ for pipeline limits, retained artifacts and provider semantics.
 | TypeSafe API key | `/srv/0al/secrets/normlab-inference/typesafe-api-key` | `/run/secrets/normlab_typesafe_api_key` | Gateway, optional TypeSafe overlay |
 | Internal token | `/srv/0al/secrets/normlab-inference/gateway-token` | `/run/secrets/normlab_inference_token` | Gateway + NormLab |
 
+The OpenAI secret is the selected OpenAI-compatible supplier's credential,
+including CoreInfra when its API base is selected. Replace it with the new
+supplier's credential when changing suppliers; never send an old direct-OpenAI
+key to a reseller. The file name is unchanged. Both providers use Bearer headers.
+
 The existing `/srv/0al/secrets/normlab-operator-password` remains the browser's
 operator credential. The gateway token is independently generated and never
 used as that password. GitHub/GHCR tokens remain independent registry credentials.
@@ -48,12 +53,12 @@ until recreation. Preserve the named NormLab data volume.
 | Browser → existing Caddy → NormLab | HTTPS 443 `/normlab/api/parking/extract`, private 4317 | Existing operator auth/Origin/CSRF |
 | NormLab → gateway | POST `http://normlab-inference-gateway:4318/v1/extract` | Dedicated internal network + internal token |
 | Gateway → egress | CONNECT `http://normlab-inference-egress:4319` | Second dedicated internal network |
-| Egress → OpenAI | TLS TCP 443 to `api.openai.com`; adapter POST `/v1/responses` | Outbound only |
-| Egress → TypeSafe | TLS TCP 443 to `api.typesafe.ai`; adapter POST `/v1/systemone` | Outbound only |
+| Egress → Responses supplier | TLS TCP 443 to configured DNS host; adapter POST API base + `/responses` | Outbound only |
+| Egress → System One supplier | TLS TCP 443 to configured DNS host; adapter POST API base + `/systemone` | Outbound only |
 
 Only the egress container joins a network with a default internet route.
 NormLab cannot reach the egress proxy directly, and gateway has no direct
-internet network. The proxy permits the two exact CONNECT authorities and
+internet network. The proxy permits the two configured exact CONNECT authorities and
 checks resolved public addresses before dialing. It rejects private IPs,
 literal IP authorities, plaintext HTTP, alternate ports and other domains.
 TLS certificate/hostname checks remain enabled in the gateway. Domain/port
@@ -70,11 +75,45 @@ this topology as a host firewall destination rule or protection from host root.
 
 ## Enable after review and provider availability confirmation
 
+Requires a **new image containing configurable endpoints**, not merely the
+initial gateway image from NormLab #28. The default destinations remain direct
+OpenAI and TypeSafe. A startup file check prevents the legacy image from silently
+ignoring these URL settings; it does not prove API/account readiness.
+In `/etc/0al/normlab-staging.env`, select CoreInfra with:
+
+```dotenv
+PLATFORM_NORMLAB_OPENAI_BASE_URL=https://hub.coreinfra.ai/codex/api/v1
+# Use the model identifier confirmed by this supplier:
+PLATFORM_NORMLAB_OPENAI_MODEL=gpt-6-luna
+```
+
+The complete API prefix is retained, producing exactly
+`https://hub.coreinfra.ai/codex/api/v1/responses`. Compose sends the same base
+to gateway and egress. The proxy replaces `api.openai.com:443` with
+`hub.coreinfra.ai:443` for this configuration; no other OpenAI destination is
+allowed. `PLATFORM_NORMLAB_TYPESAFE_BASE_URL` similarly selects System One's
+API base (default `https://api.typesafe.ai/v1`). Both require HTTPS, DNS names,
+port 443 and no credentials/query/fragment. These non-secret URLs never reach
+the browser. Rotate the corresponding key with the hidden-input installer.
+
+Recreate **both gateway and egress** after changing an API base; otherwise
+their independently derived settings can disagree and requests fail closed.
+Keep the image digest identical across all three services. The configuration
+does not establish supplier compatibility: Responses must accept non-streaming
+JSON, strict `text.format` JSON Schema, `store:false`, Bearer auth and reasoning
+settings. Chat Completions/SSE-only protocols need another adapter. The supplied
+CoreInfra URL was probed with GET without credentials on 2026-10-07 and returned
+404; authenticated POST and model access remain unverified. Do not infer readiness
+from that probe or from mocked tests. Run one synthetic acceptance case after
+supplier/account eligibility and key provisioning are established.
+
 The supplied VPS screenshot indicates a Russian region. Russia is not in
 [OpenAI's supported-country list](https://developers.openai.com/api/docs/supported-countries).
 Confirm an eligible provider/account/deployment arrangement before adding keys
 or enabling this profile. The proxy is on the same VPS and does not change
 region or external source IP. TypeSafe account/region access also needs checking.
+For a reseller, assess its own supported regions, account terms and API access;
+the direct-OpenAI observation does not establish CoreInfra's eligibility.
 The manual demo remains usable without these overlays.
 
 Update `PLATFORM_NORMLAB_IMAGE` in `/etc/0al/normlab-staging.env` to the new CI

@@ -15,7 +15,8 @@ services:
 
   normlab-inference-gateway:
     image: "${PLATFORM_NORMLAB_IMAGE:?set the new digest-pinned NormLab image}"
-    command: [node_modules/.bin/tsx, server/inference-gateway.ts]
+    # Refuse the legacy image, whose hardcoded routes would ignore BASE_URL settings.
+    command: [/bin/sh, -ec, "test -f server/inference-endpoints.ts; exec node_modules/.bin/tsx server/inference-gateway.ts"]
     restart: unless-stopped
     init: true
     user: "1000:1000"
@@ -34,6 +35,8 @@ services:
       NORMLAB_INFERENCE_TOKEN_FILE: /run/secrets/normlab_inference_token
       NORMLAB_OPENAI_API_KEY_FILE: /run/secrets/normlab_openai_api_key
       NORMLAB_OPENAI_MODEL: "${PLATFORM_NORMLAB_OPENAI_MODEL:-gpt-6-luna}"
+      NORMLAB_OPENAI_BASE_URL: "${PLATFORM_NORMLAB_OPENAI_BASE_URL:-https://api.openai.com/v1}"
+      NORMLAB_TYPESAFE_BASE_URL: "${PLATFORM_NORMLAB_TYPESAFE_BASE_URL:-https://api.typesafe.ai/v1}"
       NORMLAB_INFERENCE_CLASSIFIER: openai
       NORMLAB_INFERENCE_REQUESTS_PER_HOUR: "${PLATFORM_NORMLAB_INFERENCE_REQUESTS_PER_HOUR:-6}"
       NORMLAB_INFERENCE_EGRESS_PROXY: http://normlab-inference-egress:4319
@@ -55,7 +58,7 @@ services:
 
   normlab-inference-egress:
     image: "${PLATFORM_NORMLAB_IMAGE:?set the new digest-pinned NormLab image}"
-    command: [node_modules/.bin/tsx, server/inference-egress.ts]
+    command: [/bin/sh, -ec, "test -f server/inference-endpoints.ts; exec node_modules/.bin/tsx server/inference-egress.ts"]
     restart: unless-stopped
     init: true
     user: "1000:1000"
@@ -70,6 +73,9 @@ services:
     cpus: "0.10"
     pids_limit: 64
     stop_grace_period: 15s
+    environment:
+      NORMLAB_OPENAI_BASE_URL: "${PLATFORM_NORMLAB_OPENAI_BASE_URL:-https://api.openai.com/v1}"
+      NORMLAB_TYPESAFE_BASE_URL: "${PLATFORM_NORMLAB_TYPESAFE_BASE_URL:-https://api.typesafe.ai/v1}"
     networks:
       - inference-proxy-private
       - inference-egress
