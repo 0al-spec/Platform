@@ -145,6 +145,36 @@ limits are 256/128 MiB, adding at most 384 MiB of configured ceilings to the
 existing NormLab profile; confirm actual free VPS memory before activation.
 No additional billable Timeweb app is created.
 
+## Optional Decisions classifier
+
+Use an immutable image containing NormLab's Decisions adapter. In
+`/etc/0al/normlab-staging.env` select:
+
+```dotenv
+PLATFORM_NORMLAB_OPENAI_BASE_URL=https://hub.coreinfra.ai/codex/api/v1
+PLATFORM_NORMLAB_INFERENCE_CLASSIFIER=decisions
+PLATFORM_NORMLAB_DECISIONS_MODEL=gpt-6-luna
+```
+
+Discovery still uses `/responses` and `PLATFORM_NORMLAB_OPENAI_MODEL`.
+Classification uses `/decisions` under the same base with the existing
+OpenAI-compatible supplier secret. The browser cannot select either model.
+No new exposed port or egress authority is needed. The TypeSafe overlay explicitly
+selects Jev, so omit that overlay when selecting Decisions. The default classifier
+remains `openai`; unsupported classifier values fail during gateway startup.
+
+[OpenAI's official Decisions contract](https://developers.openai.com/api/docs/guides/decisions)
+currently supports `gpt-6-luna`. Responses settings such as `store:false` are not
+Decisions parameters. CoreInfra full API proxying is an operator-approved working
+assumption, not verified capability. The adapter has mock-based checks; no real
+keys or paid inference were used to validate this path. Evaluation and acceptance
+remain required before reporting production readiness or extraction quality.
+
+To return to Responses classification set
+`PLATFORM_NORMLAB_INFERENCE_CLASSIFIER=openai` and recreate the gateway using the
+same Compose invocation below. Failed/refused Decisions calls do not trigger an
+automatic provider fallback.
+
 ## Acceptance and rollback
 
 1. Verify all three containers are healthy and neighboring Platform services
