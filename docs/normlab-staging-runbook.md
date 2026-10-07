@@ -7,8 +7,10 @@ volume for its SQLite database and receipt-signing key. The public
 `https://specgraph.space` Timeweb application is not changed.
 
 This is a synthetic-data staging deployment. It has no OpenAI or TypeSafe.ai
-keys and the NormLab container is attached only to an internal Docker network,
-so it has no outbound provider access. Do not add real case data.
+keys in the base profile and the NormLab container is attached only to an internal
+Docker network, so it has no outbound provider access. The optional
+[inference overlays](normlab-inference-runbook.md) prepare isolated provider access;
+they are not enabled by deploying the base profile. Do not add real case data.
 
 ## Prerequisites
 
@@ -96,5 +98,5 @@ docker compose --project-name normlab-staging \
 - Lean verification is limited to 1024 MiB and the container to 2 GiB and one CPU.
 - Timeweb App Platform is not the stateful host for this service: its Compose
   profile rejects volumes and each redeploy creates a new data environment.
-- Provider adapters, API keys, request quotas, and external-data disclosures are
-  intentionally out of scope for this staging slice.
+- Provider inference requires the separately reviewed overlays and a new compatible
+  NormLab image; the base profile keeps its previous isolation and manual demo.
