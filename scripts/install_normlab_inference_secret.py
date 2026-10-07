@@ -32,6 +32,12 @@ def install_secret(
     if folder.is_symlink():
         raise ValueError("Secret directory must not be a symlink.")
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # A pre-existing directory owned by another account (e.g. the VPS login user,
+    # often UID 1000) would let that account read or swap the installed secrets.
+    if folder.stat().st_uid != os.geteuid():
+        raise ValueError(
+            "Secret directory must be owned by the installing user (root)."
+        )
     folder.chmod(0o700)
     target = folder / FILES[kind]
     if target.is_symlink():

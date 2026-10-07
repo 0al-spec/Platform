@@ -136,6 +136,18 @@ class NormLabInferenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 install_secret("typesafe", key, folder)
 
+    @unittest.skipUnless(os.geteuid() == 0, "needs root to create a foreign-owned dir")
+    def test_provisioning_rejects_a_directory_owned_by_another_account(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary) / "secrets"
+            folder.mkdir(mode=0o700)
+            os.chown(folder, 1000, 1000)
+            with self.assertRaises(ValueError):
+                install_secret(
+                    "openai", "synthetic-fixture-key-not-for-a-provider-00000", folder
+                )
+            self.assertEqual(list(folder.iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()
