@@ -20,7 +20,10 @@ services:
     init: true
     user: "1000:1000"
     read_only: true
-    tmpfs: ["/tmp:size=32m,mode=1777"]
+    tmpfs:
+      - "/tmp:size=32m,mode=1777"
+      # Masks the image's VOLUME, which would otherwise add a writable anonymous volume.
+      - "/var/lib/normlab:size=64k,mode=0500"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 256m
@@ -57,7 +60,10 @@ services:
     init: true
     user: "1000:1000"
     read_only: true
-    tmpfs: ["/tmp:size=16m,mode=1777"]
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
+      # Masks the image's VOLUME, which would otherwise add a writable anonymous volume.
+      - "/var/lib/normlab:size=64k,mode=0500"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 128m

@@ -94,6 +94,10 @@ needs only the OpenAI file and internal token; TypeSafe's file is required only
 by its overlay. Model defaults are `gpt-6-luna` and pinned `jev-1.13.0`.
 The model is chosen by server configuration, never a browser request.
 
+In gateway mode NormLab reads its token file at startup and exits if it is missing
+or not a private (`0400`/`0600`) file, which also stops the manual demo. Install
+the secrets first and keep `config --quiet` as the gate before `up`.
+
 After configuration review, replace `config --quiet` with
 `up --detach normlab normlab-inference-gateway normlab-inference-egress` using
 the same file list. Compose starts the egress/gateway health dependencies first.
@@ -123,8 +127,29 @@ No additional billable Timeweb app is created.
    The counter resets on gateway restart; configure provider project spending
    limits as the billing control. No retries/fallbacks are enabled.
 
-For rollback recreate only NormLab using the original staging file with
-`NORMLAB_INFERENCE_MODE` disabled/default, then stop the two helper services.
+For rollback, first recreate only NormLab from the base staging file, which
+leaves inference disabled and detaches it from the inference network:
+
+```sh
+docker compose --project-name normlab-staging \
+  --env-file /etc/0al/normlab-staging.env \
+  --file docker-compose.normlab-staging.example.yml \
+  up --detach --wait --no-deps normlab
+```
+
+Compose then warns about orphan helper containers and suggests
+`--remove-orphans`; that warning is expected, do not add the flag. Stop the
+helpers with the overlay in the file list, otherwise Compose answers
+`no such service`:
+
+```sh
+docker compose --project-name normlab-staging \
+  --env-file /etc/0al/normlab-staging.env \
+  --file docker-compose.normlab-staging.example.yml \
+  --file docker-compose.normlab-inference.example.yml \
+  stop normlab-inference-gateway normlab-inference-egress
+```
+
 Keep their secret files and the data volume for recovery; do not run a shared
 Compose `down` or remove volumes. Do not use `--remove-orphans` on a shared
 project without inventorying unrelated services.

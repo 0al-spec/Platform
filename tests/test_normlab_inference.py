@@ -88,6 +88,12 @@ class NormLabInferenceTests(unittest.TestCase):
                     {s["source"] for s in services["normlab"]["secrets"]},
                     {"normlab_operator_password", "normlab_inference_token"},
                 )
+                for helper in ("normlab-inference-gateway", "normlab-inference-egress"):
+                    # The NormLab image declares VOLUME /var/lib/normlab; without this
+                    # mask Docker attaches a writable anonymous volume to read-only helpers.
+                    self.assertIn(
+                        "/var/lib/normlab:size=64k,mode=0500", services[helper]["tmpfs"]
+                    )
                 self.assertFalse(services["normlab-inference-egress"].get("secrets"))
                 self.assertFalse(services["normlab-inference-egress"].get("volumes"))
                 gateway = services["normlab-inference-gateway"]
