@@ -19,6 +19,8 @@ def render(*overlays: str, settings: dict[str, str] | None = None) -> dict:
         "PLATFORM_NORMLAB_OPERATOR_PASSWORD_FILE": "/tmp/normlab-fixture-password",
         "PLATFORM_NORMLAB_OPENAI_BASE_URL": "https://api.openai.com/v1",
         "PLATFORM_NORMLAB_TYPESAFE_BASE_URL": "https://api.typesafe.ai/v1",
+        "PLATFORM_NORMLAB_INFERENCE_CLASSIFIER": "openai",
+        "PLATFORM_NORMLAB_DECISIONS_MODEL": "gpt-6-luna",
         **(settings or {}),
     }
     command = ["docker", "compose", "--project-name", "normlab-inference-contract"]
@@ -150,6 +152,43 @@ class NormLabInferenceTests(unittest.TestCase):
                     self.assertNotIn(name, services["normlab"]["environment"])
                 self.assertFalse(services["normlab-inference-egress"].get("secrets"))
                 self.assertFalse(services["normlab-inference-egress"].get("ports"))
+
+    def test_decisions_classifier_is_operator_selected_without_new_secrets_or_hosts(
+        self,
+    ):
+        settings = {
+            "PLATFORM_NORMLAB_INFERENCE_CLASSIFIER": "decisions",
+            "PLATFORM_NORMLAB_DECISIONS_MODEL": "provider/luna-alias",
+            "PLATFORM_NORMLAB_OPENAI_BASE_URL": "https://hub.coreinfra.ai/codex/api/v1",
+        }
+        services = render("inference", settings=settings)["services"]
+        gateway = services["normlab-inference-gateway"]
+        self.assertEqual(
+            gateway["environment"]["NORMLAB_INFERENCE_CLASSIFIER"], "decisions"
+        )
+        self.assertEqual(
+            gateway["environment"]["NORMLAB_DECISIONS_MODEL"], "provider/luna-alias"
+        )
+        self.assertEqual(
+            {secret["source"] for secret in gateway["secrets"]},
+            {"normlab_inference_token", "normlab_openai_api_key"},
+        )
+        self.assertEqual(
+            services["normlab-inference-egress"]["environment"][
+                "NORMLAB_OPENAI_BASE_URL"
+            ],
+            settings["PLATFORM_NORMLAB_OPENAI_BASE_URL"],
+        )
+        self.assertNotIn("NORMLAB_DECISIONS_MODEL", services["normlab"]["environment"])
+        self.assertNotIn(
+            "NORMLAB_INFERENCE_CLASSIFIER", services["normlab"]["environment"]
+        )
+        self.assertEqual(
+            render("inference", "typesafe", settings=settings)["services"][
+                "normlab-inference-gateway"
+            ]["environment"]["NORMLAB_INFERENCE_CLASSIFIER"],
+            "typesafe",
+        )
 
     def test_provisioning_is_private_atomic_and_rejects_bad_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
