@@ -65,7 +65,9 @@ def main() -> int:
     value = (
         secrets.token_hex(32)
         if args.kind == "gateway"
-        else getpass.getpass(f"{args.kind} API key (hidden input): ")
+        else getpass.getpass(
+            f"{'OpenAI-compatible provider' if args.kind == 'openai' else 'TypeSafe-compatible provider'} API key (hidden input): "
+        )
     )
     try:
         target = install_secret(args.kind, value)

@@ -12,11 +12,14 @@ from scripts.install_normlab_inference_secret import install_secret
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def render(*overlays: str) -> dict:
+def render(*overlays: str, settings: dict[str, str] | None = None) -> dict:
     environment = {
         **os.environ,
         "PLATFORM_NORMLAB_IMAGE": "ghcr.io/soundblaster/normlab@sha256:" + "1" * 64,
         "PLATFORM_NORMLAB_OPERATOR_PASSWORD_FILE": "/tmp/normlab-fixture-password",
+        "PLATFORM_NORMLAB_OPENAI_BASE_URL": "https://api.openai.com/v1",
+        "PLATFORM_NORMLAB_TYPESAFE_BASE_URL": "https://api.typesafe.ai/v1",
+        **(settings or {}),
     }
     command = ["docker", "compose", "--project-name", "normlab-inference-contract"]
     for name in ("staging", *overlays):
@@ -89,6 +92,13 @@ class NormLabInferenceTests(unittest.TestCase):
                     {"normlab_operator_password", "normlab_inference_token"},
                 )
                 for helper in ("normlab-inference-gateway", "normlab-inference-egress"):
+                    self.assertEqual(
+                        services[helper]["command"][:2], ["/bin/sh", "-ec"]
+                    )
+                    self.assertIn(
+                        "test -f server/inference-endpoints.ts; exec ",
+                        services[helper]["command"][2],
+                    )
                     # The NormLab image declares VOLUME /var/lib/normlab; without this
                     # mask Docker attaches a writable anonymous volume to read-only helpers.
                     self.assertIn(
@@ -111,6 +121,35 @@ class NormLabInferenceTests(unittest.TestCase):
                     payload["secrets"]["normlab_openai_api_key"]["file"],
                     "/srv/0al/secrets/normlab-inference/openai-api-key",
                 )
+                for setting, expected in {
+                    "NORMLAB_OPENAI_BASE_URL": "https://api.openai.com/v1",
+                    "NORMLAB_TYPESAFE_BASE_URL": "https://api.typesafe.ai/v1",
+                }.items():
+                    self.assertEqual(gateway["environment"][setting], expected)
+                    self.assertEqual(
+                        services["normlab-inference-egress"]["environment"][setting],
+                        expected,
+                    )
+
+    def test_coreinfra_route_is_shared_by_gateway_and_egress_without_exposing_keys(
+        self,
+    ):
+        settings = {
+            "PLATFORM_NORMLAB_OPENAI_BASE_URL": "https://hub.coreinfra.ai/codex/api/v1",
+            "PLATFORM_NORMLAB_TYPESAFE_BASE_URL": "https://jev.provider.example/proxy/v1",
+        }
+        for overlays in [("inference",), ("inference", "typesafe")]:
+            with self.subTest(overlays=overlays):
+                services = render(*overlays, settings=settings)["services"]
+                gateway = services["normlab-inference-gateway"]["environment"]
+                egress = services["normlab-inference-egress"]["environment"]
+                for setting, base in settings.items():
+                    name = setting.removeprefix("PLATFORM_")
+                    self.assertEqual(gateway[name], base)
+                    self.assertEqual(egress[name], base)
+                    self.assertNotIn(name, services["normlab"]["environment"])
+                self.assertFalse(services["normlab-inference-egress"].get("secrets"))
+                self.assertFalse(services["normlab-inference-egress"].get("ports"))
 
     def test_provisioning_is_private_atomic_and_rejects_bad_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
