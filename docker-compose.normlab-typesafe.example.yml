@@ -1,0 +1,12 @@
+# Add after staging + inference overlays to select Jev classification.
+services:
+  normlab-inference-gateway:
+    environment:
+      NORMLAB_INFERENCE_CLASSIFIER: typesafe
+      NORMLAB_TYPESAFE_API_KEY_FILE: /run/secrets/normlab_typesafe_api_key
+      NORMLAB_TYPESAFE_MODEL: "${PLATFORM_NORMLAB_TYPESAFE_MODEL:-jev-1.13.0}"
+    secrets:
+      - normlab_typesafe_api_key
+secrets:
+  normlab_typesafe_api_key:
+    file: /srv/0al/secrets/normlab-inference/typesafe-api-key
