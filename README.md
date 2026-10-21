@@ -73,6 +73,8 @@ JSON, wrong nonce, or inaccessible backend is a failed check. Calls have five
 second timeouts, do not follow redirects, and accept bounded responses. Only one
 probe may run at once. The remote URL is configured server-side, never supplied
 by a request. `/health` proves process liveness only, not home connectivity.
+The Dockerfile healthcheck targets that endpoint, independently of whether the
+home server is reachable; successful deployment does not imply a passing probe.
 
 ## Verification and cleanup
 
