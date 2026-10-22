@@ -1,0 +1,26 @@
+name: crazedns-probe
+services:
+  probe:
+    build: .
+    restart: unless-stopped
+    environment:
+      PROBE_ROLE: home
+      PROBE_TOKEN_FILE: /run/secrets/probe_token
+    ports:
+      - "192.168.1.161:18086:8080"
+    secrets:
+      - probe_token
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 32
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+secrets:
+  probe_token:
+    file: /srv/crazedns-probe/secrets/probe-token
