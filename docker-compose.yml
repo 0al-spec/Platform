@@ -2,18 +2,18 @@ name: specspace
 
 services:
   app:
-    image: "ghcr.io/0al-spec/specspace-ui@sha256:cc09201429d463f88af4ef814ce025a5c4ddef0b44da09d67a3e288fa8701b69"
+    image: "ghcr.io/0al-spec/specspace-ui@sha256:f324a36f48d83e0f57c270ab6bf17b29da5101ac2e1854fcc19fefaa6e16339a"
     ports:
       - "8080:80"
     depends_on:
       - specspace-api
 
   specspace-api:
-    image: "ghcr.io/0al-spec/specspace-api@sha256:06d3b1f04b16856f4eb11b4dcda01ee64bb058504d880fb5cd7f6ed4ed16a63d"
+    image: "ghcr.io/0al-spec/specspace-api@sha256:360aa777b9046af7efa6a85285f61b9db78c8fb76ebc955cdae873466448f5c2"
     environment:
-      SPECSPACE_API_IMAGE_REF: "ghcr.io/0al-spec/specspace-api@sha256:06d3b1f04b16856f4eb11b4dcda01ee64bb058504d880fb5cd7f6ed4ed16a63d"
-      SPECSPACE_UI_IMAGE_REF: "ghcr.io/0al-spec/specspace-ui@sha256:cc09201429d463f88af4ef814ce025a5c4ddef0b44da09d67a3e288fa8701b69"
-      SPECSPACE_RELEASE_COMMIT: "328df0ce2aa7df1f3759ea0089ada61c2a5cc165"
+      SPECSPACE_API_IMAGE_REF: "ghcr.io/0al-spec/specspace-api@sha256:360aa777b9046af7efa6a85285f61b9db78c8fb76ebc955cdae873466448f5c2"
+      SPECSPACE_UI_IMAGE_REF: "ghcr.io/0al-spec/specspace-ui@sha256:f324a36f48d83e0f57c270ab6bf17b29da5101ac2e1854fcc19fefaa6e16339a"
+      SPECSPACE_RELEASE_COMMIT: "90f9a80f8b44a388c22adbec677fadbaab3f10c3"
       SPECSPACE_HYPERPROMPT_HTTP_COMPILE_ENABLED: "true"
       SPECSPACE_HYPERPROMPT_WORK_DIR: "/tmp"
       SPECSPACE_HYPERPROMPT_COMPILE_TIMEOUT_SECONDS: "60"
