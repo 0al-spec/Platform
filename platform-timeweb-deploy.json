@@ -25,8 +25,8 @@
     "team-decision-log": "https://specgraph.tech/workspaces/team-decision-log"
   },
   "readme": "README.md",
-  "release_commit": "fb7483bb9e2685f193ff80b94d697dd0b0942366",
-  "release_created_at": "2026-11-08T10:26:15Z",
+  "release_commit": "a296f78dd359652e58b7d18fbe6a6126acebc8f4",
+  "release_created_at": "2026-11-08T11:01:13Z",
   "required_runtime_environment_variables": [
     "SPECSPACE_OPERATOR_AUTH_PASSWORD",
     "SPECSPACE_HOSTED_MANAGED_EXECUTOR_TOKEN",
@@ -34,9 +34,9 @@
   ],
   "schema_version": 1,
   "specpm_registry_url": "https://specpm.dev",
-  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:f9066e6b12614adb4178a6296f77efe891ede0ebff3dbca31ec3bba277779429",
+  "specspace_api_image_ref": "ghcr.io/0al-spec/specspace-api@sha256:841c8bcd13622998b63782b23150970dc92dffcc9273d8eb392fa694e8869606",
   "specspace_external_state_enabled": true,
   "specspace_external_state_url": "https://managed.specgraph.tech/specspace-state",
   "specspace_state_profile": "external_postgresql",
-  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:e980780cd6614a9b412b4f5cc228a291a004c4bb3c3a36befd4c43715979ac7d"
+  "specspace_ui_image_ref": "ghcr.io/0al-spec/specspace-ui@sha256:7c9baf6ff2cd320b2983fc786a9d134fde23dae094f05aa04d97e1a600a0100f"
 }
