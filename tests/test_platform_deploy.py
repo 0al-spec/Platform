@@ -1532,11 +1532,15 @@ class PlatformDeployTests(unittest.TestCase):
                 '"hosted-operation-canary=https://specgraph.tech/workspaces/hosted-operation-canary"',
                 compose,
             )
+            self.assertIn(
+                '"gitview=https://specgraph.tech/workspaces/gitview"', compose,
+            )
             self.assertEqual(manifest["artifact_kind"], "platform_timeweb_deploy_manifest")
             self.assertEqual(manifest["release_commit"], "abc123")
             self.assertEqual(
                 manifest["product_workspace_artifact_base_urls"],
                 {
+                    "gitview": "https://specgraph.tech/workspaces/gitview",
                     "hosted-operation-canary": (
                         "https://specgraph.tech/workspaces/hosted-operation-canary"
                     ),

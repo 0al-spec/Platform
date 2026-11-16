@@ -92,6 +92,7 @@ DEFAULT_PRODUCT_WORKSPACE_ID = "team-decision-log"
 DEFAULT_DEPLOYED_PRODUCT_WORKSPACE_IDS = (
     DEFAULT_PRODUCT_WORKSPACE_ID,
     "hosted-operation-canary",
+    "gitview",
 )
 DEFAULT_PRODUCT_WORKSPACE_ARTIFACT_BASE_URL = (
     "https://specgraph.tech/workspaces/team-decision-log"
