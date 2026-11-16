@@ -16,6 +16,8 @@ if [[ -z "$raw_product_workspace_artifact_base_url" ]]; then
     "team-decision-log=$default_team_decision_log_artifact_base_url"
     --product-workspace-artifact-base-url
     "hosted-operation-canary=$default_hosted_operation_canary_artifact_base_url"
+    --product-workspace-artifact-base-url
+    "gitview=${artifact_base_url%/}/workspaces/gitview"
   )
 elif [[ "$raw_product_workspace_artifact_base_url" != *=* && "${raw_product_workspace_artifact_base_url%/}" == "${artifact_base_url%/}" ]]; then
   product_workspace_artifact_base_url_args+=(
