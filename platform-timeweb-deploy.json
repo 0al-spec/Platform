@@ -21,6 +21,7 @@
   "operator_auth_allowed_origin": "https://specgraph.space",
   "operator_auth_username": "operator",
   "product_workspace_artifact_base_urls": {
+    "gitview": "https://specgraph.tech/workspaces/gitview",
     "hosted-operation-canary": "https://specgraph.tech/workspaces/hosted-operation-canary",
     "team-decision-log": "https://specgraph.tech/workspaces/team-decision-log"
   },
