@@ -16,6 +16,12 @@
 	handle_path /normlab/* {
 		reverse_proxy normlab:4317
 	}
+	handle /heroes3 {
+		redir * /heroes3/ 308
+	}
+	handle /heroes3/* {
+		reverse_proxy vcmi-lobby-website-1:80
+	}
 	handle {
 		reverse_proxy managed-operation-service:8091
 	}
