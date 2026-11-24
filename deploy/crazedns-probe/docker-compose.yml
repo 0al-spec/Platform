@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      PROBE_ROLE: client
+      PROBE_HOME_URL:
+      PROBE_TOKEN:
+      PROBE_OPERATOR_PASSWORD:
